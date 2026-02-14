@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { appendFileSync } from "fs";
+import { createServer } from "http";
 import { startWhatsApp, sendMessage, sendReaction } from "./whatsapp.js";
 import { askClaude } from "./claude.js";
 import { MessageQueue } from "./queue.js";
@@ -19,6 +20,12 @@ async function main() {
     console.error("OWNER_PHONE is not set in .env");
     process.exit(1);
   }
+
+  // Health check HTTP server for Coolify
+  createServer((_, res) => {
+    res.writeHead(200);
+    res.end("ok");
+  }).listen(3000, () => console.log("[agent] Health check on :3000"));
 
   console.log(`[agent] Starting WhatsApp Claude Agent`);
   console.log(`[agent] Owner phone: ${ownerPhone}`);
