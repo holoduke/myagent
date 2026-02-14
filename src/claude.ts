@@ -33,7 +33,7 @@ export async function askClaude(
     "-p", prompt,
     "--output-format", "json",
     "--allowedTools", allowedTools,
-    "--dangerously-skip-permissions",
+    "--permission-mode", "bypassPermissions",
   ];
 
   if (options.conversationId) {
