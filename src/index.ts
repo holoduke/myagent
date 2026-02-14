@@ -48,6 +48,15 @@ async function main() {
   console.log(`[agent] Owner phone: ${ownerPhone}`);
   console.log(`[agent] Claude timeout: ${process.env.CLAUDE_TIMEOUT ?? 300000}ms`);
 
+  // Delay WhatsApp connection to let health check pass first.
+  // During rolling deploys, Coolify stops the old container after the new one is healthy.
+  // This prevents two containers from competing for the same WhatsApp session.
+  const startupDelay = Number(process.env.WA_STARTUP_DELAY ?? 40) * 1000;
+  if (startupDelay > 0) {
+    console.log(`[agent] Waiting ${startupDelay / 1000}s before connecting WhatsApp (deploy safety)...`);
+    await new Promise((r) => setTimeout(r, startupDelay));
+  }
+
   await startWhatsApp(async (jid, text, message) => {
     await queue.add(async () => {
       log(`Received from ${jid}: "${text}"`);
