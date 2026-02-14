@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { appendFileSync } from "fs";
 import { createServer } from "http";
-import { startWhatsApp, sendMessage, sendReaction } from "./whatsapp.js";
+import { startWhatsApp, sendMessage, sendReaction, getLatestQr } from "./whatsapp.js";
 import { askClaude } from "./claude.js";
 import { MessageQueue } from "./queue.js";
 
@@ -21,8 +21,25 @@ async function main() {
     process.exit(1);
   }
 
-  // Health check HTTP server for Coolify
-  createServer((_, res) => {
+  // Health check + QR code HTTP server
+  createServer((req, res) => {
+    if (req.url === "/qr") {
+      const qr = getLatestQr();
+      if (!qr) {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end("<h1>No QR code available</h1><p>Already connected or waiting for QR generation.</p><script>setTimeout(()=>location.reload(),3000)</script>");
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>WhatsApp QR</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+</head><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#111">
+<div style="text-align:center"><h1 style="color:#25D366">Scan with WhatsApp</h1>
+<canvas id="qr"></canvas><p style="color:#aaa">Linked Devices &gt; Link a Device</p></div>
+<script>QRCode.toCanvas(document.getElementById('qr'),${JSON.stringify(qr)},{width:400,margin:2},function(e){if(e)document.body.innerHTML='<h1>Error: '+e+'</h1>'});
+setTimeout(()=>location.reload(),20000);</script></body></html>`);
+      return;
+    }
     res.writeHead(200);
     res.end("ok");
   }).listen(3000, () => console.log("[agent] Health check on :3000"));
