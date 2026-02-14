@@ -20,6 +20,7 @@ const logger = pino({ level: "silent" });
 
 let sock: ReturnType<typeof makeWASocket>;
 let latestQr: string | null = null;
+const processedMessages = new Set<string>();
 
 export function getLatestQr(): string | null {
   return latestQr;
@@ -111,6 +112,18 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
       if (!text.trim()) {
         console.log("[whatsapp] Ignored non-text message");
         continue;
+      }
+
+      // Deduplicate messages (Baileys can deliver same message via @lid and @s.whatsapp.net)
+      const msgId = msg.key.id;
+      if (msgId && processedMessages.has(msgId)) {
+        console.log(`[whatsapp] Skipped duplicate message: ${msgId}`);
+        continue;
+      }
+      if (msgId) {
+        processedMessages.add(msgId);
+        // Clean up old IDs after 5 minutes to prevent memory leak
+        setTimeout(() => processedMessages.delete(msgId), 5 * 60 * 1000);
       }
 
       console.log(`[whatsapp] Message from owner: ${text.slice(0, 100)}`);
