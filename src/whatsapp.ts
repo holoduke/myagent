@@ -7,6 +7,8 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
+// @ts-ignore - no types available
+import qrcode from "qrcode-terminal";
 
 export type MessageHandler = (
   jid: string,
@@ -20,14 +22,15 @@ let sock: ReturnType<typeof makeWASocket>;
 
 export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
   const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
+  let ownerLid: string | null = null;
 
-  const { state, saveCreds } = await useMultiFileAuthState("./auth_state");
+  const authDir = process.env.AUTH_STATE_DIR || "./auth_state";
+  const { state, saveCreds } = await useMultiFileAuthState(authDir);
   const { version } = await fetchLatestBaileysVersion();
 
   sock = makeWASocket({
     version,
     logger,
-    printQRInTerminal: true,
     auth: {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
@@ -40,6 +43,7 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
+      qrcode.generate(qr, { small: true });
       console.log("[whatsapp] Scan the QR code above with WhatsApp");
     }
 
@@ -52,7 +56,7 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
       );
 
       if (shouldReconnect) {
-        startWhatsApp(onMessage);
+        setTimeout(() => startWhatsApp(onMessage), 3000);
       } else {
         console.error("[whatsapp] Logged out. Delete auth_state/ and restart to re-scan QR.");
         process.exit(1);
@@ -66,25 +70,35 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
     if (type !== "notify") return;
 
     for (const msg of messages) {
-      // Ignore own messages
-      if (msg.key.fromMe) continue;
-
       const jid = msg.key.remoteJid;
       if (!jid) continue;
 
-      // Ignore group messages and status updates
-      if (jid.endsWith("@g.us") || jid === "status@broadcast") continue;
+      // Ignore status updates and group messages
+      if (jid === "status@broadcast" || jid.endsWith("@g.us")) continue;
 
-      // Only respond to owner
-      if (jid !== ownerJid) {
-        console.log(`[whatsapp] Ignored message from non-owner: ${jid}`);
+      // Detect owner's LID on first fromMe message
+      if (msg.key.fromMe && jid.endsWith("@lid") && !ownerLid) {
+        ownerLid = jid;
+        console.log(`[whatsapp] Detected owner LID: ${ownerLid}`);
+      }
+
+      // Accept messages from owner (classic JID or LID format)
+      const isOwner = jid === ownerJid || jid === ownerLid || (msg.key.fromMe && jid.endsWith("@lid"));
+      if (!isOwner) {
+        console.log(`[whatsapp] Ignored non-owner: ${jid}`);
         continue;
       }
 
-      // Extract text content
+      // Extract text content from various message types
+      const m = msg.message;
       const text =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
+        m?.conversation ||
+        m?.extendedTextMessage?.text ||
+        m?.imageMessage?.caption ||
+        m?.videoMessage?.caption ||
+        m?.buttonsResponseMessage?.selectedDisplayText ||
+        m?.listResponseMessage?.title ||
+        m?.templateButtonReplyMessage?.selectedDisplayText ||
         "";
 
       if (!text.trim()) {
@@ -94,7 +108,8 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
 
       console.log(`[whatsapp] Message from owner: ${text.slice(0, 100)}`);
 
-      await onMessage(jid, text, msg);
+      // Always reply to owner's @s.whatsapp.net JID (LID replies may not deliver)
+      await onMessage(ownerJid, text, msg);
     }
   });
 }
