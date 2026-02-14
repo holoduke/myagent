@@ -29,11 +29,15 @@ RUN mkdir -p /data/auth_state /data/claude
 # Symlink auth_state so the app finds it at ./auth_state
 RUN ln -s /data/auth_state /app/auth_state
 
+# Copy entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 EXPOSE 3000
 
 # Health check via HTTP
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
     CMD curl -f http://localhost:3000/ || exit 1
 
-# Start the agent
-CMD ["npx", "tsx", "src/index.ts"]
+# Start via entrypoint (sets HOME=/data/claude for credential persistence)
+CMD ["/app/entrypoint.sh"]
