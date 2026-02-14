@@ -30,14 +30,14 @@ async function main() {
         res.end("<h1>No QR code available</h1><p>Already connected or waiting for QR generation.</p><script>setTimeout(()=>location.reload(),3000)</script>");
         return;
       }
+      const qrEncoded = encodeURIComponent(qr);
       res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>WhatsApp QR</title>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-</head><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#111">
+      res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>WhatsApp QR</title></head>
+<body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#111">
 <div style="text-align:center"><h1 style="color:#25D366">Scan with WhatsApp</h1>
-<canvas id="qr"></canvas><p style="color:#aaa">Linked Devices &gt; Link a Device</p></div>
-<script>QRCode.toCanvas(document.getElementById('qr'),${JSON.stringify(qr)},{width:400,margin:2},function(e){if(e)document.body.innerHTML='<h1>Error: '+e+'</h1>'});
-setTimeout(()=>location.reload(),20000);</script></body></html>`);
+<img src="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${qrEncoded}" alt="QR Code" style="border-radius:8px"/>
+<p style="color:#aaa">Linked Devices &gt; Link a Device</p></div>
+<script>setTimeout(()=>location.reload(),20000);</script></body></html>`);
       return;
     }
     res.writeHead(200);
