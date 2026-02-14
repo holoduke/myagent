@@ -19,6 +19,11 @@ export type MessageHandler = (
 const logger = pino({ level: "silent" });
 
 let sock: ReturnType<typeof makeWASocket>;
+let latestQr: string | null = null;
+
+export function getLatestQr(): string | null {
+  return latestQr;
+}
 
 export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
   const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
@@ -43,8 +48,10 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
+      latestQr = qr;
       qrcode.generate(qr, { small: true });
       console.log("[whatsapp] Scan the QR code above with WhatsApp");
+      console.log(`[whatsapp] Or visit http://<host>:3000/qr`);
     }
 
     if (connection === "close") {
