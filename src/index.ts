@@ -4,6 +4,7 @@ import { createServer } from "http";
 import { startWhatsApp, sendMessage, sendReaction, getLatestQr } from "./whatsapp.js";
 import { askClaude, resetSession } from "./claude.js";
 import { MessageQueue } from "./queue.js";
+import { handleWebRoutes } from "./web.js";
 
 const queue = new MessageQueue();
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -21,8 +22,11 @@ async function main() {
     process.exit(1);
   }
 
-  // Health check + QR code HTTP server
+  // HTTP server: health check, QR code, and web chat
   createServer((req, res) => {
+    // Web chat routes
+    if (handleWebRoutes(req, res, queue)) return;
+
     if (req.url === "/qr") {
       const qr = getLatestQr();
       if (!qr) {

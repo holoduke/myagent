@@ -157,6 +157,152 @@ function runClaude(
   });
 }
 
+export async function askClaudeStreaming(
+  message: string,
+  onDelta: (text: string) => void,
+  options: {
+    timeout?: number;
+    allowedTools?: string;
+  } = {}
+): Promise<ClaudeResult> {
+  const timeout = options.timeout ?? Number(process.env.CLAUDE_TIMEOUT) ?? 300_000;
+  const allowedTools = options.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
+
+  const result = await runClaudeStreaming(message, onDelta, { timeout, allowedTools });
+  if (result.isAuthError) {
+    log("Auth error in streaming, retrying...");
+    const retry = await runClaudeStreaming(message, onDelta, { timeout, allowedTools });
+    if (retry.isAuthError) {
+      throw new Error("Authentication failed after retry. OAuth tokens may need manual refresh.");
+    }
+    return retry;
+  }
+  return result;
+}
+
+function runClaudeStreaming(
+  message: string,
+  onDelta: (text: string) => void,
+  options: { timeout: number; allowedTools: string },
+): Promise<ClaudeResult & { isAuthError?: boolean }> {
+  const { timeout, allowedTools } = options;
+
+  const prompt = currentSessionId
+    ? message
+    : `${getSystemPrompt()}\n\nUser message:\n${message}`;
+
+  const args = [
+    "-p", prompt,
+    "--output-format", "stream-json",
+    "--verbose",
+    "--allowedTools", allowedTools,
+  ];
+
+  if (currentSessionId) {
+    args.push("--resume", currentSessionId);
+    log(`Resuming session (streaming): ${currentSessionId}`);
+  }
+
+  return new Promise((resolve, reject) => {
+    const env = {
+      ...process.env,
+      ANTHROPIC_API_KEY: "",
+      CLAUDECODE: "",
+      HOME: process.env.CLAUDE_HOME || process.env.HOME || "/root",
+    };
+
+    const child = spawn("claude", args, {
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let fullText = "";
+    let sessionId: string | undefined;
+    let isAuthError = false;
+    let buffer = "";
+    let stderr = "";
+
+    child.stdout.on("data", (data: Buffer) => {
+      buffer += data.toString();
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+
+          if (event.type === "assistant" && event.message?.content) {
+            // Complete assistant message - extract any text we might have missed
+            for (const block of event.message.content) {
+              if (block.type === "text" && block.text && !fullText) {
+                fullText = block.text;
+                onDelta(block.text);
+              }
+            }
+          } else if (event.type === "result") {
+            sessionId = event.session_id;
+            const resultText = event.result || "";
+            if (event.is_error && resultText.includes("authentication_error")) {
+              isAuthError = true;
+            } else if (!event.is_error && sessionId) {
+              currentSessionId = sessionId;
+              log(`Session ID (streaming): ${currentSessionId}`);
+            }
+            // If we got a result text but no streamed content, use the result
+            if (!fullText && resultText) {
+              fullText = resultText;
+              onDelta(resultText);
+            }
+          }
+        } catch {
+          // Skip unparseable lines
+        }
+      }
+    });
+
+    child.stderr.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`Claude timed out after ${timeout / 1000}s`));
+    }, timeout);
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      log(`Streaming exit code: ${code}`);
+      if (stderr) log(`Streaming stderr: ${stderr.slice(0, 500)}`);
+
+      if (isAuthError) {
+        resolve({ messages: [], isAuthError: true });
+        return;
+      }
+
+      if (!fullText && code !== 0) {
+        if (currentSessionId) {
+          log("Streaming resume failed, resetting session");
+          currentSessionId = null;
+        }
+        reject(new Error(`Claude exited with code ${code}: ${stderr.slice(0, 500)}`));
+        return;
+      }
+
+      const text = fullText || "No response from Claude.";
+      log(`Streaming result: ${text.slice(0, 200)}`);
+      resolve({ messages: splitMessage(text), sessionId });
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.stdin.end();
+  });
+}
+
 function splitMessage(text: string): string[] {
   if (text.length <= MAX_WHATSAPP_LENGTH) {
     return [text];
