@@ -332,6 +332,20 @@ function getChatHTML(): string {
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #2a2a3e; border-radius: 3px; }
 
+    /* QR modal */
+    #qr-modal {
+      display: none; position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,0.7); justify-content: center; align-items: center;
+    }
+    #qr-modal.visible { display: flex; }
+    .qr-box {
+      background: #1a1a2e; border-radius: 16px; padding: 28px;
+      text-align: center; border: 1px solid #252540;
+    }
+    .qr-box h2 { color: #d4a574; font-size: 18px; margin-bottom: 16px; }
+    .qr-box img { border-radius: 8px; width: 220px; height: 220px; }
+    .qr-box p { color: #666; font-size: 12px; margin-top: 12px; word-break: break-all; max-width: 260px; }
+
     @media (max-width: 600px) {
       .msg { max-width: 92%; }
       #messages { padding: 14px 10px; }
@@ -351,11 +365,19 @@ function getChatHTML(): string {
     <div id="header">
       <h1>Claude Agent</h1>
       <div class="actions">
+        <button class="hdr-btn" onclick="showQr()">QR</button>
         <button class="hdr-btn" onclick="doReset()">Reset</button>
         <button class="hdr-btn" onclick="doLogout()">Logout</button>
       </div>
     </div>
     <div id="messages"></div>
+    <div id="qr-modal" onclick="hideQr()">
+      <div class="qr-box" onclick="event.stopPropagation()">
+        <h2>Open on mobile</h2>
+        <img id="qr-img" alt="QR Code">
+        <p id="qr-url"></p>
+      </div>
+    </div>
     <div id="input-area">
       <textarea id="msg-input" placeholder="Send a message..." rows="1"></textarea>
       <button id="send-btn" onclick="doSend()">Send</button>
@@ -525,6 +547,16 @@ function getChatHTML(): string {
         document.getElementById('send-btn').disabled = false;
         msgInput.focus();
       }
+    }
+
+    function showQr() {
+      const url = window.location.href;
+      document.getElementById('qr-img').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(url);
+      document.getElementById('qr-url').textContent = url;
+      document.getElementById('qr-modal').classList.add('visible');
+    }
+    function hideQr() {
+      document.getElementById('qr-modal').classList.remove('visible');
     }
 
     async function doReset() {
