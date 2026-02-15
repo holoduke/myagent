@@ -5,6 +5,7 @@ import { startWhatsApp, sendMessage, sendReaction, getLatestQr } from "./whatsap
 import { askClaude, resetSession } from "./claude.js";
 import { MessageQueue } from "./queue.js";
 import { handleWebRoutes } from "./web.js";
+import { addMessage, clearHistory } from "./history.js";
 
 const queue = new MessageQueue();
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -76,14 +77,21 @@ async function main() {
         // Handle /reset command to start a fresh conversation
         if (text.trim().toLowerCase() === "/reset") {
           resetSession();
+          clearHistory();
           await sendMessage(jid, "Session reset. Starting fresh conversation.");
           await sendReaction(jid, message.key, "\u2705");
           return;
         }
 
+        // Save user message to history
+        addMessage({ role: "user", content: text, timestamp: Date.now(), source: "whatsapp" });
+
         log(`Calling Claude with: "${text.slice(0, 80)}"`);
         const result = await askClaude(text);
         log(`Claude returned ${result.messages.length} chunk(s), first 200 chars: ${result.messages[0]?.slice(0, 200)}`);
+
+        // Save assistant response to history
+        addMessage({ role: "assistant", content: result.messages.join("\n"), timestamp: Date.now(), source: "whatsapp" });
 
         for (const chunk of result.messages) {
           log(`Sending chunk (${chunk.length} chars) to ${jid}`);
