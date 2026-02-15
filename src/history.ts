@@ -55,3 +55,70 @@ export function clearHistory(): void {
   cache = [];
   save();
 }
+
+export function getUsageStats(): string {
+  const history = getHistory();
+  const assistantMsgs = history.filter((m) => m.role === "assistant" && m.stats);
+  const userMsgs = history.filter((m) => m.role === "user");
+
+  if (assistantMsgs.length === 0) {
+    return "No usage data yet.";
+  }
+
+  let totalCost = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalDuration = 0;
+  let totalTurns = 0;
+  let webMsgs = 0;
+  let waMsgs = 0;
+
+  for (const msg of assistantMsgs) {
+    const s = msg.stats!;
+    totalCost += s.totalCostUsd;
+    totalInputTokens += s.inputTokens;
+    totalOutputTokens += s.outputTokens;
+    totalDuration += s.durationMs;
+    totalTurns += s.numTurns;
+    if (msg.source === "web") webMsgs++;
+    else if (msg.source === "whatsapp") waMsgs++;
+  }
+
+  const totalTokens = totalInputTokens + totalOutputTokens;
+  const avgDuration = totalDuration / assistantMsgs.length;
+  const avgCost = totalCost / assistantMsgs.length;
+
+  // Find date range
+  const first = history[0]?.timestamp;
+  const last = history[history.length - 1]?.timestamp;
+  const days = first && last ? Math.max(1, Math.ceil((last - first) / 86400000)) : 1;
+
+  // Today's stats
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayMsgs = assistantMsgs.filter((m) => m.timestamp >= todayStart.getTime());
+  let todayCost = 0;
+  let todayTokens = 0;
+  for (const msg of todayMsgs) {
+    todayCost += msg.stats!.totalCostUsd;
+    todayTokens += msg.stats!.inputTokens + msg.stats!.outputTokens;
+  }
+
+  const lines = [
+    `**Usage Statistics**`,
+    ``,
+    `| | |`,
+    `|---|---|`,
+    `| Messages | ${userMsgs.length} sent, ${assistantMsgs.length} responses |`,
+    `| Source | ${webMsgs} web, ${waMsgs} WhatsApp |`,
+    `| Total tokens | ${totalTokens.toLocaleString()} (${totalInputTokens.toLocaleString()} in / ${totalOutputTokens.toLocaleString()} out) |`,
+    `| Total cost | $${totalCost.toFixed(4)} |`,
+    `| Avg response | ${(avgDuration / 1000).toFixed(1)}s, $${avgCost.toFixed(4)} |`,
+    `| Avg turns | ${(totalTurns / assistantMsgs.length).toFixed(1)} per response |`,
+    `| History span | ${days} day${days > 1 ? "s" : ""} |`,
+    ``,
+    `**Today**: ${todayMsgs.length} responses, ${todayTokens.toLocaleString()} tokens, $${todayCost.toFixed(4)}`,
+  ];
+
+  return lines.join("\n");
+}
