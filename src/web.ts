@@ -219,152 +219,189 @@ function getChatHTML(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0b0b14">
   <title>Claude Agent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark-dimmed.min.css">
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
     html{height:100%;-webkit-text-size-adjust:100%}
-    body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#0b0b14;color:#d4d4d8;
+    body{font-family:'Inter',system-ui,sans-serif;background:#0b0b14;color:#d4d4d8;
       height:100dvh;display:flex;flex-direction:column;overflow:hidden}
 
     /* ── Login ── */
     #login{display:flex;justify-content:center;align-items:center;height:100dvh;
-      flex-direction:column;gap:20px;background:radial-gradient(ellipse at 50% 0%,#1a1a30 0%,#0b0b14 70%)}
-    .login-card{background:#12121f;border:1px solid #1e1e35;border-radius:16px;padding:40px 36px;
-      width:min(360px,90vw);text-align:center}
-    .login-card h1{font-size:26px;font-weight:700;
+      flex-direction:column;background:radial-gradient(ellipse at 50% 0%,#1a1a30 0%,#0b0b14 70%)}
+    .login-card{background:#12121f;border:1px solid #1e1e35;border-radius:20px;padding:44px 36px;
+      width:min(380px,90vw);text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+    .login-card h1{font-size:28px;font-weight:700;
       background:linear-gradient(135deg,#d4a574,#e8c9a0);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-    .login-card p{color:#52525b;font-size:13px;margin:8px 0 24px;letter-spacing:0.3px}
-    .login-card input{width:100%;padding:12px 16px;border-radius:10px;border:1px solid #1e1e35;
+    .login-card .subtitle{color:#3f3f5c;font-size:13px;margin:8px 0 28px;letter-spacing:.4px}
+    .login-card input{width:100%;padding:13px 16px;border-radius:12px;border:1px solid #1e1e35;
       background:#0b0b14;color:#d4d4d8;font-size:15px;font-family:inherit;outline:none;
-      transition:border-color .2s}
-    .login-card input:focus{border-color:#d4a574}
-    .login-card button{width:100%;padding:13px;border-radius:10px;border:none;margin-top:14px;
+      transition:all .2s}
+    .login-card input:focus{border-color:#d4a574;box-shadow:0 0 0 3px rgba(212,165,116,.1)}
+    .login-card button{width:100%;padding:13px;border-radius:12px;border:none;margin-top:16px;
       background:linear-gradient(135deg,#d4a574,#c4915e);color:#0b0b14;font-size:15px;
-      font-weight:600;cursor:pointer;font-family:inherit;transition:opacity .15s}
-    .login-card button:hover{opacity:.9}
-    .login-err{color:#ef4444;font-size:13px;min-height:18px;margin-top:10px}
+      font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s;
+      box-shadow:0 4px 12px rgba(212,165,116,.2)}
+    .login-card button:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(212,165,116,.3)}
+    .login-card button:active{transform:translateY(0)}
+    .login-err{color:#ef4444;font-size:13px;min-height:18px;margin-top:12px}
 
-    /* ── App shell ── */
+    /* ── App ── */
     #app{display:none;flex-direction:column;height:100dvh}
 
     /* ── Header ── */
-    header{padding:12px 16px;background:#0f0f1a;border-bottom:1px solid #1a1a2e;
+    header{padding:10px 16px;background:rgba(15,15,26,.85);border-bottom:1px solid #1a1a2e;
       display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
-      gap:12px;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);z-index:10}
-    header h1{font-size:16px;font-weight:600;
-      background:linear-gradient(135deg,#d4a574,#e8c9a0);-webkit-background-clip:text;-webkit-text-fill-color:transparent;
-      white-space:nowrap}
-    .hdr-actions{display:flex;gap:6px;flex-shrink:0}
-    .hdr-btn{padding:6px 12px;border-radius:8px;border:1px solid #1e1e35;
-      background:#12121f;color:#71717a;cursor:pointer;font-size:12px;font-family:inherit;
-      font-weight:500;transition:all .15s}
+      -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);z-index:10}
+    header h1{font-size:15px;font-weight:600;
+      background:linear-gradient(135deg,#d4a574,#e8c9a0);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .hdr-actions{display:flex;gap:5px}
+    .hdr-btn{padding:6px 10px;border-radius:8px;border:1px solid #1a1a2e;
+      background:rgba(18,18,31,.8);color:#52525b;cursor:pointer;font-size:11px;font-family:inherit;
+      font-weight:500;transition:all .15s;display:flex;align-items:center;gap:4px}
     .hdr-btn:hover{background:#1a1a2e;color:#a1a1aa;border-color:#2a2a40}
-    .hdr-btn svg{width:14px;height:14px;vertical-align:-2px;stroke:currentColor;fill:none;stroke-width:2}
+    .hdr-btn svg{width:13px;height:13px}
 
-    /* ── Session stats bar ── */
-    #session-stats{padding:4px 16px;background:#0a0a12;border-bottom:1px solid #141425;
-      font-size:11px;color:#3f3f5c;display:flex;gap:16px;flex-shrink:0;
-      font-variant-numeric:tabular-nums}
-    #session-stats span{display:inline-flex;align-items:center;gap:4px}
-    #session-stats .val{color:#52525b}
+    /* ── Stats bar ── */
+    #stats-bar{padding:5px 16px;background:#08080f;border-bottom:1px solid #111120;
+      font-size:11px;color:#2e2e45;display:flex;gap:14px;flex-shrink:0;
+      font-variant-numeric:tabular-nums;overflow-x:auto}
+    #stats-bar span{white-space:nowrap}
+    #stats-bar .v{color:#3f3f5c;font-weight:500}
 
     /* ── Messages ── */
-    #messages{flex:1;overflow-y:auto;padding:20px 16px;
-      display:flex;flex-direction:column;gap:4px;
-      scroll-behavior:smooth;overscroll-behavior:contain}
+    #messages{flex:1;overflow-y:auto;padding:16px;position:relative;
+      display:flex;flex-direction:column;gap:6px;overscroll-behavior:contain}
     #messages::-webkit-scrollbar{width:4px}
-    #messages::-webkit-scrollbar-track{background:transparent}
-    #messages::-webkit-scrollbar-thumb{background:#1e1e35;border-radius:2px}
+    #messages::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
+
+    /* Empty state */
+    .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;
+      flex:1;color:#1e1e35;gap:12px;padding:40px;text-align:center;min-height:200px}
+    .empty-state svg{width:48px;height:48px;opacity:.3}
+    .empty-state p{font-size:14px;color:#2a2a40}
+    .empty-state small{font-size:12px;color:#1e1e35}
 
     /* Message groups */
-    .msg-group{display:flex;flex-direction:column;gap:2px;max-width:min(85%,720px)}
-    .msg-group.user{align-self:flex-end;align-items:flex-end}
-    .msg-group.assistant{align-self:flex-start;align-items:flex-start}
-    .msg-group.system{align-self:center}
+    .mg{display:flex;flex-direction:column;gap:2px;max-width:min(85%,760px);
+      animation:fadeIn .25s ease}
+    .mg.user{align-self:flex-end;align-items:flex-end}
+    .mg.assistant{align-self:flex-start;align-items:flex-start}
+    .mg.system{align-self:center}
+    .mg.error{align-self:center}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
-    /* Message bubbles */
-    .bubble{padding:10px 14px;border-radius:16px;line-height:1.6;font-size:14.5px;
+    /* Bubbles */
+    .bb{padding:10px 14px;border-radius:16px;line-height:1.6;font-size:14.5px;
       word-wrap:break-word;overflow-wrap:break-word}
-    .user .bubble{background:#1a2a4a;color:#c8d6e8;border-bottom-right-radius:6px;white-space:pre-wrap}
-    .assistant .bubble{background:#14141f;border:1px solid #1a1a2e;border-bottom-left-radius:6px}
-    .error .bubble{background:#1f1010;border:1px solid #2a1515;color:#f87171;text-align:center;font-size:13px}
-    .system .bubble{background:none;color:#3f3f5c;font-size:12px;padding:8px 0}
+    .user .bb{background:linear-gradient(135deg,#162544,#1a2a4a);color:#c8d6e8;
+      border-bottom-right-radius:6px;white-space:pre-wrap}
+    .assistant .bb{background:#111119;border:1px solid #1a1a28;border-bottom-left-radius:6px}
+    .error .bb{background:#1a0a0a;border:1px solid #2a1515;color:#f87171;
+      text-align:center;font-size:13px;border-radius:12px}
+    .system .bb{background:none;color:#2e2e45;font-size:12px;padding:6px 0}
 
-    /* Stats line below assistant message */
-    .msg-stats{font-size:11px;color:#2e2e45;padding:2px 4px;display:flex;gap:10px;
-      font-variant-numeric:tabular-nums}
-    .msg-stats span{display:inline-flex;align-items:center;gap:3px}
+    /* Meta line (stats + source + time) */
+    .meta{font-size:10px;color:#252540;padding:2px 4px;display:flex;gap:8px;
+      font-variant-numeric:tabular-nums;flex-wrap:wrap;align-items:center}
+    .meta .src-wa{color:#25D366}
+    .meta .src-web{color:#3f3f5c}
 
     /* ── Markdown ── */
-    .bubble p{margin:.4em 0}.bubble p:first-child{margin-top:0}.bubble p:last-child{margin-bottom:0}
-    .bubble code{background:rgba(0,0,0,.4);padding:1px 5px;border-radius:4px;
-      font-family:'SF Mono','Fira Code','Consolas',monospace;font-size:.86em}
-    .bubble pre{background:#0a0a12;padding:12px;border-radius:10px;overflow-x:auto;margin:8px 0;
-      border:1px solid #1a1a2e}
-    .bubble pre code{background:none;padding:0;font-size:.83em;line-height:1.5}
-    .bubble ul,.bubble ol{padding-left:18px;margin:.4em 0}
-    .bubble li{margin:.15em 0}
-    .bubble blockquote{border-left:3px solid #d4a574;padding-left:12px;margin:8px 0;color:#71717a}
-    .bubble a{color:#6ea8d4;text-decoration:none}.bubble a:hover{text-decoration:underline}
-    .bubble table{border-collapse:collapse;margin:8px 0;font-size:.88em;width:100%;overflow-x:auto;display:block}
-    .bubble th,.bubble td{border:1px solid #1e1e35;padding:6px 10px;text-align:left}
-    .bubble th{background:#0f0f1a}
-    .bubble strong{color:#e4e4e7}
-    .bubble h1,.bubble h2,.bubble h3,.bubble h4{color:#e4e4e7;margin:.6em 0 .3em;font-weight:600}
-    .bubble h1{font-size:1.2em}.bubble h2{font-size:1.1em}.bubble h3{font-size:1em}
-    .bubble hr{border:none;border-top:1px solid #1e1e35;margin:12px 0}
+    .bb p{margin:.35em 0}.bb p:first-child{margin-top:0}.bb p:last-child{margin-bottom:0}
+    .bb code{background:rgba(0,0,0,.45);padding:1px 5px;border-radius:4px;
+      font-family:'JetBrains Mono',monospace;font-size:.84em}
+    .bb pre{background:#08080f;padding:0;border-radius:10px;overflow:hidden;margin:8px 0;
+      border:1px solid #151525;position:relative}
+    .bb pre code{background:none;padding:14px;font-size:.82em;line-height:1.55;display:block;
+      overflow-x:auto}
+    .bb pre .copy-btn{position:absolute;top:6px;right:6px;padding:4px 8px;border-radius:6px;
+      border:1px solid #1e1e35;background:rgba(11,11,20,.9);color:#52525b;cursor:pointer;
+      font-size:10px;font-family:inherit;opacity:0;transition:opacity .2s}
+    .bb pre:hover .copy-btn{opacity:1}
+    .bb pre .copy-btn:hover{color:#d4a574;border-color:#d4a574}
+    .bb ul,.bb ol{padding-left:18px;margin:.35em 0}
+    .bb li{margin:.1em 0}
+    .bb blockquote{border-left:3px solid #d4a574;padding-left:12px;margin:8px 0;color:#71717a}
+    .bb a{color:#6ea8d4;text-decoration:none}.bb a:hover{text-decoration:underline}
+    .bb table{border-collapse:collapse;margin:8px 0;font-size:.86em;display:block;overflow-x:auto}
+    .bb th,.bb td{border:1px solid #1a1a2e;padding:5px 10px;text-align:left}
+    .bb th{background:#0d0d18;font-weight:600}
+    .bb strong{color:#e4e4e7}.bb em{color:#a1a1aa}
+    .bb h1,.bb h2,.bb h3,.bb h4{color:#e4e4e7;margin:.5em 0 .25em;font-weight:600}
+    .bb h1{font-size:1.15em}.bb h2{font-size:1.05em}.bb h3{font-size:1em}
+    .bb hr{border:none;border-top:1px solid #1a1a2e;margin:10px 0}
+    .bb img{max-width:100%;border-radius:8px;margin:8px 0}
 
     /* ── Cursor ── */
-    .cursor{display:inline-block;width:6px;height:14px;background:#d4a574;
-      animation:blink .7s infinite;vertical-align:text-bottom;margin-left:2px;border-radius:1px}
-    @keyframes blink{0%,40%{opacity:1}50%,100%{opacity:0}}
+    .cur{display:inline-block;width:6px;height:15px;background:#d4a574;
+      animation:bk .7s infinite;vertical-align:text-bottom;margin-left:2px;border-radius:1px}
+    @keyframes bk{0%,40%{opacity:1}50%,100%{opacity:0}}
 
-    /* ── Queue/spinner ── */
-    .wait{display:flex;align-items:center;gap:8px;color:#3f3f5c;font-size:13px;padding:4px 0}
-    .spin{width:14px;height:14px;border:2px solid #1e1e35;border-top-color:#d4a574;
+    /* ── Waiting ── */
+    .wait{display:flex;align-items:center;gap:8px;color:#2e2e45;font-size:13px;padding:4px 0}
+    .spin{width:14px;height:14px;border:2px solid #1a1a2e;border-top-color:#d4a574;
       border-radius:50%;animation:sp .6s linear infinite}
     @keyframes sp{to{transform:rotate(360deg)}}
 
+    /* ── Scroll-to-bottom FAB ── */
+    #scroll-fab{position:absolute;bottom:16px;right:16px;width:36px;height:36px;
+      border-radius:50%;background:#1a1a2e;border:1px solid #252540;color:#71717a;
+      cursor:pointer;display:none;align-items:center;justify-content:center;z-index:5;
+      box-shadow:0 4px 12px rgba(0,0,0,.4);transition:all .2s}
+    #scroll-fab:hover{background:#252540;color:#d4a574}
+    #scroll-fab svg{width:16px;height:16px;fill:currentColor}
+
     /* ── Input ── */
-    #input-area{padding:12px 12px max(12px,env(safe-area-inset-bottom));background:#0f0f1a;
-      border-top:1px solid #1a1a2e;display:flex;gap:8px;flex-shrink:0;align-items:flex-end}
+    #input-area{padding:10px 12px max(10px,env(safe-area-inset-bottom));background:rgba(15,15,26,.9);
+      border-top:1px solid #1a1a2e;display:flex;gap:8px;flex-shrink:0;align-items:flex-end;
+      -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
     #msg-input{flex:1;padding:10px 14px;border-radius:14px;
       border:1px solid #1e1e35;background:#0b0b14;color:#d4d4d8;
       font-size:15px;font-family:inherit;resize:none;
       outline:none;min-height:42px;max-height:160px;line-height:1.4;
-      transition:border-color .2s}
-    #msg-input:focus{border-color:#d4a574}
-    #msg-input::placeholder{color:#3f3f5c}
+      transition:all .2s}
+    #msg-input:focus{border-color:#d4a574;box-shadow:0 0 0 3px rgba(212,165,116,.08)}
+    #msg-input::placeholder{color:#2e2e45}
     #send-btn{width:42px;height:42px;border-radius:12px;border:none;
       background:linear-gradient(135deg,#d4a574,#c4915e);color:#0b0b14;
-      cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;
-      transition:opacity .15s;flex-shrink:0}
-    #send-btn:hover{opacity:.85}
-    #send-btn:disabled{opacity:.3;cursor:not-allowed}
-    #send-btn svg{width:18px;height:18px;fill:currentColor}
+      cursor:pointer;display:flex;align-items:center;justify-content:center;
+      transition:all .2s;flex-shrink:0;box-shadow:0 2px 8px rgba(212,165,116,.15)}
+    #send-btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(212,165,116,.25)}
+    #send-btn:active{transform:translateY(0)}
+    #send-btn:disabled{opacity:.25;cursor:not-allowed;transform:none;box-shadow:none}
+    #send-btn svg{width:17px;height:17px;fill:currentColor}
 
     /* ── QR Modal ── */
     #qr-modal{display:none;position:fixed;inset:0;z-index:100;
-      background:rgba(0,0,0,.75);justify-content:center;align-items:center;
-      -webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+      background:rgba(0,0,0,.8);justify-content:center;align-items:center;
+      -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
     #qr-modal.visible{display:flex}
-    .qr-box{background:#12121f;border-radius:16px;padding:32px;
-      text-align:center;border:1px solid #1e1e35;width:min(320px,85vw)}
+    .qr-box{background:#12121f;border-radius:20px;padding:36px;
+      text-align:center;border:1px solid #1e1e35;width:min(320px,85vw);
+      box-shadow:0 20px 60px rgba(0,0,0,.5)}
     .qr-box h2{color:#d4a574;font-size:17px;font-weight:600;margin-bottom:20px}
-    .qr-box img{border-radius:10px;width:200px;height:200px}
-    .qr-box p{color:#3f3f5c;font-size:11px;margin-top:14px;word-break:break-all}
+    .qr-box img{border-radius:12px;width:200px;height:200px}
+    .qr-box p{color:#2e2e45;font-size:11px;margin-top:14px;word-break:break-all}
+    .qr-box .close-btn{margin-top:16px;padding:8px 24px;border-radius:10px;border:1px solid #1e1e35;
+      background:transparent;color:#71717a;cursor:pointer;font-size:13px;font-family:inherit}
+    .qr-box .close-btn:hover{background:#1a1a2e;color:#a1a1aa}
 
     /* ── Mobile ── */
     @media(max-width:640px){
-      .msg-group{max-width:92%}
-      #messages{padding:14px 10px}
-      header{padding:10px 12px}
-      .hdr-btn{padding:5px 8px;font-size:11px}
-      .login-card{padding:32px 24px}
-      .bubble{font-size:14px}
-      #session-stats{padding:3px 12px;gap:10px;font-size:10px;flex-wrap:wrap}
+      .mg{max-width:94%}
+      #messages{padding:12px 8px}
+      header{padding:8px 10px}
+      .hdr-btn{padding:5px 7px;font-size:10px}
+      .hdr-btn span{display:none}
+      .login-card{padding:36px 24px;border-radius:16px}
+      .bb{font-size:14px;padding:9px 12px;border-radius:14px}
+      #stats-bar{padding:4px 10px;gap:8px;font-size:10px}
+      .meta{font-size:9px}
     }
   </style>
 </head>
@@ -372,8 +409,8 @@ function getChatHTML(): string {
   <div id="login">
     <div class="login-card">
       <h1>Claude Agent</h1>
-      <p>Personal AI assistant</p>
-      <input type="password" id="pw-input" placeholder="Password" autofocus>
+      <p class="subtitle">Personal AI Assistant</p>
+      <input type="password" id="pw-input" placeholder="Enter password" autofocus>
       <button onclick="doLogin()">Sign In</button>
       <div class="login-err" id="login-err"></div>
     </div>
@@ -383,27 +420,44 @@ function getChatHTML(): string {
     <header>
       <h1>Claude Agent</h1>
       <div class="hdr-actions">
-        <button class="hdr-btn" onclick="showQr()" title="QR Code"><svg viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM17 14h3v3h-3zM14 17h3v3h-3zM17 20h3v3h-3z"/></svg></button>
-        <button class="hdr-btn" onclick="doReset()">Reset</button>
-        <button class="hdr-btn" onclick="doLogout()">Logout</button>
+        <button class="hdr-btn" onclick="showQr()" title="QR Code">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="17" y="17" width="4" height="4" rx="1"/><path d="M14 14h3v3"/></svg>
+          <span>QR</span>
+        </button>
+        <button class="hdr-btn" onclick="doReset()" title="Reset conversation">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 105.64-11.36L1 10"/></svg>
+          <span>Reset</span>
+        </button>
+        <button class="hdr-btn" onclick="doLogout()" title="Sign out">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
       </div>
     </header>
-    <div id="session-stats">
-      <span>Messages: <b class="val" id="st-msgs">0</b></span>
-      <span>Tokens: <b class="val" id="st-tokens">0</b></span>
-      <span>Cost: <b class="val" id="st-cost">\$0.00</b></span>
-      <span>Session: <b class="val" id="st-time">0s</b></span>
+    <div id="stats-bar">
+      <span>Msgs <b class="v" id="st-m">0</b></span>
+      <span>Tokens <b class="v" id="st-t">0</b></span>
+      <span>Cost <b class="v" id="st-c">\$0.00</b></span>
     </div>
-    <div id="messages"></div>
+    <div id="messages" style="position:relative">
+      <div class="empty-state" id="empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        <p>Start a conversation</p>
+        <small>Messages from web and WhatsApp appear here</small>
+      </div>
+    </div>
+    <button id="scroll-fab" onclick="scrollBottom()">
+      <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+    </button>
     <div id="qr-modal" onclick="hideQr()">
       <div class="qr-box" onclick="event.stopPropagation()">
         <h2>Open on mobile</h2>
         <img id="qr-img" alt="QR Code">
         <p id="qr-url"></p>
+        <button class="close-btn" onclick="hideQr()">Close</button>
       </div>
     </div>
     <div id="input-area">
-      <textarea id="msg-input" placeholder="Send a message..." rows="1"></textarea>
+      <textarea id="msg-input" placeholder="Message Claude..." rows="1"></textarea>
       <button id="send-btn" onclick="doSend()">
         <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
       </button>
@@ -411,14 +465,42 @@ function getChatHTML(): string {
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/typescript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/python.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/bash.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/json.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/css.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/xml.min.js"></script>
   <script>
+    hljs.registerLanguage('javascript', hljs.getLanguage('javascript'));
+    hljs.registerLanguage('js', hljs.getLanguage('javascript'));
+    hljs.registerLanguage('typescript', hljs.getLanguage('typescript'));
+    hljs.registerLanguage('ts', hljs.getLanguage('typescript'));
+    hljs.registerLanguage('python', hljs.getLanguage('python'));
+    hljs.registerLanguage('py', hljs.getLanguage('python'));
+    hljs.registerLanguage('bash', hljs.getLanguage('bash'));
+    hljs.registerLanguage('sh', hljs.getLanguage('bash'));
+    hljs.registerLanguage('json', hljs.getLanguage('json'));
+    hljs.registerLanguage('css', hljs.getLanguage('css'));
+    hljs.registerLanguage('html', hljs.getLanguage('xml'));
+
     let token = localStorage.getItem('agent_token');
-    let busy = false;
-    let totalTokens = 0, totalCost = 0, msgCount = 0, sessionStart = Date.now();
+    let busy = false, totTok = 0, totCost = 0, nMsg = 0;
+    let renderTimer = null;
 
-    marked.setOptions({ breaks: true, gfm: true });
+    marked.setOptions({ breaks: true, gfm: true, highlight: (code, lang) => {
+      if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
+      return hljs.highlightAuto(code).value;
+    }});
 
+    const msgEl = document.getElementById('messages');
     const msgInput = document.getElementById('msg-input');
+    const sendBtn = document.getElementById('send-btn');
+    const fab = document.getElementById('scroll-fab');
+
+    // Auto-resize + enter
     msgInput.addEventListener('input', () => {
       msgInput.style.height = 'auto';
       msgInput.style.height = Math.min(msgInput.scrollHeight, 160) + 'px';
@@ -430,6 +512,13 @@ function getChatHTML(): string {
       if (e.key === 'Enter') doLogin();
     });
 
+    // Scroll-to-bottom FAB
+    msgEl.addEventListener('scroll', () => {
+      const atBottom = msgEl.scrollHeight - msgEl.scrollTop - msgEl.clientHeight < 80;
+      fab.style.display = atBottom ? 'none' : 'flex';
+    });
+
+    // Auth check
     if (token) {
       fetch('/api/auth-check', { headers: { 'Authorization': 'Bearer ' + token } })
         .then(r => r.json()).then(d => d.authenticated ? showApp() : resetAuth()).catch(() => resetAuth());
@@ -443,9 +532,13 @@ function getChatHTML(): string {
     function showApp() {
       document.getElementById('login').style.display = 'none';
       document.getElementById('app').style.display = 'flex';
-      sessionStart = Date.now();
       loadHistory();
       msgInput.focus();
+    }
+    function updateStats() {
+      document.getElementById('st-m').textContent = nMsg;
+      document.getElementById('st-t').textContent = totTok.toLocaleString();
+      document.getElementById('st-c').textContent = '\$' + totCost.toFixed(4);
     }
 
     async function loadHistory() {
@@ -453,33 +546,19 @@ function getChatHTML(): string {
         const res = await fetch('/api/history', { headers: { 'Authorization': 'Bearer ' + token } });
         if (!res.ok) return;
         const msgs = await res.json();
-        document.getElementById('messages').innerHTML = '';
-        totalTokens = 0; totalCost = 0; msgCount = 0;
+        if (!msgs.length) return;
+        document.getElementById('empty')?.remove();
+        totTok = 0; totCost = 0; nMsg = 0;
         for (const m of msgs) {
-          const { group } = addGroup(m.role, m.content);
-          if (m.role === 'assistant' && m.stats) addStats(group, m.stats);
-          // Show source badge for WhatsApp messages
-          if (m.source === 'whatsapp') {
-            const badge = document.createElement('div');
-            badge.className = 'msg-stats';
-            badge.innerHTML = '<span style="color:#25D366">via WhatsApp</span>';
-            if (!m.stats) group.appendChild(badge);
-          }
+          const { group } = addGroup(m.role, m.content, false, m.timestamp, m.source);
+          if (m.role === 'assistant' && m.stats) addMeta(group, m.stats, m.source, m.timestamp);
+          else if (m.source) addMeta(group, null, m.source, m.timestamp);
         }
+        addCopyBtns();
         scrollBottom();
-        updateSessionStats();
+        updateStats();
       } catch {}
     }
-
-    function updateSessionStats() {
-      document.getElementById('st-msgs').textContent = msgCount;
-      document.getElementById('st-tokens').textContent = totalTokens.toLocaleString();
-      document.getElementById('st-cost').textContent = '\$' + totalCost.toFixed(4);
-      const secs = Math.floor((Date.now() - sessionStart) / 1000);
-      const m = Math.floor(secs / 60), s = secs % 60;
-      document.getElementById('st-time').textContent = m > 0 ? m + 'm ' + s + 's' : s + 's';
-    }
-    setInterval(updateSessionStats, 5000);
 
     async function doLogin() {
       const pw = document.getElementById('pw-input').value;
@@ -488,8 +567,7 @@ function getChatHTML(): string {
       try {
         const res = await fetch('/api/login', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: pw }),
-        });
+          body: JSON.stringify({ password: pw }) });
         const d = await res.json();
         if (d.success) { token = d.token; localStorage.setItem('agent_token', token); showApp(); }
         else { err.textContent = d.error || 'Login failed'; }
@@ -497,44 +575,74 @@ function getChatHTML(): string {
     }
     function doLogout() {
       localStorage.removeItem('agent_token'); token = null;
-      document.getElementById('messages').innerHTML = '';
-      totalTokens = 0; totalCost = 0; msgCount = 0;
+      msgEl.innerHTML = ''; totTok = 0; totCost = 0; nMsg = 0;
       resetAuth();
     }
 
-    function addGroup(role, content, raw) {
+    function fmtTime(ts) {
+      if (!ts) return '';
+      const d = new Date(ts);
+      const now = new Date();
+      const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (d.toDateString() === now.toDateString()) return time;
+      return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
+    }
+
+    function addGroup(role, content, raw, ts, source) {
+      document.getElementById('empty')?.remove();
       const g = document.createElement('div');
-      g.className = 'msg-group ' + role;
+      g.className = 'mg ' + role;
       const b = document.createElement('div');
-      b.className = 'bubble';
+      b.className = 'bb';
       if (raw) b.innerHTML = content;
-      else if (role === 'assistant') b.innerHTML = marked.parse(content);
+      else if (role === 'assistant' || role === 'system') b.innerHTML = marked.parse(content);
       else b.textContent = content;
       g.appendChild(b);
-      document.getElementById('messages').appendChild(g);
+      msgEl.appendChild(g);
       scrollBottom();
       return { group: g, bubble: b };
     }
-    function addStats(group, stats) {
-      if (!stats) return;
-      const s = document.createElement('div');
-      s.className = 'msg-stats';
-      const dur = stats.durationMs >= 1000 ? (stats.durationMs/1000).toFixed(1)+'s' : stats.durationMs+'ms';
-      const tok = (stats.inputTokens + stats.outputTokens).toLocaleString();
-      const cost = '\$' + stats.totalCostUsd.toFixed(4);
-      s.innerHTML = '<span>'+dur+'</span><span>'+tok+' tokens</span><span>'+cost+'</span>';
-      if (stats.numTurns > 1) s.innerHTML += '<span>'+stats.numTurns+' turns</span>';
-      group.appendChild(s);
 
-      totalTokens += stats.inputTokens + stats.outputTokens;
-      totalCost += stats.totalCostUsd;
-      msgCount++;
-      updateSessionStats();
+    function addMeta(group, stats, source, ts) {
+      const m = document.createElement('div');
+      m.className = 'meta';
+      let h = '';
+      if (stats) {
+        const dur = stats.durationMs >= 1000 ? (stats.durationMs/1000).toFixed(1)+'s' : stats.durationMs+'ms';
+        h += '<span>'+dur+'</span>';
+        h += '<span>'+(stats.inputTokens+stats.outputTokens).toLocaleString()+' tok</span>';
+        h += '<span>\$'+stats.totalCostUsd.toFixed(4)+'</span>';
+        if (stats.numTurns > 1) h += '<span>'+stats.numTurns+' turns</span>';
+        totTok += (stats.inputTokens||0) + (stats.outputTokens||0);
+        totCost += stats.totalCostUsd || 0;
+        nMsg++;
+        updateStats();
+      }
+      if (source === 'whatsapp') h += '<span class="src-wa">WhatsApp</span>';
+      if (ts) h += '<span>'+fmtTime(ts)+'</span>';
+      m.innerHTML = h;
+      group.appendChild(m);
+    }
+
+    function addCopyBtns() {
+      msgEl.querySelectorAll('pre:not([data-copy])').forEach(pre => {
+        pre.setAttribute('data-copy', '1');
+        const btn = document.createElement('button');
+        btn.className = 'copy-btn';
+        btn.textContent = 'Copy';
+        btn.onclick = () => {
+          navigator.clipboard.writeText(pre.querySelector('code')?.textContent || '');
+          btn.textContent = 'Copied!';
+          setTimeout(() => btn.textContent = 'Copy', 1500);
+        };
+        pre.style.position = 'relative';
+        pre.appendChild(btn);
+      });
     }
 
     function scrollBottom() {
-      const m = document.getElementById('messages');
-      m.scrollTop = m.scrollHeight;
+      requestAnimationFrame(() => { msgEl.scrollTop = msgEl.scrollHeight; });
+      fab.style.display = 'none';
     }
 
     async function doSend() {
@@ -542,19 +650,18 @@ function getChatHTML(): string {
       const text = msgInput.value.trim();
       if (!text) return;
       msgInput.value = ''; msgInput.style.height = 'auto';
-      busy = true; document.getElementById('send-btn').disabled = true;
+      busy = true; sendBtn.disabled = true;
 
-      addGroup('user', text);
-      const { group: aGroup, bubble: aBubble } = addGroup('assistant', '<span class="cursor"></span>', true);
-      let fullText = '', lastStats = null;
+      addGroup('user', text, false, Date.now(), 'web');
+      const { group: ag, bubble: ab } = addGroup('assistant', '<span class="cur"></span>', true);
+      let full = '', lastStats = null;
 
       try {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-          body: JSON.stringify({ message: text }),
-        });
-        if (res.status === 401) { aGroup.remove(); addGroup('error', 'Session expired'); doLogout(); return; }
+          body: JSON.stringify({ message: text }) });
+        if (res.status === 401) { ag.remove(); addGroup('error','Session expired'); doLogout(); return; }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -570,28 +677,39 @@ function getChatHTML(): string {
             try {
               const ev = JSON.parse(line.slice(6));
               if (ev.type === 'delta') {
-                fullText += ev.text;
-                aBubble.innerHTML = marked.parse(fullText) + '<span class="cursor"></span>';
-                scrollBottom();
+                full += ev.text;
+                // Throttle markdown renders to every 80ms
+                if (!renderTimer) {
+                  renderTimer = setTimeout(() => {
+                    ab.innerHTML = marked.parse(full) + '<span class="cur"></span>';
+                    scrollBottom();
+                    renderTimer = null;
+                  }, 80);
+                }
               } else if (ev.type === 'queued') {
-                aBubble.innerHTML = '<div class="wait"><div class="spin"></div>Waiting in queue...</div>';
+                ab.innerHTML = '<div class="wait"><div class="spin"></div>Waiting in queue...</div>';
               } else if (ev.type === 'start') {
-                aBubble.innerHTML = '<span class="cursor"></span>';
+                ab.innerHTML = '<span class="cur"></span>';
               } else if (ev.type === 'done') {
-                aBubble.innerHTML = fullText ? marked.parse(fullText) : '<em style="color:#3f3f5c">No response</em>';
+                if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
+                ab.innerHTML = full ? marked.parse(full) : '<em style="color:#2e2e45">No response</em>';
                 lastStats = ev.stats || null;
+                addCopyBtns();
               } else if (ev.type === 'error') {
-                aGroup.remove(); addGroup('error', ev.error);
+                ag.remove(); addGroup('error', ev.error);
               }
             } catch {}
           }
         }
-        if (fullText && aBubble.querySelector('.cursor')) aBubble.innerHTML = marked.parse(fullText);
-        if (lastStats) addStats(aGroup, lastStats);
+        if (full && ab.querySelector('.cur')) {
+          ab.innerHTML = marked.parse(full);
+          addCopyBtns();
+        }
+        if (lastStats) addMeta(ag, lastStats, 'web', Date.now());
       } catch (err) {
-        aGroup.remove(); addGroup('error', 'Connection error: ' + err.message);
+        ag.remove(); addGroup('error', 'Connection error: ' + err.message);
       } finally {
-        busy = false; document.getElementById('send-btn').disabled = false; msgInput.focus();
+        busy = false; sendBtn.disabled = false; msgInput.focus();
       }
     }
 
@@ -605,19 +723,19 @@ function getChatHTML(): string {
 
     async function doReset() {
       if (busy) return;
-      busy = true; document.getElementById('send-btn').disabled = true;
+      busy = true; sendBtn.disabled = true;
       try {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-          body: JSON.stringify({ message: '/reset' }),
-        });
+          body: JSON.stringify({ message: '/reset' }) });
         const reader = res.body.getReader();
         while (true) { const { done } = await reader.read(); if (done) break; }
-        addGroup('system', 'Session reset');
-        totalTokens = 0; totalCost = 0; msgCount = 0; sessionStart = Date.now(); updateSessionStats();
-      } catch { addGroup('error', 'Failed to reset session'); }
-      finally { busy = false; document.getElementById('send-btn').disabled = false; }
+        msgEl.innerHTML = '';
+        totTok = 0; totCost = 0; nMsg = 0; updateStats();
+        addGroup('system', 'Session reset. Starting fresh.');
+      } catch { addGroup('error', 'Failed to reset'); }
+      finally { busy = false; sendBtn.disabled = false; }
     }
   </script>
 </body>
