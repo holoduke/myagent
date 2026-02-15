@@ -1,24 +1,34 @@
 type Task = () => Promise<void>;
 
+interface QueueEntry {
+  task: Task;
+  resolve: () => void;
+  reject: (err: unknown) => void;
+}
+
 export class MessageQueue {
-  private queue: Task[] = [];
+  private queue: QueueEntry[] = [];
   private processing = false;
 
-  async add(task: Task): Promise<void> {
-    this.queue.push(task);
-    if (!this.processing) {
-      await this.process();
-    }
+  add(task: Task): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.queue.push({ task, resolve, reject });
+      if (!this.processing) {
+        this.process();
+      }
+    });
   }
 
   private async process(): Promise<void> {
     this.processing = true;
     while (this.queue.length > 0) {
-      const task = this.queue.shift()!;
+      const { task, resolve, reject } = this.queue.shift()!;
       try {
         await task();
+        resolve();
       } catch (err) {
         console.error("[queue] Task failed:", err);
+        reject(err);
       }
     }
     this.processing = false;
