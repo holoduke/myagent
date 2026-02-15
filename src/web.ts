@@ -465,27 +465,8 @@ function getChatHTML(): string {
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/core.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/javascript.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/typescript.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/python.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/bash.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/json.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/css.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
   <script>
-    hljs.registerLanguage('javascript', hljs.getLanguage('javascript'));
-    hljs.registerLanguage('js', hljs.getLanguage('javascript'));
-    hljs.registerLanguage('typescript', hljs.getLanguage('typescript'));
-    hljs.registerLanguage('ts', hljs.getLanguage('typescript'));
-    hljs.registerLanguage('python', hljs.getLanguage('python'));
-    hljs.registerLanguage('py', hljs.getLanguage('python'));
-    hljs.registerLanguage('bash', hljs.getLanguage('bash'));
-    hljs.registerLanguage('sh', hljs.getLanguage('bash'));
-    hljs.registerLanguage('json', hljs.getLanguage('json'));
-    hljs.registerLanguage('css', hljs.getLanguage('css'));
-    hljs.registerLanguage('html', hljs.getLanguage('xml'));
-
     let token = localStorage.getItem('agent_token');
     let busy = false, totTok = 0, totCost = 0, nMsg = 0;
     let renderTimer = null;
