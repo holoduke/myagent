@@ -5,7 +5,8 @@ import { startWhatsApp, sendMessage, sendReaction, getLatestQr } from "./whatsap
 import { askClaude, resetSession } from "./claude.js";
 import { MessageQueue } from "./queue.js";
 import { handleWebRoutes } from "./web.js";
-import { addMessage, clearHistory } from "./history.js";
+import { addMessage, clearHistory, getUsageStats } from "./history.js";
+import { startTokenRefreshLoop } from "./auth-refresh.js";
 
 const queue = new MessageQueue();
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -22,6 +23,9 @@ async function main() {
     console.error("OWNER_PHONE is not set in .env");
     process.exit(1);
   }
+
+  // Start background OAuth token refresh loop
+  startTokenRefreshLoop();
 
   // HTTP server: health check, QR code, and web chat
   createServer((req, res) => {
@@ -79,6 +83,14 @@ async function main() {
           resetSession();
           clearHistory();
           await sendMessage(jid, "Session reset. Starting fresh conversation.");
+          await sendReaction(jid, message.key, "\u2705");
+          return;
+        }
+
+        // Handle /usage command
+        if (text.trim().toLowerCase() === "/usage") {
+          const stats = getUsageStats();
+          await sendMessage(jid, stats);
           await sendReaction(jid, message.key, "\u2705");
           return;
         }
