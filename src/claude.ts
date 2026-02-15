@@ -17,9 +17,21 @@ interface ClaudeResponse {
   session_id?: string;
 }
 
+export interface ClaudeStats {
+  durationMs: number;
+  apiDurationMs: number;
+  totalCostUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  numTurns: number;
+}
+
 export interface ClaudeResult {
   messages: string[];
   sessionId?: string;
+  stats?: ClaudeStats;
 }
 
 // Track the current conversation session
@@ -220,6 +232,7 @@ function runClaudeStreaming(
     let fullText = "";
     let sessionId: string | undefined;
     let isAuthError = false;
+    let stats: ClaudeStats | undefined;
     let buffer = "";
     let stderr = "";
 
@@ -234,7 +247,6 @@ function runClaudeStreaming(
           const event = JSON.parse(line);
 
           if (event.type === "assistant" && event.message?.content) {
-            // Complete assistant message - extract any text we might have missed
             for (const block of event.message.content) {
               if (block.type === "text" && block.text && !fullText) {
                 fullText = block.text;
@@ -250,11 +262,22 @@ function runClaudeStreaming(
               currentSessionId = sessionId;
               log(`Session ID (streaming): ${currentSessionId}`);
             }
-            // If we got a result text but no streamed content, use the result
             if (!fullText && resultText) {
               fullText = resultText;
               onDelta(resultText);
             }
+            // Capture stats
+            const u = event.usage || {};
+            stats = {
+              durationMs: event.duration_ms || 0,
+              apiDurationMs: event.duration_api_ms || 0,
+              totalCostUsd: event.total_cost_usd || 0,
+              inputTokens: u.input_tokens || 0,
+              outputTokens: u.output_tokens || 0,
+              cacheReadTokens: u.cache_read_input_tokens || 0,
+              cacheCreationTokens: u.cache_creation_input_tokens || 0,
+              numTurns: event.num_turns || 0,
+            };
           }
         } catch {
           // Skip unparseable lines
@@ -292,7 +315,8 @@ function runClaudeStreaming(
 
       const text = fullText || "No response from Claude.";
       log(`Streaming result: ${text.slice(0, 200)}`);
-      resolve({ messages: splitMessage(text), sessionId });
+      if (stats) log(`Stats: ${stats.durationMs}ms, $${stats.totalCostUsd.toFixed(4)}, ${stats.inputTokens}in/${stats.outputTokens}out`);
+      resolve({ messages: splitMessage(text), sessionId, stats });
     });
 
     child.on("error", (err) => {
