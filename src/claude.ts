@@ -195,6 +195,7 @@ function runClaudeStreaming(
     "-p", prompt,
     "--output-format", "stream-json",
     "--verbose",
+    "--include-partial-messages",
     "--allowedTools", allowedTools,
   ];
 
