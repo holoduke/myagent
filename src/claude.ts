@@ -38,7 +38,7 @@ export async function askClaude(
   } = {}
 ): Promise<ClaudeResult> {
   const timeout = options.timeout ?? Number(process.env.CLAUDE_TIMEOUT) ?? 300_000;
-  const allowedTools = options.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Edit,Glob,Grep";
+  const allowedTools = options.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
 
   // Retry once on auth errors (CLI auto-refreshes tokens on second attempt)
   const result = await runClaude(message, { timeout, allowedTools });
