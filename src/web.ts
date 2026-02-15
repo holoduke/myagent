@@ -3,7 +3,7 @@ import { IncomingMessage, ServerResponse } from "http";
 import { appendFileSync } from "fs";
 import { askClaudeStreaming, resetSession } from "./claude.js";
 import { MessageQueue } from "./queue.js";
-import { getHistory, addMessage, clearHistory } from "./history.js";
+import { getHistory, addMessage, clearHistory, getUsageStats } from "./history.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -155,6 +155,14 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, queue: Mess
           resetSession();
           clearHistory();
           res.write(`data: ${JSON.stringify({ type: "delta", text: "Session reset. Starting fresh conversation." })}\n\n`);
+          res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+          return;
+        }
+
+        // Handle /usage command
+        if (message.trim().toLowerCase() === "/usage") {
+          const stats = getUsageStats();
+          res.write(`data: ${JSON.stringify({ type: "delta", text: stats })}\n\n`);
           res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
           return;
         }
