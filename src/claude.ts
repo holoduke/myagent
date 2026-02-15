@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import { appendFileSync } from "fs";
 import { getSystemPrompt } from "./system-prompt.js";
+import { ensureValidToken } from "./auth-refresh.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -52,10 +53,14 @@ export async function askClaude(
   const timeout = options.timeout ?? Number(process.env.CLAUDE_TIMEOUT) ?? 300_000;
   const allowedTools = options.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
 
+  // Ensure token is valid before calling CLI
+  await ensureValidToken();
+
   // Retry once on auth errors (CLI auto-refreshes tokens on second attempt)
   const result = await runClaude(message, { timeout, allowedTools });
   if (result.isAuthError) {
-    log("Auth error detected, retrying (CLI should auto-refresh token)...");
+    log("Auth error detected, refreshing token and retrying...");
+    await ensureValidToken();
     const retry = await runClaude(message, { timeout, allowedTools });
     if (retry.isAuthError) {
       throw new Error("Authentication failed after retry. OAuth tokens may need manual refresh.");
@@ -180,9 +185,13 @@ export async function askClaudeStreaming(
   const timeout = options.timeout ?? Number(process.env.CLAUDE_TIMEOUT) ?? 300_000;
   const allowedTools = options.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
 
+  // Ensure token is valid before calling CLI
+  await ensureValidToken();
+
   const result = await runClaudeStreaming(message, onDelta, { timeout, allowedTools });
   if (result.isAuthError) {
-    log("Auth error in streaming, retrying...");
+    log("Auth error in streaming, refreshing token and retrying...");
+    await ensureValidToken();
     const retry = await runClaudeStreaming(message, onDelta, { timeout, allowedTools });
     if (retry.isAuthError) {
       throw new Error("Authentication failed after retry. OAuth tokens may need manual refresh.");
@@ -230,6 +239,7 @@ function runClaudeStreaming(
     });
 
     let fullText = "";
+    let sentLength = 0;
     let sessionId: string | undefined;
     let isAuthError = false;
     let stats: ClaudeStats | undefined;
@@ -248,9 +258,15 @@ function runClaudeStreaming(
 
           if (event.type === "assistant" && event.message?.content) {
             for (const block of event.message.content) {
-              if (block.type === "text" && block.text && !fullText) {
-                fullText = block.text;
-                onDelta(block.text);
+              if (block.type === "text" && block.text) {
+                // Each partial message contains cumulative text — send only the new part
+                const newText = block.text;
+                if (newText.length > sentLength) {
+                  const delta = newText.slice(sentLength);
+                  sentLength = newText.length;
+                  fullText = newText;
+                  onDelta(delta);
+                }
               }
             }
           } else if (event.type === "result") {
@@ -262,7 +278,13 @@ function runClaudeStreaming(
               currentSessionId = sessionId;
               log(`Session ID (streaming): ${currentSessionId}`);
             }
-            if (!fullText && resultText) {
+            // Send any remaining text from the result that wasn't streamed
+            if (resultText.length > sentLength) {
+              const delta = resultText.slice(sentLength);
+              sentLength = resultText.length;
+              fullText = resultText;
+              onDelta(delta);
+            } else if (!fullText && resultText) {
               fullText = resultText;
               onDelta(resultText);
             }
