@@ -40,6 +40,25 @@ export async function askClaude(
   const timeout = options.timeout ?? Number(process.env.CLAUDE_TIMEOUT) ?? 300_000;
   const allowedTools = options.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Edit,Glob,Grep";
 
+  // Retry once on auth errors (CLI auto-refreshes tokens on second attempt)
+  const result = await runClaude(message, { timeout, allowedTools });
+  if (result.isAuthError) {
+    log("Auth error detected, retrying (CLI should auto-refresh token)...");
+    const retry = await runClaude(message, { timeout, allowedTools });
+    if (retry.isAuthError) {
+      throw new Error("Authentication failed after retry. OAuth tokens may need manual refresh.");
+    }
+    return retry;
+  }
+  return result;
+}
+
+function runClaude(
+  message: string,
+  options: { timeout: number; allowedTools: string },
+): Promise<ClaudeResult & { isAuthError?: boolean }> {
+  const { timeout, allowedTools } = options;
+
   // On first message, include system prompt. On resume, just send the user message.
   const prompt = currentSessionId
     ? message
@@ -105,10 +124,19 @@ export async function askClaude(
         const response = JSON.parse(stdout) as ClaudeResponse;
         const text = response.result || "No response from Claude.";
 
-        // Update session ID for conversation continuity
-        if (response.session_id) {
+        // Detect auth errors - don't store session and signal for retry
+        if (response.is_error && text.includes("authentication_error")) {
+          log("Authentication error detected in response");
+          resolve({ messages: [text], isAuthError: true });
+          return;
+        }
+
+        // Only store session ID from successful responses
+        if (!response.is_error && response.session_id) {
           currentSessionId = response.session_id;
           log(`Session ID: ${currentSessionId}`);
+        } else if (response.is_error) {
+          log(`Error response, not storing session ID`);
         }
 
         log(`Parsed result: ${text.slice(0, 200)}`);
