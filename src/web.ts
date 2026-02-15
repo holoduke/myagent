@@ -3,6 +3,7 @@ import { IncomingMessage, ServerResponse } from "http";
 import { appendFileSync } from "fs";
 import { askClaudeStreaming, resetSession } from "./claude.js";
 import { MessageQueue } from "./queue.js";
+import { getHistory, addMessage, clearHistory } from "./history.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -76,6 +77,12 @@ export function handleWebRoutes(
     return true;
   }
 
+  if (pathname === "/api/history" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getHistory()));
+    return true;
+  }
+
   if (pathname === "/api/auth-check") {
     const ok = isAuthenticated(req);
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -146,17 +153,38 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, queue: Mess
         // Handle /reset command
         if (message.trim().toLowerCase() === "/reset") {
           resetSession();
+          clearHistory();
           res.write(`data: ${JSON.stringify({ type: "delta", text: "Session reset. Starting fresh conversation." })}\n\n`);
           res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
           return;
         }
 
+        // Save user message to history
+        addMessage({ role: "user", content: message, timestamp: Date.now(), source: "web" });
+
         res.write(`data: ${JSON.stringify({ type: "start" })}\n\n`);
 
+        let fullResponse = "";
         const result = await askClaudeStreaming(message, (delta) => {
+          fullResponse += delta;
           if (!res.writableEnded) {
             res.write(`data: ${JSON.stringify({ type: "delta", text: delta })}\n\n`);
           }
+        });
+
+        // Save assistant response to history
+        addMessage({
+          role: "assistant",
+          content: fullResponse || result.messages.join("\n"),
+          timestamp: Date.now(),
+          source: "web",
+          stats: result.stats ? {
+            durationMs: result.stats.durationMs,
+            totalCostUsd: result.stats.totalCostUsd,
+            inputTokens: result.stats.inputTokens,
+            outputTokens: result.stats.outputTokens,
+            numTurns: result.stats.numTurns,
+          } : undefined,
         });
 
         if (!res.writableEnded) {
@@ -415,8 +443,32 @@ function getChatHTML(): string {
     function showApp() {
       document.getElementById('login').style.display = 'none';
       document.getElementById('app').style.display = 'flex';
-      sessionStart = Date.now(); updateSessionStats();
+      sessionStart = Date.now();
+      loadHistory();
       msgInput.focus();
+    }
+
+    async function loadHistory() {
+      try {
+        const res = await fetch('/api/history', { headers: { 'Authorization': 'Bearer ' + token } });
+        if (!res.ok) return;
+        const msgs = await res.json();
+        document.getElementById('messages').innerHTML = '';
+        totalTokens = 0; totalCost = 0; msgCount = 0;
+        for (const m of msgs) {
+          const { group } = addGroup(m.role, m.content);
+          if (m.role === 'assistant' && m.stats) addStats(group, m.stats);
+          // Show source badge for WhatsApp messages
+          if (m.source === 'whatsapp') {
+            const badge = document.createElement('div');
+            badge.className = 'msg-stats';
+            badge.innerHTML = '<span style="color:#25D366">via WhatsApp</span>';
+            if (!m.stats) group.appendChild(badge);
+          }
+        }
+        scrollBottom();
+        updateSessionStats();
+      } catch {}
     }
 
     function updateSessionStats() {
