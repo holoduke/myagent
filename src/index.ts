@@ -2,7 +2,7 @@ import "dotenv/config";
 import { appendFileSync } from "fs";
 import { createServer } from "http";
 import { startWhatsApp, sendMessage, sendReaction, getLatestQr } from "./whatsapp.js";
-import { askClaude } from "./claude.js";
+import { askClaude, resetSession } from "./claude.js";
 import { MessageQueue } from "./queue.js";
 
 const queue = new MessageQueue();
@@ -69,18 +69,26 @@ async function main() {
       }
 
       try {
-        log(`Calling Claude with: "${text.slice(0, 80)}"`);
-        const responses = await askClaude(text);
-        log(`Claude returned ${responses.length} chunk(s), first 200 chars: ${responses[0]?.slice(0, 200)}`);
+        // Handle /reset command to start a fresh conversation
+        if (text.trim().toLowerCase() === "/reset") {
+          resetSession();
+          await sendMessage(jid, "Session reset. Starting fresh conversation.");
+          await sendReaction(jid, message.key, "\u2705");
+          return;
+        }
 
-        for (const chunk of responses) {
+        log(`Calling Claude with: "${text.slice(0, 80)}"`);
+        const result = await askClaude(text);
+        log(`Claude returned ${result.messages.length} chunk(s), first 200 chars: ${result.messages[0]?.slice(0, 200)}`);
+
+        for (const chunk of result.messages) {
           log(`Sending chunk (${chunk.length} chars) to ${jid}`);
           await sendMessage(jid, chunk);
           log("Chunk sent successfully");
         }
 
         await sendReaction(jid, message.key, "\u2705");
-        log(`Done - responded with ${responses.length} message(s)`);
+        log(`Done - responded with ${result.messages.length} message(s)`);
       } catch (err) {
         log(`ERROR: ${err}`);
         const errorMsg =

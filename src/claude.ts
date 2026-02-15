@@ -14,6 +14,20 @@ const MAX_WHATSAPP_LENGTH = 4096;
 interface ClaudeResponse {
   result: string;
   is_error: boolean;
+  session_id?: string;
+}
+
+export interface ClaudeResult {
+  messages: string[];
+  sessionId?: string;
+}
+
+// Track the current conversation session
+let currentSessionId: string | null = null;
+
+export function resetSession() {
+  currentSessionId = null;
+  log("Session reset");
 }
 
 export async function askClaude(
@@ -21,13 +35,15 @@ export async function askClaude(
   options: {
     timeout?: number;
     allowedTools?: string;
-    conversationId?: string;
   } = {}
-): Promise<string[]> {
+): Promise<ClaudeResult> {
   const timeout = options.timeout ?? Number(process.env.CLAUDE_TIMEOUT) ?? 300_000;
   const allowedTools = options.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Edit,Glob,Grep";
 
-  const prompt = `${getSystemPrompt()}\n\nUser message:\n${message}`;
+  // On first message, include system prompt. On resume, just send the user message.
+  const prompt = currentSessionId
+    ? message
+    : `${getSystemPrompt()}\n\nUser message:\n${message}`;
 
   const args = [
     "-p", prompt,
@@ -35,8 +51,9 @@ export async function askClaude(
     "--allowedTools", allowedTools,
   ];
 
-  if (options.conversationId) {
-    args.push("--resume", options.conversationId);
+  if (currentSessionId) {
+    args.push("--resume", currentSessionId);
+    log(`Resuming session: ${currentSessionId}`);
   }
 
   return new Promise((resolve, reject) => {
@@ -75,6 +92,11 @@ export async function askClaude(
       if (stderr) log(`stderr: ${stderr.slice(0, 500)}`);
 
       if (code !== 0 && !stdout.trim()) {
+        // If resume failed, reset session and let next message start fresh
+        if (currentSessionId) {
+          log("Resume failed, resetting session");
+          currentSessionId = null;
+        }
         reject(new Error(`Claude exited with code ${code}: ${stderr.slice(0, 500)}`));
         return;
       }
@@ -82,12 +104,19 @@ export async function askClaude(
       try {
         const response = JSON.parse(stdout) as ClaudeResponse;
         const text = response.result || "No response from Claude.";
+
+        // Update session ID for conversation continuity
+        if (response.session_id) {
+          currentSessionId = response.session_id;
+          log(`Session ID: ${currentSessionId}`);
+        }
+
         log(`Parsed result: ${text.slice(0, 200)}`);
-        resolve(splitMessage(text));
+        resolve({ messages: splitMessage(text), sessionId: response.session_id });
       } catch {
         const text = stdout.trim() || "No response from Claude.";
         log(`JSON parse failed, using raw: ${text.slice(0, 200)}`);
-        resolve(splitMessage(text));
+        resolve({ messages: splitMessage(text) });
       }
     });
 
