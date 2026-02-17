@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# Ensure claude config directory exists
-mkdir -p /data/claude/.claude
+# Ensure data directories exist
+mkdir -p /data/claude/.claude /data/brain
 
 # Symlink claude home so credentials persist across deploys
 export HOME=/data/claude

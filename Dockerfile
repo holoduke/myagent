@@ -24,7 +24,7 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 
 # Create directories for persistent data (will be mounted as volumes)
-RUN mkdir -p /data/auth_state /data/claude
+RUN mkdir -p /data/auth_state /data/claude /data/brain
 
 # Symlink auth_state so the app finds it at ./auth_state
 RUN ln -s /data/auth_state /app/auth_state

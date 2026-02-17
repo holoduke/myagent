@@ -48,20 +48,22 @@ export async function askClaude(
   options: {
     timeout?: number;
     allowedTools?: string;
+    noSession?: boolean;
   } = {}
 ): Promise<ClaudeResult> {
   const timeout = options.timeout ?? Number(process.env.CLAUDE_TIMEOUT) ?? 300_000;
   const allowedTools = options.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
+  const noSession = options.noSession ?? false;
 
   // Ensure token is valid before calling CLI
   await ensureValidToken();
 
   // Retry once on auth errors (CLI auto-refreshes tokens on second attempt)
-  const result = await runClaude(message, { timeout, allowedTools });
+  const result = await runClaude(message, { timeout, allowedTools, noSession });
   if (result.isAuthError) {
     log("Auth error detected, refreshing token and retrying...");
     await ensureValidToken();
-    const retry = await runClaude(message, { timeout, allowedTools });
+    const retry = await runClaude(message, { timeout, allowedTools, noSession });
     if (retry.isAuthError) {
       throw new Error("Authentication failed after retry. OAuth tokens may need manual refresh.");
     }
@@ -72,14 +74,16 @@ export async function askClaude(
 
 function runClaude(
   message: string,
-  options: { timeout: number; allowedTools: string },
+  options: { timeout: number; allowedTools: string; noSession?: boolean },
 ): Promise<ClaudeResult & { isAuthError?: boolean }> {
-  const { timeout, allowedTools } = options;
+  const { timeout, allowedTools, noSession } = options;
 
-  // On first message, include system prompt. On resume, just send the user message.
-  const prompt = currentSessionId
+  // noSession: brain calls provide their own complete prompt, no session tracking
+  const prompt = noSession
     ? message
-    : `${getSystemPrompt()}\n\nUser message:\n${message}`;
+    : (currentSessionId
+      ? message
+      : `${getSystemPrompt()}\n\nUser message:\n${message}`);
 
   const args = [
     "-p", prompt,
@@ -87,7 +91,7 @@ function runClaude(
     "--allowedTools", allowedTools,
   ];
 
-  if (currentSessionId) {
+  if (!noSession && currentSessionId) {
     args.push("--resume", currentSessionId);
     log(`Resuming session: ${currentSessionId}`);
   }
@@ -129,7 +133,7 @@ function runClaude(
 
       if (code !== 0 && !stdout.trim()) {
         // If resume failed, reset session and let next message start fresh
-        if (currentSessionId) {
+        if (!noSession && currentSessionId) {
           log("Resume failed, resetting session");
           currentSessionId = null;
         }
@@ -148,8 +152,8 @@ function runClaude(
           return;
         }
 
-        // Only store session ID from successful responses
-        if (!response.is_error && response.session_id) {
+        // Only store session ID from successful responses (skip for noSession/brain calls)
+        if (!noSession && !response.is_error && response.session_id) {
           currentSessionId = response.session_id;
           log(`Session ID: ${currentSessionId}`);
         } else if (response.is_error) {
