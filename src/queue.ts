@@ -1,8 +1,8 @@
-type Task = () => Promise<void>;
+type Task = () => Promise<unknown>;
 
 interface QueueEntry {
   task: Task;
-  resolve: () => void;
+  resolve: (value: unknown) => void;
   reject: (err: unknown) => void;
 }
 
@@ -18,7 +18,7 @@ export class MessageQueue {
     return new Promise<T>((resolve, reject) => {
       this.queue.push({
         task: task as Task,
-        resolve: resolve as () => void,
+        resolve: resolve as (value: unknown) => void,
         reject,
       });
       if (!this.processing) {
@@ -32,8 +32,8 @@ export class MessageQueue {
     while (this.queue.length > 0) {
       const { task, resolve, reject } = this.queue.shift()!;
       try {
-        await task();
-        resolve();
+        const result = await task();
+        resolve(result);
       } catch (err) {
         console.error("[queue] Task failed:", err);
         reject(err);
