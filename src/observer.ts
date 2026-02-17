@@ -59,6 +59,26 @@ export function getObservationsSince(since: number): Observation[] {
   }
 }
 
+export function getObservationCount(since: number): number {
+  try {
+    if (!existsSync(OBS_FILE)) return 0;
+    const lines = readFileSync(OBS_FILE, "utf-8").split("\n");
+    let count = 0;
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const obs = JSON.parse(line) as Observation;
+        if (obs.timestamp > since) count++;
+      } catch {
+        // Skip corrupted lines
+      }
+    }
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
 export function pruneObservations(days?: number): void {
   const cutoff = Date.now() - (days ?? RETENTION_DAYS) * 86400000;
   try {
