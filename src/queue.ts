@@ -10,9 +10,17 @@ export class MessageQueue {
   private queue: QueueEntry[] = [];
   private processing = false;
 
-  add(task: Task): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      this.queue.push({ task, resolve, reject });
+  get idle(): boolean {
+    return !this.processing && this.queue.length === 0;
+  }
+
+  add<T = void>(task: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.queue.push({
+        task: task as Task,
+        resolve: resolve as () => void,
+        reject,
+      });
       if (!this.processing) {
         this.process();
       }

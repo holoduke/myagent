@@ -16,17 +16,32 @@ export type MessageHandler = (
   message: proto.IWebMessageInfo
 ) => Promise<void>;
 
+export interface ObservationEvent {
+  senderName: string;
+  senderJid: string;
+  isGroup: boolean;
+  groupName?: string;
+  isFromMe: boolean;
+  text: string;
+}
+
+export type ObservationHandler = (obs: ObservationEvent) => void;
+
 const logger = pino({ level: "silent" });
 
 let sock: ReturnType<typeof makeWASocket>;
 let latestQr: string | null = null;
 const processedMessages = new Set<string>();
+const groupNameCache = new Map<string, string>();
 
 export function getLatestQr(): string | null {
   return latestQr;
 }
 
-export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
+export async function startWhatsApp(
+  onMessage: MessageHandler,
+  onObservation?: ObservationHandler,
+): Promise<void> {
   const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
   let ownerLid: string | null = null;
 
@@ -64,7 +79,7 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
       );
 
       if (shouldReconnect) {
-        setTimeout(() => startWhatsApp(onMessage), 3000);
+        setTimeout(() => startWhatsApp(onMessage, onObservation), 3000);
       } else {
         console.error("[whatsapp] Logged out. Delete auth_state/ and restart to re-scan QR.");
         process.exit(1);
@@ -81,21 +96,10 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
       const jid = msg.key.remoteJid;
       if (!jid) continue;
 
-      // Ignore status updates and group messages
-      if (jid === "status@broadcast" || jid.endsWith("@g.us")) continue;
+      // Ignore status updates
+      if (jid === "status@broadcast") continue;
 
-      // Detect owner's LID on first fromMe message
-      if (msg.key.fromMe && jid.endsWith("@lid") && !ownerLid) {
-        ownerLid = jid;
-        console.log(`[whatsapp] Detected owner LID: ${ownerLid}`);
-      }
-
-      // Accept messages from owner (classic JID or LID format)
-      const isOwner = jid === ownerJid || jid === ownerLid || (msg.key.fromMe && jid.endsWith("@lid"));
-      if (!isOwner) {
-        console.log(`[whatsapp] Ignored non-owner: ${jid}`);
-        continue;
-      }
+      const isGroup = jid.endsWith("@g.us");
 
       // Extract text content from various message types
       const m = msg.message;
@@ -109,21 +113,68 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
         m?.templateButtonReplyMessage?.selectedDisplayText ||
         "";
 
-      if (!text.trim()) {
-        console.log("[whatsapp] Ignored non-text message");
-        continue;
-      }
+      if (!text.trim()) continue;
 
       // Deduplicate messages (Baileys can deliver same message via @lid and @s.whatsapp.net)
       const msgId = msg.key.id;
-      if (msgId && processedMessages.has(msgId)) {
-        console.log(`[whatsapp] Skipped duplicate message: ${msgId}`);
-        continue;
-      }
+      if (msgId && processedMessages.has(msgId)) continue;
       if (msgId) {
         processedMessages.add(msgId);
-        // Clean up old IDs after 5 minutes to prevent memory leak
         setTimeout(() => processedMessages.delete(msgId), 5 * 60 * 1000);
+      }
+
+      // Detect owner's LID on first fromMe message
+      if (msg.key.fromMe && jid.endsWith("@lid") && !ownerLid) {
+        ownerLid = jid;
+        console.log(`[whatsapp] Detected owner LID: ${ownerLid}`);
+      }
+
+      // --- Observation: fire for ALL messages (groups, contacts, own) ---
+      if (onObservation) {
+        const senderName = msg.key.fromMe
+          ? (process.env.OWNER_NAME || "Me")
+          : (msg.pushName || jid.split("@")[0]);
+
+        // For group messages, resolve group name
+        let groupName: string | undefined;
+        if (isGroup) {
+          groupName = groupNameCache.get(jid);
+          if (!groupName) {
+            try {
+              const meta = await sock.groupMetadata(jid);
+              groupName = meta.subject;
+              groupNameCache.set(jid, groupName);
+            } catch {
+              groupName = jid.split("@")[0];
+            }
+          }
+        }
+
+        const senderJid = isGroup
+          ? (msg.key.participant || jid)
+          : jid;
+
+        try {
+          onObservation({
+            senderName,
+            senderJid,
+            isGroup,
+            groupName,
+            isFromMe: msg.key.fromMe ?? false,
+            text,
+          });
+        } catch (err) {
+          console.error("[whatsapp] Observation handler error:", err);
+        }
+      }
+
+      // --- Direct command handling: owner only, non-group ---
+      if (isGroup) continue;
+
+      const isOwner = jid === ownerJid || jid === ownerLid || (msg.key.fromMe && jid.endsWith("@lid"));
+      if (!isOwner) {
+        console.log(`[whatsapp] Observed non-owner DM: ${jid}`);
+        continue;
       }
 
       console.log(`[whatsapp] Message from owner: ${text.slice(0, 100)}`);
