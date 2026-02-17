@@ -30,7 +30,7 @@ RUN mkdir -p /data/auth_state /data/claude /data/brain
 RUN ln -s /data/auth_state /app/auth_state
 
 # Initialize git repo so self-improve worker can use git commands
-RUN cd /app && git init && git add -A && git commit -m "deploy baseline" --allow-empty
+RUN cd /app && git init && git config user.email "aria@myagent" && git config user.name "ARIA" && git add -A && git commit -m "deploy baseline"
 
 # Copy entrypoint script
 COPY entrypoint.sh /app/entrypoint.sh
