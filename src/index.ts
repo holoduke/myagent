@@ -7,6 +7,8 @@ import { MessageQueue } from "./queue.js";
 import { handleWebRoutes } from "./web.js";
 import { addMessage, clearHistory, getUsageStats } from "./history.js";
 import { startTokenRefreshLoop } from "./auth-refresh.js";
+import { recordObservation } from "./observer.js";
+import { startBrainLoop, stopBrainLoop } from "./brain.js";
 
 const queue = new MessageQueue();
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -26,6 +28,9 @@ async function main() {
 
   // Start background OAuth token refresh loop
   startTokenRefreshLoop();
+
+  // Start autonomous brain loop
+  startBrainLoop(queue, sendMessage);
 
   // HTTP server: health check, QR code, and web chat
   createServer((req, res) => {
@@ -66,71 +71,87 @@ async function main() {
     await new Promise((r) => setTimeout(r, startupDelay));
   }
 
-  await startWhatsApp(async (jid, text, message) => {
-    await queue.add(async () => {
-      log(`Received from ${jid}: "${text}"`);
+  await startWhatsApp(
+    // Owner message handler (direct responses)
+    async (jid, text, message) => {
+      await queue.add(async () => {
+        log(`Received from ${jid}: "${text}"`);
 
-      try {
-        await sendReaction(jid, message.key, "\u23f3");
-        log("Sent hourglass reaction");
-      } catch (err) {
-        log(`Failed to send reaction: ${err}`);
-      }
-
-      try {
-        // Handle /reset command to start a fresh conversation
-        if (text.trim().toLowerCase() === "/reset") {
-          resetSession();
-          clearHistory();
-          await sendMessage(jid, "Session reset. Starting fresh conversation.");
-          await sendReaction(jid, message.key, "\u2705");
-          return;
-        }
-
-        // Handle /usage command
-        if (text.trim().toLowerCase() === "/usage") {
-          const stats = getUsageStats();
-          await sendMessage(jid, stats);
-          await sendReaction(jid, message.key, "\u2705");
-          return;
-        }
-
-        // Save user message to history
-        addMessage({ role: "user", content: text, timestamp: Date.now(), source: "whatsapp" });
-
-        log(`Calling Claude with: "${text.slice(0, 80)}"`);
-        const result = await askClaude(text);
-        log(`Claude returned ${result.messages.length} chunk(s), first 200 chars: ${result.messages[0]?.slice(0, 200)}`);
-
-        // Save assistant response to history
-        addMessage({ role: "assistant", content: result.messages.join("\n"), timestamp: Date.now(), source: "whatsapp" });
-
-        for (const chunk of result.messages) {
-          log(`Sending chunk (${chunk.length} chars) to ${jid}`);
-          await sendMessage(jid, chunk);
-          log("Chunk sent successfully");
-        }
-
-        await sendReaction(jid, message.key, "\u2705");
-        log(`Done - responded with ${result.messages.length} message(s)`);
-      } catch (err) {
-        log(`ERROR: ${err}`);
-        const errorMsg =
-          err instanceof Error ? err.message : "Unknown error occurred";
         try {
-          await sendMessage(jid, `Error: ${errorMsg}`);
-          await sendReaction(jid, message.key, "\u274c");
-        } catch (sendErr) {
-          log(`Failed to send error message: ${sendErr}`);
+          await sendReaction(jid, message.key, "\u23f3");
+          log("Sent hourglass reaction");
+        } catch (err) {
+          log(`Failed to send reaction: ${err}`);
         }
-      }
-    });
-  });
+
+        try {
+          // Handle /reset command to start a fresh conversation
+          if (text.trim().toLowerCase() === "/reset") {
+            resetSession();
+            clearHistory();
+            await sendMessage(jid, "Session reset. Starting fresh conversation.");
+            await sendReaction(jid, message.key, "\u2705");
+            return;
+          }
+
+          // Handle /usage command
+          if (text.trim().toLowerCase() === "/usage") {
+            const stats = getUsageStats();
+            await sendMessage(jid, stats);
+            await sendReaction(jid, message.key, "\u2705");
+            return;
+          }
+
+          // Save user message to history
+          addMessage({ role: "user", content: text, timestamp: Date.now(), source: "whatsapp" });
+
+          log(`Calling Claude with: "${text.slice(0, 80)}"`);
+          const result = await askClaude(text);
+          log(`Claude returned ${result.messages.length} chunk(s), first 200 chars: ${result.messages[0]?.slice(0, 200)}`);
+
+          // Save assistant response to history
+          addMessage({ role: "assistant", content: result.messages.join("\n"), timestamp: Date.now(), source: "whatsapp" });
+
+          for (const chunk of result.messages) {
+            log(`Sending chunk (${chunk.length} chars) to ${jid}`);
+            await sendMessage(jid, chunk);
+            log("Chunk sent successfully");
+          }
+
+          await sendReaction(jid, message.key, "\u2705");
+          log(`Done - responded with ${result.messages.length} message(s)`);
+        } catch (err) {
+          log(`ERROR: ${err}`);
+          const errorMsg =
+            err instanceof Error ? err.message : "Unknown error occurred";
+          try {
+            await sendMessage(jid, `Error: ${errorMsg}`);
+            await sendReaction(jid, message.key, "\u274c");
+          } catch (sendErr) {
+            log(`Failed to send error message: ${sendErr}`);
+          }
+        }
+      });
+    },
+    // Observation handler (ALL messages → brain memory)
+    (obs) => {
+      recordObservation({
+        timestamp: Date.now(),
+        sender: obs.senderName,
+        senderJid: obs.senderJid,
+        isGroup: obs.isGroup,
+        groupName: obs.groupName,
+        isFromMe: obs.isFromMe,
+        text: obs.text,
+      });
+    },
+  );
 }
 
 // Graceful shutdown
 function shutdown() {
   console.log("\n[agent] Shutting down...");
+  stopBrainLoop();
   process.exit(0);
 }
 
