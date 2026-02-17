@@ -8,7 +8,7 @@ import { handleWebRoutes } from "./web.js";
 import { addMessage, clearHistory, getUsageStats } from "./history.js";
 import { startTokenRefreshLoop } from "./auth-refresh.js";
 import { recordObservation } from "./observer.js";
-import { startBrainLoop, stopBrainLoop } from "./brain.js";
+import { startBrainLoop, stopBrainLoop, getBrainHealth } from "./brain.js";
 
 const queue = new MessageQueue();
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -54,8 +54,14 @@ async function main() {
 <script>setTimeout(()=>location.reload(),20000);</script></body></html>`);
       return;
     }
-    res.writeHead(200);
-    res.end("ok");
+    // Health endpoint with brain status
+    const health = getBrainHealth();
+    const statusCode = health.healthy ? 200 : 503;
+    res.writeHead(statusCode, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      status: health.healthy ? "ok" : "unhealthy",
+      brain: health,
+    }));
   }).listen(3000, () => console.log("[agent] Health check on :3000"));
 
   console.log(`[agent] Starting WhatsApp Claude Agent`);

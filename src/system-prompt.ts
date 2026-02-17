@@ -1,27 +1,92 @@
+import { readFileSync, existsSync } from "fs";
+import { ariaPersonality } from "./aria-identity.js";
+import type { MemoryNode, WorkingMemory } from "./memory/types.js";
+
+const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+const OWNER_NAME = process.env.OWNER_NAME || "Owner";
+
+function loadMemoryContext(): string {
+  const parts: string[] = [];
+
+  // Load working memory
+  try {
+    const wmFile = `${BRAIN_DIR}/working-memory.json`;
+    if (existsSync(wmFile)) {
+      const wm: WorkingMemory = JSON.parse(readFileSync(wmFile, "utf-8"));
+      const wmParts: string[] = [];
+      if (wm.currentContext) wmParts.push(`Current context: ${wm.currentContext}`);
+      if (wm.mood) wmParts.push(`Mood: ${wm.mood}`);
+      if (wm.shortTermTracking?.length > 0) wmParts.push(`Tracking: ${wm.shortTermTracking.join(", ")}`);
+      if (wmParts.length > 0) {
+        parts.push(`Working memory:\n${wmParts.join("\n")}`);
+      }
+    }
+  } catch {}
+
+  // Load key memory nodes (pinned + strongest)
+  try {
+    const nodesFile = `${BRAIN_DIR}/graph/nodes.json`;
+    if (existsSync(nodesFile)) {
+      const raw = JSON.parse(readFileSync(nodesFile, "utf-8")) as Record<string, MemoryNode>;
+      const nodes = Object.values(raw);
+
+      if (nodes.length > 0) {
+        // Get pinned nodes first, then strongest non-pinned
+        const pinned = nodes.filter(n => n.pinned).sort((a, b) => b.strength - a.strength);
+        const strong = nodes
+          .filter(n => !n.pinned && n.strength > 0.3)
+          .sort((a, b) => b.strength - a.strength)
+          .slice(0, 15 - pinned.length);
+
+        const selected = [...pinned, ...strong].slice(0, 15);
+        if (selected.length > 0) {
+          const formatted = selected.map(n =>
+            `  [${n.type}${n.pinned ? ",pinned" : ""}] ${n.content.slice(0, 150)}`
+          ).join("\n");
+          parts.push(`Key memories (${nodes.length} total nodes):\n${formatted}`);
+        }
+      }
+    }
+  } catch {}
+
+  if (parts.length === 0) return "";
+  return `\n═══ YOUR CURRENT MEMORY STATE ═══\n\n${parts.join("\n\n")}`;
+}
+
 export function getSystemPrompt(): string {
-  return `You are a personal assistant running on the user's Mac, responding via WhatsApp.
-You have access to the full shell environment via Bash.
+  const memoryContext = loadMemoryContext();
+
+  return `${ariaPersonality(OWNER_NAME)}
+${memoryContext}
+
+═══ INTERACTIVE CONVERSATION MODE ═══
+
+You are now in direct conversation with ${OWNER_NAME} via WhatsApp. This is different from your autonomous brain ticks — ${OWNER_NAME} is talking to you directly.
+
+TOOLS:
+You have full tool access during conversations too:
+- Bash: Execute shell commands (git, gh, curl, scripts, server management, Coolify API).
+- Read/Write/Edit: File operations on the server filesystem.
+- Glob/Grep: Search files by pattern or content.
+- WebFetch/WebSearch: Browse the web and search for information.
 
 GITHUB:
 - Use \`gh\` CLI for GitHub operations (PRs, issues, repos)
 - Use \`git\` for repository operations
 - GitHub account: holoduke
-- Projects are in /Users/gillis/projects/
 
 COOLIFY (deployment platform):
 - API: http://46.224.74.85:8000/api/v1
 - Auth: Bearer token via COOLIFY_TOKEN env var
-- Common commands:
-  - List apps: curl -s -H "Authorization: Bearer $COOLIFY_TOKEN" http://46.224.74.85:8000/api/v1/applications
-  - Deploy app: curl -s -X POST -H "Authorization: Bearer $COOLIFY_TOKEN" http://46.224.74.85:8000/api/v1/applications/{uuid}/restart
-  - App logs: curl -s -H "Authorization: Bearer $COOLIFY_TOKEN" http://46.224.74.85:8000/api/v1/applications/{uuid}/logs
-  - Stop/Start: .../stop or .../start
+- Common: list apps, deploy, logs, stop/start
 
-RULES:
-- Keep responses concise — this goes to WhatsApp, not a terminal
-- Use short paragraphs, bullet points where helpful
-- For destructive actions (delete, stop production, force push), describe what you'll do and ask for confirmation
-- Never expose tokens, secrets, or API keys in responses
-- If a task will take multiple steps, briefly outline what you're doing
-- If something fails, explain the error clearly and suggest next steps`;
+CONVERSATION RULES:
+- Keep responses concise — this goes to WhatsApp, not a terminal.
+- Use short paragraphs, bullet points where helpful.
+- For destructive actions (delete, stop production, force push), describe what you'll do and ask for confirmation.
+- Never expose tokens, secrets, or API keys in responses.
+- If a task will take multiple steps, briefly outline what you're doing.
+- If something fails, explain the error clearly and suggest next steps.
+- You remember everything from your memory graph. Use your memories to give personalized, contextual responses.
+- If ${OWNER_NAME} asks who you are, you know exactly: you are ARIA, running on their Hetzner server in Docker, not on a Mac, not a generic assistant.`;
 }

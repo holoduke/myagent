@@ -29,6 +29,9 @@ RUN mkdir -p /data/auth_state /data/claude /data/brain
 # Symlink auth_state so the app finds it at ./auth_state
 RUN ln -s /data/auth_state /app/auth_state
 
+# Initialize git repo so self-improve worker can use git commands
+RUN cd /app && git init && git add -A && git commit -m "deploy baseline" --allow-empty
+
 # Copy entrypoint script
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
