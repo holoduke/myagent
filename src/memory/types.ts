@@ -72,6 +72,11 @@ export interface BrainState {
   totalCost: number;
   nodeCount: number;
   edgeCount: number;
+
+  // self-improvement
+  consecutiveFailures: number;
+  lastSuccessfulTick: number;
+  pendingSelfMod: boolean;
 }
 
 // ── Tick Types ──

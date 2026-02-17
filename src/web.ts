@@ -1,9 +1,10 @@
 import { randomBytes } from "crypto";
 import { IncomingMessage, ServerResponse } from "http";
-import { appendFileSync } from "fs";
+import { readFileSync, existsSync, appendFileSync } from "fs";
 import { askClaudeStreaming, resetSession } from "./claude.js";
 import { MessageQueue } from "./queue.js";
 import { getHistory, addMessage, clearHistory, getUsageStats } from "./history.js";
+import type { MemoryNode, MemoryEdge, BrainState, WorkingMemory } from "./memory/types.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -87,6 +88,24 @@ export function handleWebRoutes(
     const ok = isAuthenticated(req);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ authenticated: ok }));
+    return true;
+  }
+
+  // ── ARIA Dashboard ──
+  if (pathname === "/aria") {
+    if (!WEB_PASSWORD) {
+      res.writeHead(503, { "Content-Type": "text/plain" });
+      res.end("WEB_PASSWORD not configured");
+      return true;
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(getAriaHTML());
+    return true;
+  }
+
+  if (pathname === "/api/aria/status" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getAriaStatus()));
     return true;
   }
 
@@ -219,6 +238,446 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, queue: Mess
   }
 }
 
+// ── ARIA Status Data ──
+
+const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
+function getAriaStatus() {
+  const status: Record<string, unknown> = {};
+
+  // Brain state
+  try {
+    const f = `${BRAIN_DIR}/state.json`;
+    if (existsSync(f)) status.brainState = JSON.parse(readFileSync(f, "utf-8"));
+  } catch {}
+
+  // Working memory
+  try {
+    const f = `${BRAIN_DIR}/working-memory.json`;
+    if (existsSync(f)) status.workingMemory = JSON.parse(readFileSync(f, "utf-8"));
+  } catch {}
+
+  // Graph stats + nodes
+  try {
+    const nf = `${BRAIN_DIR}/graph/nodes.json`;
+    const ef = `${BRAIN_DIR}/graph/edges.json`;
+    if (existsSync(nf)) {
+      const nodes = JSON.parse(readFileSync(nf, "utf-8")) as Record<string, MemoryNode>;
+      const nodeList = Object.values(nodes);
+      const edges: MemoryEdge[] = existsSync(ef) ? JSON.parse(readFileSync(ef, "utf-8")) : [];
+
+      const byType: Record<string, number> = {};
+      let totalStrength = 0;
+      for (const n of nodeList) {
+        byType[n.type] = (byType[n.type] || 0) + 1;
+        totalStrength += n.strength;
+      }
+
+      const pinned = nodeList.filter(n => n.pinned).sort((a, b) => b.strength - a.strength);
+      const strongest = nodeList
+        .filter(n => !n.pinned)
+        .sort((a, b) => b.strength - a.strength)
+        .slice(0, 20);
+      const weakest = nodeList
+        .filter(n => !n.pinned && n.strength < 0.2)
+        .sort((a, b) => a.strength - b.strength)
+        .slice(0, 10);
+      const recent = [...nodeList]
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, 10);
+
+      status.graph = {
+        nodeCount: nodeList.length,
+        edgeCount: edges.length,
+        byType,
+        avgStrength: nodeList.length > 0 ? totalStrength / nodeList.length : 0,
+        pinnedNodes: pinned.map(n => ({ id: n.id, type: n.type, content: n.content, tags: n.tags, strength: n.strength })),
+        strongestNodes: strongest.map(n => ({ id: n.id, type: n.type, content: n.content, tags: n.tags, strength: n.strength, accessCount: n.accessCount })),
+        weakestNodes: weakest.map(n => ({ id: n.id, type: n.type, content: n.content, strength: n.strength })),
+        recentNodes: recent.map(n => ({ id: n.id, type: n.type, content: n.content, tags: n.tags, strength: n.strength, createdAt: n.createdAt })),
+      };
+    }
+  } catch {}
+
+  // Self-improve status
+  try {
+    const taskFile = `${BRAIN_DIR}/improve-task.json`;
+    const resultFile = `${BRAIN_DIR}/improve-result.json`;
+    const bootCounterFile = `${BRAIN_DIR}/boot-counter`;
+    const lastGoodCommitFile = `${BRAIN_DIR}/last-good-commit`;
+
+    status.selfImprove = {
+      pendingTask: existsSync(taskFile) ? JSON.parse(readFileSync(taskFile, "utf-8")) : null,
+      lastResult: existsSync(resultFile) ? JSON.parse(readFileSync(resultFile, "utf-8")) : null,
+      bootCounter: existsSync(bootCounterFile) ? parseInt(readFileSync(bootCounterFile, "utf-8").trim(), 10) : 0,
+      lastGoodCommit: existsSync(lastGoodCommitFile) ? readFileSync(lastGoodCommitFile, "utf-8").trim() : null,
+    };
+  } catch {}
+
+  status.timestamp = Date.now();
+  return status;
+}
+
+// ── ARIA Dashboard HTML ──
+
+function getAriaHTML(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0b14">
+  <title>ARIA — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html{height:100%;-webkit-text-size-adjust:100%}
+    body{font-family:'Inter',system-ui,sans-serif;background:#0b0b14;color:#d4d4d8;min-height:100vh}
+
+    /* Login (reuse chat style) */
+    #login{display:flex;justify-content:center;align-items:center;height:100vh;
+      flex-direction:column;background:radial-gradient(ellipse at 50% 0%,#1a1a30 0%,#0b0b14 70%)}
+    .login-card{background:#12121f;border:1px solid #1e1e35;border-radius:20px;padding:44px 36px;
+      width:min(380px,90vw);text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+    .login-card h1{font-size:28px;font-weight:700;
+      background:linear-gradient(135deg,#d4a574,#e8c9a0);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .login-card .subtitle{color:#3f3f5c;font-size:13px;margin:8px 0 28px;letter-spacing:.4px}
+    .login-card input{width:100%;padding:13px 16px;border-radius:12px;border:1px solid #1e1e35;
+      background:#0b0b14;color:#d4d4d8;font-size:15px;font-family:inherit;outline:none;transition:all .2s}
+    .login-card input:focus{border-color:#d4a574;box-shadow:0 0 0 3px rgba(212,165,116,.1)}
+    .login-card button{width:100%;padding:13px;border-radius:12px;border:none;margin-top:16px;
+      background:linear-gradient(135deg,#d4a574,#c4915e);color:#0b0b14;font-size:15px;
+      font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s;
+      box-shadow:0 4px 12px rgba(212,165,116,.2)}
+    .login-card button:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(212,165,116,.3)}
+    .login-err{color:#ef4444;font-size:13px;min-height:18px;margin-top:12px}
+
+    /* Dashboard */
+    #dash{display:none}
+    .dash-hdr{padding:20px 24px 16px;background:rgba(15,15,26,.9);border-bottom:1px solid #1a1a2e;
+      display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10;
+      backdrop-filter:blur(16px)}
+    .dash-hdr h1{font-size:22px;font-weight:700;
+      background:linear-gradient(135deg,#d4a574,#e8c9a0);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .dash-hdr .nav{display:flex;gap:8px;align-items:center}
+    .dash-hdr .nav a{color:#52525b;text-decoration:none;font-size:13px;padding:6px 12px;
+      border-radius:8px;border:1px solid #1e1e35;transition:all .15s}
+    .dash-hdr .nav a:hover{color:#d4a574;border-color:#d4a574}
+    .status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+    .status-dot.ok{background:#22c55e;box-shadow:0 0 8px rgba(34,197,94,.4)}
+    .status-dot.warn{background:#eab308;box-shadow:0 0 8px rgba(234,179,8,.4)}
+    .status-dot.err{background:#ef4444;box-shadow:0 0 8px rgba(239,68,68,.4)}
+    #refresh-timer{color:#2e2e45;font-size:11px}
+
+    .dash-body{max-width:1200px;margin:0 auto;padding:20px 16px 40px;display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+
+    /* Cards */
+    .card{background:#12121f;border:1px solid #1e1e35;border-radius:16px;padding:20px;overflow:hidden}
+    .card.full{grid-column:1/-1}
+    .card h2{font-size:14px;font-weight:600;color:#d4a574;margin-bottom:14px;
+      letter-spacing:.3px;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+    .card h2 svg{width:16px;height:16px;opacity:.7}
+
+    /* Key-Value rows */
+    .kv{display:flex;justify-content:space-between;align-items:center;padding:6px 0;
+      border-bottom:1px solid #0f0f1a;font-size:13px}
+    .kv:last-child{border-bottom:none}
+    .kv .k{color:#52525b}
+    .kv .v{color:#a1a1aa;font-family:'JetBrains Mono',monospace;font-size:12px}
+    .kv .v.good{color:#22c55e}
+    .kv .v.warn{color:#eab308}
+    .kv .v.bad{color:#ef4444}
+    .kv .v.accent{color:#d4a574}
+
+    /* Stat grid */
+    .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:12px;margin-bottom:8px}
+    .stat{background:#0b0b14;border-radius:12px;padding:14px;text-align:center}
+    .stat .num{font-size:24px;font-weight:700;color:#e4e4e7;font-family:'JetBrains Mono',monospace}
+    .stat .label{font-size:11px;color:#3f3f5c;margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
+
+    /* Type badges */
+    .type-badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;
+      font-weight:500;margin-right:4px}
+    .type-badge.person{background:#1a2744;color:#6ea8d4}
+    .type-badge.event{background:#2a1a3a;color:#b48ad4}
+    .type-badge.insight{background:#1a3a2a;color:#6ad4a8}
+    .type-badge.fact{background:#2a2a1a;color:#d4c46a}
+    .type-badge.emotion{background:#3a1a2a;color:#d46a8a}
+    .type-badge.plan{background:#1a2a3a;color:#6ab4d4}
+    .type-badge.meta{background:#2a2a2a;color:#a1a1aa}
+
+    /* Memory nodes list */
+    .node{background:#0b0b14;border:1px solid #151525;border-radius:10px;padding:10px 12px;
+      margin-bottom:8px;font-size:13px;line-height:1.5}
+    .node .node-hdr{display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap}
+    .node .str{font-family:'JetBrains Mono',monospace;font-size:11px;color:#3f3f5c}
+    .node .str-bar{width:50px;height:4px;background:#151525;border-radius:2px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:4px}
+    .node .str-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,#ef4444,#eab308,#22c55e)}
+    .node .content{color:#a1a1aa}
+    .node .tags{margin-top:4px}
+    .node .tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;
+      background:#1a1a2e;color:#52525b;margin-right:3px;margin-bottom:2px}
+    .node .pinned-icon{color:#d4a574;font-size:11px}
+
+    /* Working memory */
+    .wm-field{background:#0b0b14;border-radius:10px;padding:10px 12px;margin-bottom:8px}
+    .wm-field .wm-label{font-size:11px;color:#3f3f5c;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+    .wm-field .wm-val{font-size:13px;color:#a1a1aa;line-height:1.5}
+
+    /* Self-improve */
+    .si-task{background:#0b0b14;border:1px solid #1a2a1a;border-radius:10px;padding:12px;margin-bottom:8px}
+    .si-task.pending{border-color:#2a2a1a}
+    .si-task.success{border-color:#1a2a1a}
+    .si-task.failed{border-color:#2a1a1a}
+    .si-label{font-size:11px;color:#3f3f5c;text-transform:uppercase;letter-spacing:.5px}
+    .si-val{font-size:13px;color:#a1a1aa;margin-top:2px}
+    .si-link{color:#6ea8d4;text-decoration:none;font-size:12px}
+    .si-link:hover{text-decoration:underline}
+
+    @media(max-width:640px){
+      .dash-body{grid-template-columns:1fr;padding:12px 8px 32px}
+      .card{padding:16px}
+      .stat-grid{grid-template-columns:repeat(2,1fr)}
+    }
+  </style>
+</head>
+<body>
+  <div id="login">
+    <div class="login-card">
+      <h1>ARIA</h1>
+      <p class="subtitle">Autonomous Reasoning & Insight Agent</p>
+      <input type="password" id="pw-input" placeholder="Enter password" autofocus>
+      <button onclick="doLogin()">Access Dashboard</button>
+      <div class="login-err" id="login-err"></div>
+    </div>
+  </div>
+
+  <div id="dash">
+    <div class="dash-hdr">
+      <h1><span class="status-dot" id="status-dot"></span>ARIA</h1>
+      <div class="nav">
+        <span id="refresh-timer"></span>
+        <a href="/chat">Chat</a>
+      </div>
+    </div>
+    <div class="dash-body" id="dash-body">
+      <div style="text-align:center;padding:40px;color:#2e2e45">Loading...</div>
+    </div>
+  </div>
+
+  <script>
+    let token = localStorage.getItem('agent_token');
+    let refreshInterval;
+
+    document.getElementById('pw-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+
+    if (token) {
+      fetch('/api/auth-check', { headers: { Authorization: 'Bearer ' + token } })
+        .then(r => r.json()).then(d => d.authenticated ? showDash() : resetAuth()).catch(resetAuth);
+    }
+
+    function resetAuth() {
+      localStorage.removeItem('agent_token'); token = null;
+      document.getElementById('login').style.display = 'flex';
+      document.getElementById('dash').style.display = 'none';
+    }
+    function showDash() {
+      document.getElementById('login').style.display = 'none';
+      document.getElementById('dash').style.display = 'block';
+      loadStatus();
+      refreshInterval = setInterval(loadStatus, 30000);
+    }
+
+    async function doLogin() {
+      const pw = document.getElementById('pw-input').value;
+      const err = document.getElementById('login-err');
+      err.textContent = '';
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pw }) });
+        const d = await res.json();
+        if (d.success) { token = d.token; localStorage.setItem('agent_token', token); showDash(); }
+        else err.textContent = d.error || 'Login failed';
+      } catch { err.textContent = 'Connection error'; }
+    }
+
+    function timeAgo(ts) {
+      if (!ts) return 'never';
+      const d = Date.now() - ts;
+      const s = Math.floor(d/1000), m = Math.floor(s/60), h = Math.floor(m/60), dy = Math.floor(h/24);
+      if (s < 60) return s + 's ago';
+      if (m < 60) return m + 'm ago';
+      if (h < 24) return h + 'h ' + (m%60) + 'm ago';
+      return dy + 'd ago';
+    }
+    function fmtDate(ts) {
+      if (!ts) return 'N/A';
+      return new Date(ts).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    }
+
+    async function loadStatus() {
+      try {
+        const res = await fetch('/api/aria/status', { headers: { Authorization: 'Bearer ' + token } });
+        if (res.status === 401) { resetAuth(); return; }
+        const data = await res.json();
+        render(data);
+        document.getElementById('refresh-timer').textContent = 'Updated ' + new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      } catch(e) {
+        document.getElementById('dash-body').innerHTML = '<div class="card full"><p style="color:#ef4444">Failed to load: '+e.message+'</p></div>';
+      }
+    }
+
+    function render(d) {
+      const bs = d.brainState || {};
+      const wm = d.workingMemory || {};
+      const g = d.graph || {};
+      const si = d.selfImprove || {};
+
+      // Health dot
+      const dot = document.getElementById('status-dot');
+      const failures = bs.consecutiveFailures || 0;
+      const healthy = failures < 5;
+      dot.className = 'status-dot ' + (healthy ? (failures > 0 ? 'warn' : 'ok') : 'err');
+
+      let html = '';
+
+      // ── Overview Card ──
+      html += '<div class="card"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Brain Status</h2>';
+      html += '<div class="stat-grid">';
+      html += stat(g.nodeCount || 0, 'Nodes');
+      html += stat(g.edgeCount || 0, 'Edges');
+      html += stat(bs.totalThinks || 0, 'Thinks');
+      html += stat('$'+(bs.totalCost||0).toFixed(2), 'Cost');
+      html += '</div>';
+      html += kv('Health', healthy ? (failures > 0 ? 'Degraded ('+failures+' failures)' : 'Healthy') : 'Unhealthy ('+failures+' failures)', healthy ? (failures > 0 ? 'warn' : 'good') : 'bad');
+      html += kv('Last Think', timeAgo(bs.lastThinkTick));
+      html += kv('Last Consolidate', timeAgo(bs.lastConsolidateTick));
+      html += kv('Last Reflect', timeAgo(bs.lastReflectTick));
+      html += kv('Last Message Sent', timeAgo(bs.lastMessageTime));
+      html += kv('Messages Today', (bs.messagesToday || 0) + '/5');
+      html += kv('Pending Self-Mod', bs.pendingSelfMod ? 'Yes' : 'No', bs.pendingSelfMod ? 'warn' : '');
+      html += '</div>';
+
+      // ── Working Memory Card ──
+      html += '<div class="card"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 017 7c0 3-2 5.5-4 7.5S12 22 12 22s-1-3.5-3-5.5S5 12 5 9a7 7 0 017-7z"/></svg>Working Memory</h2>';
+      if (wm.currentContext || wm.mood || (wm.shortTermTracking && wm.shortTermTracking.length)) {
+        if (wm.mood) html += wmField('Mood', wm.mood);
+        if (wm.currentContext) html += wmField('Context', wm.currentContext);
+        if (wm.shortTermTracking && wm.shortTermTracking.length) html += wmField('Tracking', wm.shortTermTracking.join(', '));
+        html += kv('Last Updated', timeAgo(wm.lastUpdated));
+      } else {
+        html += '<div style="color:#2e2e45;font-size:13px;padding:10px 0">Empty — awaiting first think tick</div>';
+      }
+      html += '</div>';
+
+      // ── Graph Stats Card ──
+      if (g.byType) {
+        html += '<div class="card"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>Memory Graph</h2>';
+        html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">';
+        for (const [type, count] of Object.entries(g.byType)) {
+          html += '<span class="type-badge '+type+'">'+type+': '+count+'</span>';
+        }
+        html += '</div>';
+        html += kv('Avg Strength', (g.avgStrength||0).toFixed(3));
+        html += kv('Pinned Nodes', (g.pinnedNodes||[]).length);
+        html += '</div>';
+      }
+
+      // ── Self-Improve Card ──
+      html += '<div class="card"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Self-Improvement</h2>';
+      html += kv('Boot Counter', si.bootCounter || 0, si.bootCounter > 1 ? 'warn' : '');
+      html += kv('Last Good Commit', si.lastGoodCommit ? si.lastGoodCommit.slice(0,8) : 'none');
+      if (si.pendingTask) {
+        html += '<div class="si-task pending" style="margin-top:10px">';
+        html += '<div class="si-label">Pending Task</div>';
+        html += '<div class="si-val">'+esc(si.pendingTask.description)+'</div>';
+        html += '<div style="font-size:11px;color:#3f3f5c;margin-top:4px">Files: '+(si.pendingTask.files||[]).join(', ')+'</div>';
+        html += '</div>';
+      }
+      if (si.lastResult) {
+        const r = si.lastResult;
+        html += '<div class="si-task '+(r.success?'success':'failed')+'" style="margin-top:10px">';
+        html += '<div class="si-label">Last Result — '+(r.success?'<span style="color:#22c55e">Success</span>':'<span style="color:#ef4444">Failed</span>')+'</div>';
+        html += '<div class="si-val">'+esc(r.description)+'</div>';
+        if (r.prUrl) html += '<a class="si-link" href="'+esc(r.prUrl)+'" target="_blank">View PR</a>';
+        if (r.completedAt) html += '<div style="font-size:11px;color:#3f3f5c;margin-top:4px">'+fmtDate(r.completedAt)+'</div>';
+        html += '</div>';
+      }
+      if (!si.pendingTask && !si.lastResult) {
+        html += '<div style="color:#2e2e45;font-size:13px;padding:10px 0">No self-improvement activity yet</div>';
+      }
+      html += '</div>';
+
+      // ── Pinned Memories Card ──
+      if (g.pinnedNodes && g.pinnedNodes.length) {
+        html += '<div class="card full"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 01-1.11-1.65l-.54-4.81A1 1 0 018.34 3h7.32a1 1 0 01.99 1.1l-.54 5.01A2 2 0 0115 10.76L12 14l-3-3.24z"/></svg>Pinned Memories (Core Identity)</h2>';
+        for (const n of g.pinnedNodes) html += renderNode(n, true);
+        html += '</div>';
+      }
+
+      // ── Strongest Memories Card ──
+      if (g.strongestNodes && g.strongestNodes.length) {
+        html += '<div class="card full"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>Strongest Memories</h2>';
+        for (const n of g.strongestNodes.slice(0, 10)) html += renderNode(n);
+        html += '</div>';
+      }
+
+      // ── Recent Memories Card ──
+      if (g.recentNodes && g.recentNodes.length) {
+        html += '<div class="card full"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Recent Memories</h2>';
+        for (const n of g.recentNodes) {
+          html += renderNode(n, false, n.createdAt);
+        }
+        html += '</div>';
+      }
+
+      document.getElementById('dash-body').innerHTML = html;
+    }
+
+    function stat(val, label) {
+      return '<div class="stat"><div class="num">'+val+'</div><div class="label">'+label+'</div></div>';
+    }
+    function kv(k, v, cls) {
+      return '<div class="kv"><span class="k">'+k+'</span><span class="v'+(cls?' '+cls:'')+'">'+v+'</span></div>';
+    }
+    function wmField(label, val) {
+      return '<div class="wm-field"><div class="wm-label">'+label+'</div><div class="wm-val">'+esc(val)+'</div></div>';
+    }
+    function renderNode(n, pinned, ts) {
+      let h = '<div class="node"><div class="node-hdr">';
+      h += '<span class="type-badge '+n.type+'">'+n.type+'</span>';
+      if (pinned) h += '<span class="pinned-icon">pinned</span>';
+      h += '<span class="str">'+n.strength.toFixed(2);
+      h += ' <span class="str-bar"><span class="str-fill" style="width:'+(n.strength*100)+'%"></span></span>';
+      h += '</span>';
+      if (n.accessCount) h += '<span class="str" style="margin-left:auto">'+n.accessCount+' access</span>';
+      if (ts) h += '<span class="str" style="margin-left:auto">'+timeAgo(ts)+'</span>';
+      h += '</div>';
+      h += '<div class="content">'+esc(n.content.slice(0,300))+(n.content.length>300?'...':'')+'</div>';
+      if (n.tags && n.tags.length) {
+        h += '<div class="tags">';
+        for (const t of n.tags) h += '<span class="tag">'+esc(t)+'</span>';
+        h += '</div>';
+      }
+      h += '</div>';
+      return h;
+    }
+    function esc(s) {
+      if (!s) return '';
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+  </script>
+</body>
+</html>`;
+}
+
+// ── Chat HTML ──
+
 function getChatHTML(): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -228,7 +687,7 @@ function getChatHTML(): string {
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#0b0b14">
-  <title>Claude Agent</title>
+  <title>ARIA</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark-dimmed.min.css">
@@ -416,8 +875,8 @@ function getChatHTML(): string {
 <body>
   <div id="login">
     <div class="login-card">
-      <h1>Claude Agent</h1>
-      <p class="subtitle">Personal AI Assistant</p>
+      <h1>ARIA</h1>
+      <p class="subtitle">Autonomous Reasoning & Insight Agent</p>
       <input type="password" id="pw-input" placeholder="Enter password" autofocus>
       <button onclick="doLogin()">Sign In</button>
       <div class="login-err" id="login-err"></div>
@@ -426,8 +885,12 @@ function getChatHTML(): string {
 
   <div id="app">
     <header>
-      <h1>Claude Agent</h1>
+      <h1>ARIA</h1>
       <div class="hdr-actions">
+        <button class="hdr-btn" onclick="window.location='/aria'" title="Dashboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Status</span>
+        </button>
         <button class="hdr-btn" onclick="showQr()" title="QR Code">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="17" y="17" width="4" height="4" rx="1"/><path d="M14 14h3v3"/></svg>
           <span>QR</span>
@@ -449,7 +912,7 @@ function getChatHTML(): string {
     <div id="messages" style="position:relative">
       <div class="empty-state" id="empty">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-        <p>Start a conversation</p>
+        <p>Talk to ARIA</p>
         <small>Messages from web and WhatsApp appear here</small>
       </div>
     </div>
@@ -465,7 +928,7 @@ function getChatHTML(): string {
       </div>
     </div>
     <div id="input-area">
-      <textarea id="msg-input" placeholder="Message Claude..." rows="1"></textarea>
+      <textarea id="msg-input" placeholder="Message ARIA..." rows="1"></textarea>
       <button id="send-btn" onclick="doSend()">
         <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
       </button>
