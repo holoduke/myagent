@@ -33,6 +33,9 @@ const MIN_MESSAGE_INTERVAL = Number(process.env.BRAIN_MIN_MESSAGE_INTERVAL ?? 72
 const OWNER_NAME = process.env.OWNER_NAME || "Owner";
 const BRAIN_ENABLED = process.env.BRAIN_ENABLED !== "false";
 
+// Tool access for brain ticks (empty string = no tools, comma-separated list = those tools)
+const BRAIN_TOOLS = process.env.BRAIN_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch";
+
 // Tick intervals
 const THINK_COOLDOWN = Number(process.env.BRAIN_THINK_COOLDOWN ?? 300000);        // 5 min
 const CONSOLIDATE_INTERVAL = Number(process.env.BRAIN_CONSOLIDATE_INTERVAL ?? 14400000); // 4 hours
@@ -310,8 +313,8 @@ async function thinkTick(
   try {
     const result = await queue.add(async () => {
       return await askClaude(prompt, {
-        timeout: 120_000,
-        allowedTools: "",
+        timeout: 300_000,
+        allowedTools: BRAIN_TOOLS,
         noSession: true,
       });
     });
@@ -403,8 +406,8 @@ async function consolidateTick(
   try {
     const result = await queue.add(async () => {
       return await askClaude(prompt, {
-        timeout: 120_000,
-        allowedTools: "",
+        timeout: 300_000,
+        allowedTools: BRAIN_TOOLS,
         noSession: true,
       });
     });
@@ -473,8 +476,8 @@ async function reflectTick(
   try {
     const result = await queue.add(async () => {
       return await askClaude(prompt, {
-        timeout: 180_000,
-        allowedTools: "",
+        timeout: 600_000,
+        allowedTools: BRAIN_TOOLS,
         noSession: true,
       });
     });
