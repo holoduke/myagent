@@ -29,6 +29,7 @@ definePageMeta({ layout: 'auth' })
 if (import.meta.server) {
   const event = useRequestEvent()
   if (event) {
+    const { setCookie } = await import('h3')
     setCookie(event, 'aria_token', '', { httpOnly: true, maxAge: 0, path: '/' })
   }
 }
