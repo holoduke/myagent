@@ -4,11 +4,13 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion,
   proto,
+  Contact,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
 // @ts-ignore - no types available
 import qrcode from "qrcode-terminal";
+import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
 
 export type MessageHandler = (
   jid: string,
@@ -33,6 +35,47 @@ let sock: ReturnType<typeof makeWASocket>;
 let latestQr: string | null = null;
 const processedMessages = new Set<string>();
 const groupNameCache = new Map<string, string>();
+
+// --- Contact store ---
+const CONTACTS_PATH = process.env.DATA_DIR
+  ? `${process.env.DATA_DIR}/brain/contacts.json`
+  : "/data/brain/contacts.json";
+
+const contactStore = new Map<string, Contact>();
+
+function loadContacts(): void {
+  if (!existsSync(CONTACTS_PATH)) return;
+  try {
+    const data = JSON.parse(readFileSync(CONTACTS_PATH, "utf-8")) as Contact[];
+    for (const c of data) {
+      contactStore.set(c.id, c);
+    }
+    console.log(`[whatsapp] Loaded ${contactStore.size} contacts from disk`);
+  } catch (err) {
+    console.error("[whatsapp] Failed to load contacts:", err);
+  }
+}
+
+function saveContacts(): void {
+  const tmp = CONTACTS_PATH + ".tmp";
+  writeFileSync(tmp, JSON.stringify(Array.from(contactStore.values()), null, 2));
+  renameSync(tmp, CONTACTS_PATH);
+}
+
+/** Search contacts by name (case-insensitive partial match on name or notify). */
+export function findContacts(query: string): Contact[] {
+  const q = query.toLowerCase();
+  return Array.from(contactStore.values()).filter(
+    (c) =>
+      c.name?.toLowerCase().includes(q) ||
+      c.notify?.toLowerCase().includes(q)
+  );
+}
+
+/** Get all contacts. */
+export function getAllContacts(): Contact[] {
+  return Array.from(contactStore.values());
+}
 
 export function getLatestQr(): string | null {
   return latestQr;
@@ -59,6 +102,47 @@ export async function startWhatsApp(
   });
 
   sock.ev.on("creds.update", saveCreds);
+
+  // --- Contact sync ---
+  loadContacts();
+
+  sock.ev.on("contacts.upsert", (contacts) => {
+    let added = 0;
+    for (const c of contacts) {
+      const existing = contactStore.get(c.id);
+      contactStore.set(c.id, { ...existing, ...c });
+      added++;
+    }
+    console.log(`[whatsapp] contacts.upsert: ${added} contacts`);
+    saveContacts();
+  });
+
+  sock.ev.on("contacts.update", (updates) => {
+    let updated = 0;
+    for (const u of updates) {
+      const existing = contactStore.get(u.id!);
+      if (existing) {
+        contactStore.set(u.id!, { ...existing, ...u });
+        updated++;
+      } else {
+        contactStore.set(u.id!, u as Contact);
+        updated++;
+      }
+    }
+    console.log(`[whatsapp] contacts.update: ${updated} contacts`);
+    saveContacts();
+  });
+
+  // Also capture messaging-history.set for initial sync
+  sock.ev.on("messaging-history.set", ({ contacts }) => {
+    if (!contacts?.length) return;
+    for (const c of contacts) {
+      const existing = contactStore.get(c.id);
+      contactStore.set(c.id, { ...existing, ...c });
+    }
+    console.log(`[whatsapp] messaging-history.set: ${contacts.length} contacts synced`);
+    saveContacts();
+  });
 
   sock.ev.on("connection.update", (update) => {
     const { connection, lastDisconnect, qr } = update;
