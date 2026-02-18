@@ -8,6 +8,7 @@ import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./
 import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState } from "./memory/types.js";
+import { getDueMessages } from "./scheduler.js";
 import { MAX_NODES_SOFT } from "./memory/types.js";
 import { runConsolidation } from "./memory/decay.js";
 import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory } from "./memory/working-memory.js";
@@ -360,8 +361,8 @@ async function tick(
   // ── Pick up self-improve results from worker ──
   pickUpImproveResult(state);
 
-  // ── Pick up pending scheduled messages ──
-  await pickUpPendingMessage(state, sendMessage, ownerJid);
+  // ── Deliver due scheduled messages ──
+  await deliverScheduledMessages(state, sendMessage, ownerJid);
 
   // Reset daily counter
   if (state.messagesTodayDate !== today) {
@@ -733,31 +734,44 @@ async function reflectTick(
 
 // ── Pending Scheduled Messages ──
 
-async function pickUpPendingMessage(
+async function deliverScheduledMessages(
   state: BrainState,
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
 ): Promise<void> {
+  // New multi-message scheduler
+  const dueMessages = getDueMessages();
+  for (const msg of dueMessages) {
+    try {
+      const jid = msg.targetJid || ownerJid;
+      await sendMessage(jid, msg.message);
+      state.lastMessageTime = Date.now();
+      state.messagesToday++;
+      log(`Delivered scheduled message ${msg.id} (${msg.message.length} chars, source: ${msg.source})`);
+    } catch (err) {
+      log(`Failed to deliver scheduled message ${msg.id}: ${err}`);
+    }
+  }
+
+  // Legacy: also check single pending-message.json for backward compatibility
   const pendingPath = `${BRAIN_DIR}/pending-message.json`;
   if (!existsSync(pendingPath)) return;
-
   try {
     const raw = readFileSync(pendingPath, "utf-8");
     const pending = JSON.parse(raw) as { sendAt: number; message: string };
-    const now = Date.now();
-
-    if (now >= pending.sendAt) {
+    if (Date.now() >= pending.sendAt) {
       await sendMessage(ownerJid, pending.message);
-      state.lastMessageTime = now;
+      state.lastMessageTime = Date.now();
       state.messagesToday++;
       unlinkSync(pendingPath);
-      log(`Sent scheduled message (${pending.message.length} chars)`);
-      saveState(state);
+      log(`Sent legacy pending message (${pending.message.length} chars)`);
     }
   } catch (err) {
-    log(`Error processing pending message: ${err}`);
+    log(`Error processing legacy pending message: ${err}`);
     try { unlinkSync(pendingPath); } catch {}
   }
+
+  if (dueMessages.length > 0) saveState(state);
 }
 
 // ── Message Sending with Limits ──

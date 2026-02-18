@@ -113,11 +113,17 @@ export async function startWhatsApp(
         m?.templateButtonReplyMessage?.selectedDisplayText ||
         "";
 
+      // Log all incoming messages for debugging (before any filtering)
+      console.log(`[whatsapp] MSG jid=${jid} fromMe=${msg.key.fromMe} group=${isGroup} participant=${msg.key.participant || "N/A"} text=${text.slice(0, 50) || "(no text)"}`);
+
       if (!text.trim()) continue;
 
       // Deduplicate messages (Baileys can deliver same message via @lid and @s.whatsapp.net)
       const msgId = msg.key.id;
-      if (msgId && processedMessages.has(msgId)) continue;
+      if (msgId && processedMessages.has(msgId)) {
+        console.log(`[whatsapp] Dedup skip: ${msgId} from ${jid}`);
+        continue;
+      }
       if (msgId) {
         processedMessages.add(msgId);
         setTimeout(() => processedMessages.delete(msgId), 5 * 60 * 1000);
@@ -171,13 +177,19 @@ export async function startWhatsApp(
       // --- Direct command handling: owner only, non-group ---
       if (isGroup) continue;
 
-      const isOwner = jid === ownerJid || jid === ownerLid || (msg.key.fromMe && jid.endsWith("@lid"));
+      const matchesJid = jid === ownerJid;
+      const matchesLid = jid === ownerLid;
+      const matchesFromMe = msg.key.fromMe === true && jid.endsWith("@lid");
+      const isOwner = matchesJid || matchesLid || matchesFromMe;
+
+      console.log(`[whatsapp] DM check: jid=${jid} ownerJid=${ownerJid} ownerLid=${ownerLid || "unset"} fromMe=${msg.key.fromMe} matchJid=${matchesJid} matchLid=${matchesLid} matchFromMe=${matchesFromMe} → isOwner=${isOwner}`);
+
       if (!isOwner) {
-        console.log(`[whatsapp] Observed non-owner DM: ${jid}`);
+        console.log(`[whatsapp] Skipping non-owner DM from: ${jid}`);
         continue;
       }
 
-      console.log(`[whatsapp] Message from owner: ${text.slice(0, 100)}`);
+      console.log(`[whatsapp] Processing owner message: ${text.slice(0, 100)}`);
 
       // Always reply to owner's @s.whatsapp.net JID (LID replies may not deliver)
       await onMessage(ownerJid, text, msg);
