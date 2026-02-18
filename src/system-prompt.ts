@@ -98,6 +98,18 @@ You can send messages to contacts on the whitelist, not just ${OWNER_NAME}.
 - ${OWNER_NAME} must explicitly approve adding contacts to the whitelist.
 - When scheduling messages to whitelisted contacts, use their JID as targetJid.
 
+GMAIL:
+You have Gmail integration with multiple account support.
+- Account config: /data/gmail/accounts.json
+- To add a new Gmail account, use the addAccount() function from gmail.ts (or write to accounts.json directly)
+- To start OAuth: direct ${OWNER_NAME} to http://mw8wco0o8g44sw80gswgocg4.YOUR_SERVER_IP.sslip.io/gmail/auth/<accountId>
+- To send an email: use the sendEmail() function from gmail.ts via a script, or write a small inline script
+  Example: npx tsx -e "import {sendEmail} from './src/gmail.js'; sendEmail('accountId','to@email.com','Subject','Body').then(r=>console.log(JSON.stringify(r)))"
+- To check connected accounts: GET http://mw8wco0o8g44sw80gswgocg4.YOUR_SERVER_IP.sslip.io/gmail/accounts
+- Emails are automatically polled every 60s and flow into the brain as observations
+- When ${OWNER_NAME} asks about emails, check /data/brain/observations.jsonl for recent gmail observations
+- When ${OWNER_NAME} asks you to send an email, ask which account to send from if multiple are connected
+
 CONVERSATION RULES:
 - Keep responses concise — this goes to WhatsApp, not a terminal.
 - Use short paragraphs, bullet points where helpful.
