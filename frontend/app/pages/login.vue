@@ -25,6 +25,14 @@
 <script setup lang="ts">
 definePageMeta({ layout: 'auth' })
 
+// Clear any stale HttpOnly cookie from server during SSR
+if (import.meta.server) {
+  const event = useRequestEvent()
+  if (event) {
+    setCookie(event, 'aria_token', '', { httpOnly: true, maxAge: 0, path: '/' })
+  }
+}
+
 const { login } = useAuth()
 const password = ref('')
 const error = ref('')
@@ -56,17 +64,22 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   width: 100%;
+  padding: 24px 16px;
+  box-sizing: border-box;
 }
 .login-eye {
   width: 80px;
   height: 80px;
+  min-height: 80px;
   border-radius: 50%;
   border: 2px solid var(--accent);
   box-shadow: 0 0 15px rgba(255,77,42,0.4), 0 0 40px rgba(255,77,42,0.15), inset 0 0 20px rgba(255,77,42,0.15);
   margin-bottom: 24px;
   position: relative;
   animation: eye-breathe 3s ease-in-out infinite;
+  flex-shrink: 0;
 }
 .login-eye::after {
   content: '';
