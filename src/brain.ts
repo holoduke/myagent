@@ -360,6 +360,9 @@ async function tick(
   // ── Pick up self-improve results from worker ──
   pickUpImproveResult(state);
 
+  // ── Pick up pending scheduled messages ──
+  await pickUpPendingMessage(state, sendMessage, ownerJid);
+
   // Reset daily counter
   if (state.messagesTodayDate !== today) {
     state.messagesToday = 0;
@@ -725,6 +728,35 @@ async function reflectTick(
   } catch (err) {
     log(`Reflect failed: ${err}`);
     state.lastReflectTick = now;
+  }
+}
+
+// ── Pending Scheduled Messages ──
+
+async function pickUpPendingMessage(
+  state: BrainState,
+  sendMessage: (jid: string, text: string) => Promise<void>,
+  ownerJid: string,
+): Promise<void> {
+  const pendingPath = `${BRAIN_DIR}/pending-message.json`;
+  if (!existsSync(pendingPath)) return;
+
+  try {
+    const raw = readFileSync(pendingPath, "utf-8");
+    const pending = JSON.parse(raw) as { sendAt: number; message: string };
+    const now = Date.now();
+
+    if (now >= pending.sendAt) {
+      await sendMessage(ownerJid, pending.message);
+      state.lastMessageTime = now;
+      state.messagesToday++;
+      unlinkSync(pendingPath);
+      log(`Sent scheduled message (${pending.message.length} chars)`);
+      saveState(state);
+    }
+  } catch (err) {
+    log(`Error processing pending message: ${err}`);
+    try { unlinkSync(pendingPath); } catch {}
   }
 }
 
