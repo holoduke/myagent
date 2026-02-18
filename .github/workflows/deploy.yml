@@ -10,9 +10,13 @@ jobs:
     steps:
       - name: Trigger Coolify Deploy
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+          response=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
-            "${{ secrets.COOLIFY_URL }}/api/v1/applications/${{ secrets.COOLIFY_APP_UUID }}/restart" \
+            -H "Content-Type: application/json" \
+            "${{ secrets.COOLIFY_URL }}/api/v1/deploy" \
+            -d '{"uuid": "${{ secrets.COOLIFY_APP_UUID }}", "force": false}' \
             --max-time 30)
-          echo "Deploy triggered (HTTP $response)"
-          [ "$response" -lt 300 ] || exit 1
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+          echo "Deploy response (HTTP $http_code): $body"
+          [ "$http_code" -lt 300 ] || exit 1
