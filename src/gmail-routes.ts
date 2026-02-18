@@ -26,6 +26,10 @@ function sendHtml(res: ServerResponse, status: number, html: string): void {
   res.end(html);
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 /**
  * Handle Gmail-related HTTP routes. Returns true if the route was handled.
  */
@@ -68,7 +72,7 @@ export function handleGmailRoutes(req: IncomingMessage, res: ServerResponse): bo
     if (error) {
       sendHtml(res, 400, `
         <h1>Gmail Auth Failed</h1>
-        <p>Error: ${error}</p>
+        <p>Error: ${escapeHtml(error)}</p>
         <p>Try again or check your Google Cloud Console settings.</p>
       `);
       return true;
@@ -90,13 +94,13 @@ export function handleGmailRoutes(req: IncomingMessage, res: ServerResponse): bo
           restartGmailPolling();
           sendHtml(res, 200, `
             <h1>Gmail Connected!</h1>
-            <p>Account <strong>${state}</strong> is now linked to ARIA.</p>
+            <p>Account <strong>${escapeHtml(state)}</strong> is now linked to ARIA.</p>
             <p>Email polling will start automatically. You can close this tab.</p>
           `);
         } else {
           sendHtml(res, 500, `
             <h1>Gmail Auth Failed</h1>
-            <p>Token exchange failed for account "${state}". Check ARIA logs.</p>
+            <p>Token exchange failed for account "${escapeHtml(state)}". Check ARIA logs.</p>
           `);
         }
       })
@@ -104,7 +108,7 @@ export function handleGmailRoutes(req: IncomingMessage, res: ServerResponse): bo
         log(`Auth callback error: ${err}`);
         sendHtml(res, 500, `
           <h1>Gmail Auth Failed</h1>
-          <p>Error: ${err}</p>
+          <p>Error: ${escapeHtml(String(err))}</p>
         `);
       });
 

@@ -5,10 +5,10 @@ on:
     branches: [main]
 
 jobs:
-  deploy:
+  deploy-backend:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Coolify Deploy
+      - name: Trigger Coolify Backend Deploy
         run: |
           response=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
@@ -18,5 +18,22 @@ jobs:
             --max-time 30)
           http_code=$(echo "$response" | tail -1)
           body=$(echo "$response" | head -n -1)
-          echo "Deploy response (HTTP $http_code): $body"
+          echo "Backend deploy response (HTTP $http_code): $body"
+          [ "$http_code" -lt 300 ] || exit 1
+
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    if: vars.COOLIFY_FRONTEND_APP_UUID != ''
+    steps:
+      - name: Trigger Coolify Frontend Deploy
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            "${{ secrets.COOLIFY_URL }}/api/v1/deploy" \
+            -d '{"uuid": "${{ vars.COOLIFY_FRONTEND_APP_UUID }}", "force": false}' \
+            --max-time 30)
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+          echo "Frontend deploy response (HTTP $http_code): $body"
           [ "$http_code" -lt 300 ] || exit 1

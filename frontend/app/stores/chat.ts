@@ -1,0 +1,187 @@
+import { defineStore } from 'pinia'
+import type { ChatMessage, ChatStats } from '~/types/aria'
+
+export const useChatStore = defineStore('chat', () => {
+  const messages = ref<ChatMessage[]>([])
+  const streaming = ref(false)
+  const streamContent = ref('')
+  const streamPhase = ref<'idle' | 'queued' | 'streaming'>('idle')
+  const totalTokens = ref(0)
+  const totalCost = ref(0)
+  const messageCount = ref(0)
+  const historyLoaded = ref(false)
+
+  function addMessage(msg: ChatMessage) {
+    messages.value.push(msg)
+  }
+
+  function clearMessages() {
+    messages.value = []
+    totalTokens.value = 0
+    totalCost.value = 0
+    messageCount.value = 0
+  }
+
+  function addStats(stats: ChatStats) {
+    totalTokens.value += (stats.inputTokens || 0) + (stats.outputTokens || 0)
+    totalCost.value += stats.totalCostUsd || 0
+    messageCount.value++
+  }
+
+  async function loadHistory() {
+    if (historyLoaded.value) return
+
+    try {
+      const data = await $fetch<ChatMessage[]>('/api/history')
+      if (data && data.length) {
+        totalTokens.value = 0
+        totalCost.value = 0
+        messageCount.value = 0
+
+        for (const m of data) {
+          messages.value.push(m)
+          if (m.role === 'assistant' && m.stats) {
+            addStats(m.stats)
+          }
+        }
+      }
+    } catch {
+      // Silently fail
+    }
+
+    historyLoaded.value = true
+  }
+
+  async function sendMessage(text: string) {
+    if (streaming.value) return
+
+    // Add user message
+    addMessage({
+      role: 'user',
+      content: text,
+      timestamp: Date.now(),
+      source: 'web',
+    })
+
+    streaming.value = true
+    streamContent.value = ''
+    streamPhase.value = 'queued'
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      })
+
+      if (res.status === 401) {
+        addMessage({ role: 'error', content: 'Session expired', timestamp: Date.now() })
+        streaming.value = false
+        streamPhase.value = 'idle'
+        const { logout } = useAuth()
+        logout()
+        return
+      }
+
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      let lastStats: ChatStats | null = null
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const ev = JSON.parse(line.slice(6))
+
+            if (ev.type === 'delta') {
+              streamPhase.value = 'streaming'
+              streamContent.value += ev.text
+            } else if (ev.type === 'queued') {
+              streamPhase.value = 'queued'
+            } else if (ev.type === 'start') {
+              streamPhase.value = 'streaming'
+              streamContent.value = ''
+            } else if (ev.type === 'done') {
+              lastStats = ev.stats || null
+            } else if (ev.type === 'error') {
+              addMessage({ role: 'error', content: ev.error, timestamp: Date.now() })
+            }
+          } catch {
+            // Skip malformed events
+          }
+        }
+      }
+
+      // Finalize assistant message
+      if (streamContent.value) {
+        const msg: ChatMessage = {
+          role: 'assistant',
+          content: streamContent.value,
+          timestamp: Date.now(),
+          source: 'web',
+          stats: lastStats || undefined,
+        }
+        addMessage(msg)
+        if (lastStats) addStats(lastStats)
+      }
+    } catch (err) {
+      addMessage({
+        role: 'error',
+        content: 'Connection error: ' + (err instanceof Error ? err.message : 'Unknown'),
+        timestamp: Date.now(),
+      })
+    } finally {
+      streaming.value = false
+      streamContent.value = ''
+      streamPhase.value = 'idle'
+    }
+  }
+
+  async function resetChat() {
+    if (streaming.value) return
+
+    streaming.value = true
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: '/reset' }),
+      })
+      const reader = res.body!.getReader()
+      while (true) {
+        const { done } = await reader.read()
+        if (done) break
+      }
+      clearMessages()
+      addMessage({ role: 'system', content: 'Session reset. Starting fresh.', timestamp: Date.now() })
+    } catch {
+      addMessage({ role: 'error', content: 'Failed to reset', timestamp: Date.now() })
+    } finally {
+      streaming.value = false
+    }
+  }
+
+  return {
+    messages,
+    streaming,
+    streamContent,
+    streamPhase,
+    totalTokens,
+    totalCost,
+    messageCount,
+    historyLoaded,
+    addMessage,
+    clearMessages,
+    loadHistory,
+    sendMessage,
+    resetChat,
+  }
+})

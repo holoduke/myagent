@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { appendFileSync } from "fs";
+import { appendFileSync, readFileSync, existsSync } from "fs";
 import { createServer } from "http";
 import { startWhatsApp, sendMessage, sendReaction, getLatestQr } from "./whatsapp.js";
 import { askClaude, resetSession } from "./claude.js";
@@ -9,11 +9,12 @@ import { addMessage, clearHistory, getUsageStats } from "./history.js";
 import { startTokenRefreshLoop } from "./auth-refresh.js";
 import { recordObservation } from "./observer.js";
 import { startBrainLoop, stopBrainLoop, getBrainHealth } from "./brain.js";
-import { startGmailPolling, stopGmailPolling } from "./gmail.js";
+import { startGmailPolling, stopGmailPolling, getAccountStatus } from "./gmail.js";
 import { handleGmailRoutes } from "./gmail-routes.js";
 
 const queue = new MessageQueue();
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
+const startedAt = Date.now();
 
 function log(msg: string) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -44,6 +45,54 @@ async function main() {
 
     // Gmail OAuth routes
     if (handleGmailRoutes(req, res)) return;
+
+    // Public status endpoint (no auth needed)
+    if (req.url === "/status") {
+      const health = getBrainHealth();
+      const uptime = Date.now() - startedAt;
+      const uptimeHours = Math.floor(uptime / 3600000);
+      const uptimeMinutes = Math.floor((uptime % 3600000) / 60000);
+      const gmailAccounts = getAccountStatus();
+      const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
+      let memoryNodeCount = 0;
+      let memoryEdgeCount = 0;
+      try {
+        const nf = `${BRAIN_DIR}/graph/nodes.json`;
+        const ef = `${BRAIN_DIR}/graph/edges.json`;
+        if (existsSync(nf)) memoryNodeCount = Object.keys(JSON.parse(readFileSync(nf, "utf-8"))).length;
+        if (existsSync(ef)) memoryEdgeCount = (JSON.parse(readFileSync(ef, "utf-8")) as unknown[]).length;
+      } catch {}
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        name: "ARIA",
+        version: "1.0.0",
+        status: health.healthy ? "operational" : "degraded",
+        uptime: `${uptimeHours}h ${uptimeMinutes}m`,
+        uptimeMs: uptime,
+        brain: {
+          healthy: health.healthy,
+          consecutiveFailures: health.consecutiveFailures,
+          pendingSelfMod: health.pendingSelfMod,
+          lastSuccessfulTick: health.lastSuccessfulTick,
+        },
+        memory: {
+          nodes: memoryNodeCount,
+          edges: memoryEdgeCount,
+        },
+        queue: {
+          depth: queue.size,
+          processing: queue.isProcessing,
+        },
+        gmail: {
+          accounts: gmailAccounts.length,
+          authenticated: gmailAccounts.filter(a => a.authenticated).length,
+        },
+        timestamp: Date.now(),
+      }));
+      return;
+    }
 
     if (req.url === "/qr") {
       const qr = getLatestQr();

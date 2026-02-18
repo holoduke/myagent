@@ -81,6 +81,13 @@ export function getLatestQr(): string | null {
   return latestQr;
 }
 
+export function getWhatsAppStatus(): { connected: boolean; contactCount: number } {
+  return {
+    connected: !!sock,
+    contactCount: contactStore.size,
+  };
+}
+
 export async function startWhatsApp(
   onMessage: MessageHandler,
   onObservation?: ObservationHandler,
