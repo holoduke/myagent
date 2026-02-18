@@ -1,0 +1,137 @@
+<template>
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <h1><span class="hal-dot"></span>ARIA</h1>
+      <div class="version">v1.0 mainframe</div>
+    </div>
+    <div class="sidebar-nav">
+      <NuxtLink
+        v-for="item in navItems"
+        :key="item.id"
+        :to="`/${item.id}`"
+        class="nav-item"
+        :class="{ active: route.path === `/${item.id}` }"
+      >
+        <span v-html="item.icon"></span>
+        <span>{{ item.label }}</span>
+      </NuxtLink>
+    </div>
+    <div class="sidebar-footer">
+      <button class="logout-btn" @click="logout()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Logout
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+const route = useRoute()
+const { logout } = useAuth()
+
+const navItems = [
+  { id: 'overview', label: 'Overview', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>' },
+  { id: 'chat', label: 'Chat', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>' },
+  { id: 'memory', label: 'Memory', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>' },
+  { id: 'integrations', label: 'Integrations', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>' },
+  { id: 'settings', label: 'Settings', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>' },
+]
+</script>
+
+<style scoped>
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--bg-card);
+  border-right: 1px solid var(--border);
+  box-shadow: 1px 0 10px rgba(0,229,255,0.03);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  z-index: 20;
+}
+.sidebar-logo {
+  padding: 20px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-logo h1 {
+  font-family: var(--mono);
+  font-size: 18px;
+  color: var(--accent);
+  text-shadow: var(--glow-accent);
+  letter-spacing: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sidebar-logo .hal-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(255,77,42,0.6);
+  animation: breathe 3s ease-in-out infinite;
+}
+.sidebar-logo .version {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  letter-spacing: 1px;
+  margin-top: 4px;
+}
+.sidebar-nav {
+  flex: 1;
+  padding: 8px 0;
+  overflow-y: auto;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--sans);
+  font-weight: 500;
+  border-left: 3px solid transparent;
+  transition: all .15s;
+  text-decoration: none;
+}
+.nav-item:hover {
+  color: var(--text);
+  background: rgba(255,255,255,0.02);
+}
+.nav-item.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  box-shadow: inset 3px 0 10px rgba(255,77,42,0.15);
+  background: rgba(255,77,42,0.05);
+}
+.nav-item :deep(svg) { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.7; }
+.nav-item.active :deep(svg) { opacity: 1; }
+.sidebar-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+.sidebar-footer .logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--mono);
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  width: 100%;
+  transition: all .15s;
+}
+.sidebar-footer .logout-btn:hover { color: var(--red); border-color: var(--red); }
+.sidebar-footer .logout-btn svg { width: 14px; height: 14px; }
+
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+}
+</style>
