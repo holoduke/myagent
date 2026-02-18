@@ -116,6 +116,12 @@ export async function startWhatsApp(
       // Log all incoming messages for debugging (before any filtering)
       console.log(`[whatsapp] MSG jid=${jid} fromMe=${msg.key.fromMe} group=${isGroup} participant=${msg.key.participant || "N/A"} text=${text.slice(0, 50) || "(no text)"}`);
 
+      // Detect owner's LID early — before text filter, so non-text messages (images, reactions) also set it
+      if (msg.key.fromMe && jid.endsWith("@lid") && !ownerLid) {
+        ownerLid = jid;
+        console.log(`[whatsapp] Detected owner LID: ${ownerLid}`);
+      }
+
       if (!text.trim()) continue;
 
       // Deduplicate messages (Baileys can deliver same message via @lid and @s.whatsapp.net)
@@ -127,12 +133,6 @@ export async function startWhatsApp(
       if (msgId) {
         processedMessages.add(msgId);
         setTimeout(() => processedMessages.delete(msgId), 5 * 60 * 1000);
-      }
-
-      // Detect owner's LID on first fromMe message
-      if (msg.key.fromMe && jid.endsWith("@lid") && !ownerLid) {
-        ownerLid = jid;
-        console.log(`[whatsapp] Detected owner LID: ${ownerLid}`);
       }
 
       // --- Observation: fire for ALL messages (groups, contacts, own) ---
