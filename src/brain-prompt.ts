@@ -23,13 +23,38 @@ function timeAgo(ts: number): string {
 }
 
 function formatObservations(observations: Observation[]): string {
-  if (observations.length === 0) return "(no new messages)";
-  return observations.map((obs) => {
-    const time = formatTime(obs.timestamp);
-    const who = obs.isFromMe ? `${obs.sender || "Me"} (you/outgoing)` : obs.sender || "Unknown";
-    const context = obs.isGroup ? ` in group "${obs.groupName || "?"}"` : "";
-    return `[${time}] ${who}${context}: ${obs.text}`;
-  }).join("\n");
+  if (observations.length === 0) return "(no new messages or emails)";
+
+  const whatsapp = observations.filter(o => o.source !== "gmail");
+  const gmail = observations.filter(o => o.source === "gmail");
+
+  const parts: string[] = [];
+
+  if (whatsapp.length > 0) {
+    parts.push("── WhatsApp Messages ──\n" + whatsapp.map((obs) => {
+      const time = formatTime(obs.timestamp);
+      const who = obs.isFromMe ? `${obs.sender || "Me"} (you/outgoing)` : obs.sender || "Unknown";
+      const context = obs.isGroup ? ` in group "${obs.groupName || "?"}"` : "";
+      return `[${time}] ${who}${context}: ${obs.text}`;
+    }).join("\n"));
+  }
+
+  if (gmail.length > 0) {
+    parts.push("── Emails ──\n" + gmail.map((obs) => {
+      const time = formatTime(obs.timestamp);
+      const meta = obs.emailMeta;
+      const account = meta ? ` (${meta.accountEmail})` : "";
+      const direction = obs.isFromMe ? "[SENT]" : "[RECEIVED]";
+      const from = meta?.from || obs.sender || "Unknown";
+      const subject = meta?.subject || "";
+      // Strip the [EMAIL] prefix from text since we format it ourselves
+      const body = obs.text.replace(/^\[EMAIL\]\s*Subject:.*?\n\n/, "");
+      return `[${time}] ${direction}${account} From: ${from} | Subject: ${subject}\n  ${body.slice(0, 200)}`;
+    }).join("\n"));
+  }
+
+  if (parts.length === 0) return "(no new messages or emails)";
+  return parts.join("\n\n");
 }
 
 // ── Brain Tick Personality (extends shared identity with brain-specific details) ──
@@ -63,6 +88,14 @@ You can send messages to whitelisted contacts, not just ${ownerName}.
 - Only contacts on the whitelist (or ${ownerName}) can receive messages.
 - To message a whitelisted contact, use their JID as targetJid in scheduled messages.
 - ${ownerName} must explicitly approve adding new contacts. Never add contacts on your own.
+
+═══ GMAIL ═══
+
+You have Gmail integration. Emails appear in your observations with source="gmail".
+- Emails include: sender, subject, body preview, account ID.
+- You can send emails via the sendEmail() function in gmail.ts.
+- Multiple accounts may be connected — check /data/gmail/accounts.json.
+- Treat emails like WhatsApp messages: process them, create memory nodes, notify ${ownerName} if important.
 
 ═══ SELF-IMPROVEMENT (brain ticks only) ═══
 
