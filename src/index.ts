@@ -119,6 +119,12 @@ async function main() {
       status: health.healthy ? "ok" : "unhealthy",
       brain: health,
     }));
+  }).on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      log("Port 3000 already in use — exiting so process manager can restart cleanly");
+      process.exit(1);
+    }
+    log(`HTTP server error: ${err.message}`);
   }).listen(3000, () => console.log("[agent] Health check on :3000"));
 
   console.log(`[agent] Starting WhatsApp Claude Agent`);
