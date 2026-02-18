@@ -6,7 +6,7 @@ export function getApiUrl(): string {
 }
 
 export function getAuthToken(event: H3Event): string | null {
-  const cookie = getCookie(event, 'aria_token')
+  const cookie = getCookie(event, 'aria_session')
   if (cookie) return cookie
 
   const auth = getHeader(event, 'authorization')

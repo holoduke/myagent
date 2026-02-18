@@ -1,5 +1,5 @@
 export function useAuth() {
-  const token = useCookie('aria_token', {
+  const token = useCookie('aria_session', {
     maxAge: 86400,
     sameSite: 'strict',
     path: '/',
