@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { randomBytes, timingSafeEqual } from "crypto";
 import { IncomingMessage, ServerResponse } from "http";
 import { readFileSync, existsSync, appendFileSync } from "fs";
 import { askClaudeStreaming, resetSession } from "./claude.js";
@@ -14,7 +14,13 @@ function log(msg: string) {
   appendFileSync(LOG_FILE, line + "\n");
 }
 
-const activeSessions = new Set<string>();
+const MAX_BODY_SIZE = 1024 * 1024; // 1MB
+const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_LOGIN_ATTEMPTS = 10;
+const LOGIN_WINDOW = 15 * 60 * 1000; // 15 minutes
+
+const activeSessions = new Map<string, number>(); // token → created timestamp
+const loginAttempts: { ts: number }[] = [];
 const WEB_PASSWORD = process.env.WEB_PASSWORD || "";
 
 function generateToken(): string {
@@ -34,13 +40,44 @@ function getSessionToken(req: IncomingMessage): string | null {
 
 function isAuthenticated(req: IncomingMessage): boolean {
   const token = getSessionToken(req);
-  return token ? activeSessions.has(token) : false;
+  if (!token) return false;
+  const created = activeSessions.get(token);
+  if (!created) return false;
+  // Check session expiry
+  if (Date.now() - created > SESSION_TTL) {
+    activeSessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function isRateLimited(): boolean {
+  const now = Date.now();
+  // Remove old attempts outside the window
+  while (loginAttempts.length > 0 && now - loginAttempts[0].ts > LOGIN_WINDOW) {
+    loginAttempts.shift();
+  }
+  return loginAttempts.length >= MAX_LOGIN_ATTEMPTS;
+}
+
+function safeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
-    req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_SIZE) {
+        req.destroy();
+        reject(new Error("Request body too large"));
+        return;
+      }
+      body += chunk.toString();
+    });
     req.on("end", () => resolve(body));
     req.on("error", reject);
   });
@@ -141,17 +178,33 @@ export function handleWebRoutes(
 
 async function handleLogin(req: IncomingMessage, res: ServerResponse) {
   try {
+    // Rate limit login attempts
+    if (isRateLimited()) {
+      log("Login rate limited");
+      res.writeHead(429, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Too many login attempts. Try again later." }));
+      return;
+    }
+
     const body = await readBody(req);
     const { password } = JSON.parse(body);
 
-    if (password === WEB_PASSWORD) {
+    loginAttempts.push({ ts: Date.now() });
+
+    if (password && WEB_PASSWORD && safeCompare(password, WEB_PASSWORD)) {
       const token = generateToken();
-      activeSessions.add(token);
+      activeSessions.set(token, Date.now());
       log(`Login successful, token: ${token.slice(0, 8)}...`);
+
+      // Clean up expired sessions
+      const now = Date.now();
+      for (const [t, created] of activeSessions) {
+        if (now - created > SESSION_TTL) activeSessions.delete(t);
+      }
 
       res.writeHead(200, {
         "Content-Type": "application/json",
-        "Set-Cookie": `session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=604800`,
+        "Set-Cookie": `session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
       });
       res.end(JSON.stringify({ success: true, token }));
     } else {
