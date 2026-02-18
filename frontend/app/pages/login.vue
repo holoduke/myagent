@@ -1,6 +1,8 @@
 <template>
-  <div>
-    <div class="login-ring"></div>
+  <div class="login-wrapper">
+    <div class="login-eye">
+      <div class="eye-core"></div>
+    </div>
     <div class="login-card">
       <h1>ARIA</h1>
       <p class="subtitle">Mainframe Access</p>
@@ -50,22 +52,48 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.login-ring {
+.login-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+.login-eye {
   width: 80px;
   height: 80px;
   border-radius: 50%;
   border: 2px solid var(--accent);
-  box-shadow: var(--glow-accent), inset 0 0 20px rgba(255,77,42,0.15);
+  box-shadow: 0 0 15px rgba(255,77,42,0.4), 0 0 40px rgba(255,77,42,0.15), inset 0 0 20px rgba(255,77,42,0.15);
   margin-bottom: 24px;
-  animation: pulse-ring 3s ease-in-out infinite;
   position: relative;
+  animation: eye-breathe 3s ease-in-out infinite;
 }
-.login-ring::after {
+.login-eye::after {
   content: '';
   position: absolute;
-  inset: 8px;
+  inset: -12px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,77,42,0.3) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(255,77,42,0.08) 0%, transparent 70%);
+  animation: eye-glow 3s ease-in-out infinite;
+}
+.eye-core {
+  position: absolute;
+  inset: 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,77,42,0.35) 0%, rgba(255,77,42,0.05) 60%, transparent 80%);
+  animation: core-pulse 3s ease-in-out infinite;
+}
+@keyframes eye-breathe {
+  0%, 100% { box-shadow: 0 0 15px rgba(255,77,42,0.4), 0 0 40px rgba(255,77,42,0.15), inset 0 0 20px rgba(255,77,42,0.15); transform: scale(1); }
+  50% { box-shadow: 0 0 25px rgba(255,77,42,0.6), 0 0 60px rgba(255,77,42,0.25), inset 0 0 30px rgba(255,77,42,0.25); transform: scale(1.03); }
+}
+@keyframes eye-glow {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+@keyframes core-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
 }
 .login-card {
   background: var(--bg-card);
