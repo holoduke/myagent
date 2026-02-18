@@ -25,15 +25,6 @@
 <script setup lang="ts">
 definePageMeta({ layout: 'auth' })
 
-// Clear any stale HttpOnly cookie from server during SSR
-if (import.meta.server) {
-  const event = useRequestEvent()
-  if (event) {
-    const { setCookie } = await import('h3')
-    setCookie(event, 'aria_token', '', { httpOnly: true, maxAge: 0, path: '/' })
-  }
-}
-
 const { login } = useAuth()
 const password = ref('')
 const error = ref('')
@@ -67,6 +58,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   width: 100%;
+  min-height: 100dvh;
   padding: 24px 16px;
   box-sizing: border-box;
 }
