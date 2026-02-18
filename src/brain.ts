@@ -9,6 +9,7 @@ import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState } from "./memory/types.js";
 import { getDueMessages } from "./scheduler.js";
+import { isWhitelisted } from "./contact-whitelist.js";
 import { MAX_NODES_SOFT } from "./memory/types.js";
 import { runConsolidation } from "./memory/decay.js";
 import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory } from "./memory/working-memory.js";
@@ -744,10 +745,14 @@ async function deliverScheduledMessages(
   for (const msg of dueMessages) {
     try {
       const jid = msg.targetJid || ownerJid;
+      if (!isWhitelisted(jid)) {
+        log(`Blocked scheduled message ${msg.id}: target ${jid} not on whitelist`);
+        continue;
+      }
       await sendMessage(jid, msg.message);
       state.lastMessageTime = Date.now();
       state.messagesToday++;
-      log(`Delivered scheduled message ${msg.id} (${msg.message.length} chars, source: ${msg.source})`);
+      log(`Delivered scheduled message ${msg.id} to ${jid} (${msg.message.length} chars, source: ${msg.source})`);
     } catch (err) {
       log(`Failed to deliver scheduled message ${msg.id}: ${err}`);
     }
