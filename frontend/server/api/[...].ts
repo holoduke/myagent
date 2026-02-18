@@ -23,24 +23,31 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  const res = await fetch(url, fetchOptions)
+  try {
+    const res = await fetch(url, fetchOptions)
 
-  setResponseStatus(event, res.status)
+    setResponseStatus(event, res.status)
 
-  const contentType = res.headers.get('content-type') || 'application/json'
-  setResponseHeader(event, 'content-type', contentType)
+    const contentType = res.headers.get('content-type') || 'application/json'
+    setResponseHeader(event, 'content-type', contentType)
 
-  if (contentType.includes('text/event-stream')) {
-    setResponseHeaders(event, {
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    })
-    if (res.body) {
-      return sendStream(event, res.body as unknown as ReadableStream)
+    if (contentType.includes('text/event-stream')) {
+      setResponseHeaders(event, {
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      })
+      if (res.body) {
+        return sendStream(event, res.body as unknown as ReadableStream)
+      }
+      return ''
     }
-    return ''
-  }
 
-  return res.json()
+    return res.json()
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(`[proxy] Error fetching ${url}:`, message)
+    setResponseStatus(event, 502)
+    return { error: true, message: `Backend unreachable: ${message}`, url }
+  }
 })

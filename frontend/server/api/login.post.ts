@@ -3,25 +3,32 @@ import { getApiUrl } from '../utils/proxy'
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const base = getApiUrl()
+  const url = `${base}/api/login`
 
-  const res = await fetch(`${base}/api/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-
-  const data = await res.json()
-
-  if (data.success && data.token) {
-    // Set HttpOnly cookie for server-side proxy auth
-    setCookie(event, 'aria_token', data.token, {
-      httpOnly: true,
-      sameSite: 'strict',
-      path: '/',
-      maxAge: 86400, // 24 hours
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     })
-  }
 
-  setResponseStatus(event, res.status)
-  return data
+    const data = await res.json()
+
+    if (data.success && data.token) {
+      setCookie(event, 'aria_token', data.token, {
+        httpOnly: true,
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 86400, // 24 hours
+      })
+    }
+
+    setResponseStatus(event, res.status)
+    return data
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(`[login] Proxy error to ${url}:`, message)
+    setResponseStatus(event, 502)
+    return { error: true, message: `Backend unreachable: ${message}`, url }
+  }
 })
