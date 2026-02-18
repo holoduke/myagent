@@ -1,5 +1,7 @@
 # Build stage
 FROM node:20-alpine AS build
+ARG NUXT_API_URL
+ENV NUXT_API_URL=${NUXT_API_URL}
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
