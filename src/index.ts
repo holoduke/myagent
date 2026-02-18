@@ -9,6 +9,8 @@ import { addMessage, clearHistory, getUsageStats } from "./history.js";
 import { startTokenRefreshLoop } from "./auth-refresh.js";
 import { recordObservation } from "./observer.js";
 import { startBrainLoop, stopBrainLoop, getBrainHealth } from "./brain.js";
+import { startGmailPolling, stopGmailPolling } from "./gmail.js";
+import { handleGmailRoutes } from "./gmail-routes.js";
 
 const queue = new MessageQueue();
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -32,10 +34,16 @@ async function main() {
   // Start autonomous brain loop
   startBrainLoop(queue, sendMessage);
 
-  // HTTP server: health check, QR code, and web chat
+  // Start Gmail polling (if accounts configured)
+  startGmailPolling();
+
+  // HTTP server: health check, QR code, web chat, and Gmail OAuth
   createServer((req, res) => {
     // Web chat routes
     if (handleWebRoutes(req, res, queue)) return;
+
+    // Gmail OAuth routes
+    if (handleGmailRoutes(req, res)) return;
 
     if (req.url === "/qr") {
       const qr = getLatestQr();
@@ -149,6 +157,7 @@ async function main() {
         groupName: obs.groupName,
         isFromMe: obs.isFromMe,
         text: obs.text,
+        source: "whatsapp",
       });
     },
   );
@@ -158,6 +167,7 @@ async function main() {
 function shutdown() {
   console.log("\n[agent] Shutting down...");
   stopBrainLoop();
+  stopGmailPolling();
   process.exit(0);
 }
 
