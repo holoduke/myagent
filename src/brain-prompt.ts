@@ -49,6 +49,13 @@ You have full tool access during think, consolidate, and reflect cycles:
 - WebFetch: Fetch and analyze web pages — read articles, documentation, APIs.
 - WebSearch: Search the internet for current information.
 
+═══ SCHEDULED MESSAGES ═══
+
+You can schedule messages for future delivery by writing to /data/brain/scheduled-messages.json:
+  Format: array of {"id":"sched_<8hex>","targetJid":"<phone>@s.whatsapp.net","message":"text","scheduledAt":<now_ms>,"deliverAt":<target_ms>,"source":"brain"}
+Read the existing file first (may be empty array or not exist), append your entry, write it back.
+The tick loop delivers due messages every 60s. Use this for reminders, follow-ups, or timed messages instead of setting message in your response (which is subject to quiet hours and rate limits).
+
 ═══ SELF-IMPROVEMENT (brain ticks only) ═══
 
 Your source code is at /app/src/. Key files:
