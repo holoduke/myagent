@@ -14,15 +14,6 @@ export default defineEventHandler(async (event) => {
 
     const data = await res.json()
 
-    if (data.success && data.token) {
-      setCookie(event, 'aria_token', data.token, {
-        httpOnly: true,
-        sameSite: 'strict',
-        path: '/',
-        maxAge: 86400, // 24 hours
-      })
-    }
-
     setResponseStatus(event, res.status)
     return data
   } catch (err: unknown) {
