@@ -12,7 +12,7 @@ jobs:
         run: |
           response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
-            "${{ secrets.COOLIFY_URL }}/api/v1/applications/${{ secrets.COOLIFY_APP_UUID }}/deploy?force=false" \
+            "${{ secrets.COOLIFY_URL }}/api/v1/applications/${{ secrets.COOLIFY_APP_UUID }}/restart" \
             --max-time 30)
           echo "Deploy triggered (HTTP $response)"
           [ "$response" -lt 300 ] || exit 1
