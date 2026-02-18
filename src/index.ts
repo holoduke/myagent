@@ -39,7 +39,7 @@ async function main() {
   startGmailPolling();
 
   // HTTP server: health check, QR code, web chat, and Gmail OAuth
-  createServer((req, res) => {
+  const server = createServer((req, res) => {
     // Web chat routes
     if (handleWebRoutes(req, res, queue)) return;
 
@@ -119,7 +119,17 @@ async function main() {
       status: health.healthy ? "ok" : "unhealthy",
       brain: health,
     }));
-  }).listen(3000, () => console.log("[agent] Health check on :3000"));
+  });
+
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    log(`HTTP server error: ${err.message}`);
+    if (err.code === "EADDRINUSE") {
+      log("Port 3000 already in use — exiting so container can restart cleanly");
+      process.exit(1);
+    }
+  });
+
+  server.listen(3000, () => console.log("[agent] Health check on :3000"));
 
   console.log(`[agent] Starting WhatsApp Claude Agent`);
   console.log(`[agent] Owner phone: ${ownerPhone}`);
