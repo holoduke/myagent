@@ -4,6 +4,7 @@ import { readFileSync, existsSync, appendFileSync } from "fs";
 import { askClaudeStreaming, resetSession } from "./claude.js";
 import { MessageQueue } from "./queue.js";
 import { getHistory, addMessage, clearHistory, getUsageStats } from "./history.js";
+import { syncContacts, findContacts, getAllContacts } from "./whatsapp.js";
 import type { MemoryNode, MemoryEdge, BrainState, WorkingMemory } from "./memory/types.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -106,6 +107,32 @@ export function handleWebRoutes(
   if (pathname === "/api/aria/status" && isAuthenticated(req)) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(getAriaStatus()));
+    return true;
+  }
+
+  // ── Contact sync ──
+  if (pathname === "/api/sync-contacts" && req.method === "POST" && isAuthenticated(req)) {
+    syncContacts()
+      .then(() => {
+        // Wait a bit for events to fire and contacts.json to be written
+        setTimeout(() => {
+          const contacts = getAllContacts();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, contactCount: contacts.length }));
+        }, 3000);
+      })
+      .catch((err) => {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      });
+    return true;
+  }
+
+  if (pathname === "/api/contacts" && isAuthenticated(req)) {
+    const query = new URL(req.url || "/", "http://localhost").searchParams.get("q");
+    const contacts = query ? findContacts(query) : getAllContacts();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(contacts));
     return true;
   }
 

@@ -281,6 +281,17 @@ export async function startWhatsApp(
   });
 }
 
+/** Force a contact sync via Baileys app state resync. */
+export async function syncContacts(): Promise<void> {
+  if (!sock) {
+    console.log("[whatsapp] syncContacts: socket not ready");
+    return;
+  }
+  console.log("[whatsapp] Triggering contact sync via resyncAppState...");
+  await sock.resyncAppState(["regular_high", "regular_low"], false);
+  console.log("[whatsapp] Contact sync triggered, waiting for events...");
+}
+
 export async function sendMessage(jid: string, text: string): Promise<void> {
   await sock.sendMessage(jid, { text });
 }
