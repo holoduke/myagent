@@ -12,6 +12,15 @@ const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const OBS_FILE = `${BRAIN_DIR}/observations.jsonl`;
 const RETENTION_DAYS = Number(process.env.BRAIN_OBSERVATION_DAYS ?? 7);
 
+export interface EmailMeta {
+  from: string;
+  to: string;
+  subject: string;
+  accountId: string;
+  accountEmail: string;
+  messageId: string;
+}
+
 export interface Observation {
   timestamp: number;
   sender: string;
@@ -20,6 +29,8 @@ export interface Observation {
   groupName?: string;
   isFromMe: boolean;
   text: string;
+  source?: "whatsapp" | "gmail";
+  emailMeta?: EmailMeta;
 }
 
 export function ensureBrainDir(): void {
