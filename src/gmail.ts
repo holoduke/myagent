@@ -161,6 +161,24 @@ export async function handleAuthCallback(code: string, accountId: string): Promi
   }
 }
 
+// Track recently seen message IDs to avoid duplicates at timestamp boundaries
+const seenMessageIds = new Set<string>();
+const MAX_SEEN_IDS = 200;
+
+function trackMessageId(id: string): boolean {
+  if (seenMessageIds.has(id)) return false;
+  seenMessageIds.add(id);
+  // Prune if too large
+  if (seenMessageIds.size > MAX_SEEN_IDS) {
+    const iter = seenMessageIds.values();
+    for (let i = 0; i < 50; i++) {
+      const val = iter.next().value;
+      if (val) seenMessageIds.delete(val);
+    }
+  }
+  return true;
+}
+
 // ── Gmail API Operations ──
 
 function getGmailClient(account: GmailAccount): gmail_v1.Gmail {
@@ -255,8 +273,9 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
         const msg = msgRes.data;
         const internalDate = Number(msg.internalDate || 0);
 
-        // Skip messages we've already seen
+        // Skip messages we've already seen (by timestamp and message ID)
         if (internalDate <= accountState.lastMessageTimestamp) continue;
+        if (!trackMessageId(msgRef.id)) continue;
 
         const headers = msg.payload?.headers;
         const from = getHeader(headers, "From");
