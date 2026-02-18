@@ -120,13 +120,20 @@ function runClaude(
       stderr += data.toString();
     });
 
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill("SIGTERM");
+      if (!noSession && currentSessionId) {
+        log("Timeout: resetting session");
+        currentSessionId = null;
+      }
       reject(new Error(`Claude timed out after ${timeout / 1000}s`));
     }, timeout);
 
     child.on("close", (code) => {
       clearTimeout(timer);
+      if (timedOut) return; // already rejected by timeout
       log(`Exit code: ${code}`);
       log(`stdout (${stdout.length} chars): ${stdout.slice(0, 500)}`);
       if (stderr) log(`stderr: ${stderr.slice(0, 500)}`);
@@ -315,13 +322,20 @@ function runClaudeStreaming(
       stderr += data.toString();
     });
 
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill("SIGTERM");
+      if (currentSessionId) {
+        log("Streaming timeout: resetting session");
+        currentSessionId = null;
+      }
       reject(new Error(`Claude timed out after ${timeout / 1000}s`));
     }, timeout);
 
     child.on("close", (code) => {
       clearTimeout(timer);
+      if (timedOut) return; // already rejected by timeout
       log(`Streaming exit code: ${code}`);
       if (stderr) log(`Streaming stderr: ${stderr.slice(0, 500)}`);
 
