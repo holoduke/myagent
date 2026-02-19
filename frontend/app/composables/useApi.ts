@@ -11,7 +11,7 @@ export function useApi() {
           ...options?.headers as Record<string, string>,
           ...(token.value ? { Authorization: `Bearer ${token.value}` } : {}),
         },
-      })
+      } as Parameters<typeof $fetch>[1])
     } catch (e: unknown) {
       if (e && typeof e === 'object' && 'statusCode' in e && (e as { statusCode: number }).statusCode === 401) {
         logout()
