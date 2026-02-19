@@ -23,10 +23,10 @@
 
     <!-- Add feed form -->
     <div class="rss-add-section">
-      <label class="ssh-label">Add Feed</label>
+      <label class="intg-label">Add Feed</label>
       <div class="rss-form">
-        <input v-model="form.name" placeholder="Feed name" class="ssh-input" />
-        <input v-model="form.url" placeholder="Feed URL" class="ssh-input" style="flex:2" />
+        <input v-model="form.name" placeholder="Feed name" class="intg-input" />
+        <input v-model="form.url" placeholder="Feed URL" class="intg-input" style="flex:2" />
         <button class="btn" :disabled="!canAdd" @click="add">Add</button>
       </div>
       <p v-if="addError" class="rss-error">{{ addError }}</p>

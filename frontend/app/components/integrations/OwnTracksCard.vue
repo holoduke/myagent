@@ -20,7 +20,7 @@
     </div>
 
     <div class="ot-setup">
-      <label class="ssh-label">Setup</label>
+      <label class="intg-label">Setup</label>
       <div class="ot-instructions">
         <p>Configure OwnTracks app to send location updates:</p>
         <div class="ot-field">
