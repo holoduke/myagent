@@ -7,7 +7,8 @@ export type NodeType =
   | "fact"
   | "emotion"
   | "plan"
-  | "meta";
+  | "meta"
+  | "goal";
 
 export interface MemoryNode {
   id: string;
@@ -42,12 +43,51 @@ export interface MemoryEdge {
 
 // ── Working Memory ──
 
+export interface WorkingGoalRef {
+  nodeId: string;
+  title: string;
+  priority: 1 | 2 | 3;
+  progress: number;
+  deadlineStatus: "none" | "on_track" | "approaching" | "overdue";
+}
+
+export interface PendingFollowUp {
+  id: string;
+  question: string;
+  targetPerson?: string;
+  context: string;
+  createdAt: number;
+  dueAt?: number;
+}
+
+export interface ConversationThread {
+  id: string;
+  participants: string[];
+  topic: string;
+  lastMessageAt: number;
+  messageCount: number;
+  status: "active" | "stale" | "closed";
+}
+
+export interface TemporalContext {
+  dayOfWeek: string;
+  timeOfDay: "morning" | "afternoon" | "evening" | "night";
+  hour: number;
+  date: string;
+  isWeekend: boolean;
+  upcomingEvents: string[];
+}
+
 export interface WorkingMemory {
   currentContext: string;
   mood: string;
   shortTermTracking: string[];
   activatedNodeIds: string[];
   lastUpdated: number;
+  activeGoals: WorkingGoalRef[];
+  pendingFollowUps: PendingFollowUp[];
+  conversationThreads: ConversationThread[];
+  temporal: TemporalContext;
 }
 
 // ── Brain State ──
@@ -96,6 +136,26 @@ export type MemoryOperation =
   | { op: "remove_node"; id: string }
   | { op: "remove_edge"; from: string; to: string };
 
+// ── Goal Operations ──
+
+export interface GoalData {
+  title: string;
+  description: string;
+  status: "active" | "completed" | "abandoned" | "paused";
+  priority: 1 | 2 | 3;
+  deadline?: number;
+  progress: number;
+  checkpoints: { label: string; done: boolean }[];
+  createdBy: "brain" | "owner";
+  lastCheckedAt: number;
+}
+
+export type GoalOperation =
+  | { op: "create_goal"; title: string; description: string; priority: 1 | 2 | 3; deadline?: number; checkpoints?: string[]; createdBy?: "brain" | "owner" }
+  | { op: "update_goal"; nodeId: string; progress?: number; status?: "active" | "completed" | "abandoned" | "paused"; checkpoints?: { label: string; done: boolean }[] }
+  | { op: "complete_goal"; nodeId: string }
+  | { op: "abandon_goal"; nodeId: string; reason?: string };
+
 export interface BrainResponse {
   operations: MemoryOperation[];
   message: string | null;
@@ -104,7 +164,10 @@ export interface BrainResponse {
     currentContext?: string;
     mood?: string;
     shortTermTracking?: string[];
+    pendingFollowUps?: PendingFollowUp[];
+    conversationThreads?: ConversationThread[];
   };
+  goalOps?: GoalOperation[];
 }
 
 // ── Decay Constants ──
@@ -117,6 +180,7 @@ export const DECAY_LAMBDA: Record<NodeType, number> = {
   plan:    0.006,
   emotion: 0.008,   // ~3.6-day half-life
   meta:    0.003,
+  goal:    0.001,   // very slow — goals persist
 };
 
 export const PRUNE_NODE_THRESHOLD = 0.05;
