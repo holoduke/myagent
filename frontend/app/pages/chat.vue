@@ -93,6 +93,11 @@ watch(() => chatStore.streamContent, () => {
   if (!showFab.value) scrollBottom()
 })
 
+useVisibilityRefresh(async () => {
+  await chatStore.loadHistory()
+  scrollBottom()
+})
+
 // Load history on mount
 onMounted(async () => {
   await chatStore.loadHistory()
