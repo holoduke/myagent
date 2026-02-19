@@ -35,6 +35,10 @@ const logger = pino({ level: "silent" });
 
 let sock: ReturnType<typeof makeWASocket>;
 let latestQr: string | null = null;
+let isConnected = false;
+let reconnectAttempt = 0;
+const MAX_RECONNECT_DELAY = 60_000; // 60s max
+const BASE_RECONNECT_DELAY = 5_000; // 5s base
 const processedMessages = new Set<string>();
 const groupNameCache = new Map<string, string>();
 
@@ -85,7 +89,7 @@ export function getLatestQr(): string | null {
 
 export function getWhatsAppStatus(): { connected: boolean; contactCount: number } {
   return {
-    connected: !!sock,
+    connected: isConnected,
     contactCount: contactStore.size,
   };
 }
@@ -96,6 +100,16 @@ export async function startWhatsApp(
 ): Promise<void> {
   const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
   let ownerLid: string | null = null;
+
+  // Clean up previous socket if it exists
+  if (sock) {
+    try {
+      sock.end(undefined);
+    } catch {
+      // Socket may already be closed
+    }
+  }
+  isConnected = false;
 
   const authDir = process.env.AUTH_STATE_DIR || "./auth_state";
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
@@ -164,20 +178,30 @@ export async function startWhatsApp(
     }
 
     if (connection === "close") {
+      isConnected = false;
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
+      // Exponential backoff: 5s, 10s, 20s, 40s, 60s (max)
+      const delay = Math.min(
+        BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempt),
+        MAX_RECONNECT_DELAY,
+      );
+      reconnectAttempt++;
+
       console.log(
-        `[whatsapp] Connection closed (code: ${statusCode}). Reconnecting: ${shouldReconnect}`
+        `[whatsapp] Connection closed (code: ${statusCode}). Reconnecting: ${shouldReconnect} (attempt ${reconnectAttempt}, delay ${Math.round(delay / 1000)}s)`
       );
 
       if (shouldReconnect) {
-        setTimeout(() => startWhatsApp(onMessage, onObservation), 3000);
+        setTimeout(() => startWhatsApp(onMessage, onObservation), delay);
       } else {
         console.error("[whatsapp] Logged out. Delete auth_state/ and restart to re-scan QR.");
         process.exit(1);
       }
     } else if (connection === "open") {
+      isConnected = true;
+      reconnectAttempt = 0; // Reset backoff on successful connection
       console.log("[whatsapp] Connected!");
     }
   });
@@ -319,6 +343,10 @@ export async function syncContacts(): Promise<void> {
 }
 
 export async function sendMessage(jid: string, text: string): Promise<void> {
+  if (!isConnected) {
+    console.log(`[whatsapp] Cannot send message — not connected`);
+    throw new Error("WhatsApp not connected");
+  }
   await sock.sendMessage(jid, { text });
 }
 
@@ -327,6 +355,7 @@ export async function sendReaction(
   messageKey: proto.IMessageKey,
   emoji: string
 ): Promise<void> {
+  if (!isConnected) return; // Silently skip reactions when disconnected
   await sock.sendMessage(jid, {
     react: { text: emoji, key: messageKey },
   });
