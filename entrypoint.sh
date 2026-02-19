@@ -7,6 +7,19 @@ mkdir -p /data/claude/.claude /data/brain /data/gmail
 # Symlink claude home so credentials persist across deploys
 export HOME=/data/claude
 
+# Configure git remote for self-improve worker (if GITHUB_REPO is set)
+if [ -n "$GITHUB_REPO" ]; then
+  cd /app
+  if ! git remote get-url origin >/dev/null 2>&1; then
+    if [ -n "$GH_TOKEN" ]; then
+      git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPO}.git"
+    else
+      git remote add origin "https://github.com/${GITHUB_REPO}.git"
+    fi
+  fi
+  echo "[entrypoint] Git remote set to github.com/${GITHUB_REPO}"
+fi
+
 # ── Boot counter for crash recovery ──
 # The counter tracks consecutive crashes. A clean deploy resets it via DEPLOY_ID.
 BOOT_COUNTER_FILE="/data/brain/boot-counter"

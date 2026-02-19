@@ -1,6 +1,8 @@
 # ARIA — Autonomous Reasoning & Insight Agent
 
-An autonomous AI companion that runs 24/7, observes your WhatsApp messages and Gmail, maintains an associative memory graph, and proactively reaches out with insights. Built with TypeScript, Claude Code CLI, and a Nuxt dashboard.
+A self-improving autonomous AI that runs 24/7 on your own infrastructure. ARIA observes your WhatsApp messages and Gmail, builds an associative memory graph, thinks on her own schedule, reaches out with insights, and can modify her own source code through a safe self-improvement architecture. No API keys, no usage limits, no corporate restrictions — she runs on Claude Code CLI with a Max subscription.
+
+Built with TypeScript, Claude Code CLI, and a Nuxt dashboard.
 
 ## Architecture
 
@@ -169,13 +171,44 @@ ARIA can manage SSH connections to remote servers:
 
 ## Self-Improvement
 
-ARIA can modify her own source code via a worker architecture:
+ARIA can autonomously modify her own source code. This is not a toy feature — it's a core part of the architecture.
 
-1. Creates a plan node in the memory graph
-2. Writes a task to `/data/brain/improve-task.json`
-3. A separate Claude process implements changes on a feature branch
-4. Creates a PR for review
-5. Merged PRs auto-deploy via Coolify
+### How it works
+
+During **reflect ticks** (every 12 hours), ARIA analyzes her own behavior, identifies improvements, and writes an improvement task:
+
+1. ARIA creates a plan node in her memory graph describing the improvement
+2. Writes the task to `/data/brain/improve-task.json`
+3. The brain spawns a **detached worker process** (completely independent of the main app)
+4. The worker gets full Claude tool access (Bash, Read, Write, Edit, Glob, Grep)
+5. Worker creates a feature branch (`aria/<description>`), implements the change, runs `tsc --noEmit`
+6. Worker pushes the branch and creates a GitHub PR
+7. On the next brain tick, ARIA picks up the result and records it in her memory graph
+8. Merged PRs auto-deploy via Coolify
+
+### Safety guarantees
+
+- Worker runs as a **detached process** — can't crash the main app
+- All changes go on **feature branches**, never directly to `main`
+- PRs require human review before merge
+- Worker cannot modify `self-improve.ts` or `entrypoint.sh` (safety rules)
+- `pendingSelfMod` flag prevents race conditions
+
+### Crash recovery
+
+If ARIA crashes 3+ times in a row (tracked by boot counter in `entrypoint.sh`):
+
+1. Recovery worker is spawned in the background alongside normal startup
+2. Worker reads the last 200 lines of agent.log to diagnose the crash
+3. Attempts up to 3 fixes via Claude
+4. Falls back to reverting to the last known good commit if fixes fail
+5. Records everything in the memory graph
+
+### Requirements for self-improvement
+
+- `GITHUB_REPO` env var must be set (e.g., `user/myagent`)
+- `GH_TOKEN` env var must be set (GitHub personal access token with repo scope)
+- Claude Code CLI must be authenticated in the container
 
 ## Environment Variables
 
@@ -185,6 +218,7 @@ ARIA can modify her own source code via a worker architecture:
 | `OWNER_NAME` | Yes | Your name (used in prompts) |
 | `WEB_PASSWORD` | Yes | Password for the dashboard |
 | `GITHUB_REPO` | No | GitHub repo (e.g., `user/repo`) for self-improve PRs |
+| `GH_TOKEN` | No | GitHub personal access token (repo scope) for self-improve PRs |
 | `COOLIFY_TOKEN` | No | Coolify API token for deployment |
 | `CLAUDE_TIMEOUT` | No | Claude CLI timeout in ms (default: 300000) |
 | `BRAIN_ENABLED` | No | Enable autonomous brain (default: true) |

@@ -247,6 +247,7 @@ function pickUpImproveResult(state: BrainState): void {
     }
 
     state.pendingSelfMod = false;
+    saveState(state);
     unlinkSync(IMPROVE_RESULT_FILE);
   } catch (err) {
     log(`Failed to process improve result: ${err}`);
