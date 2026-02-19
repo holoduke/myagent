@@ -157,9 +157,10 @@ function formatWorkingMemory(wm: WorkingMemory): string {
   if (wm.conversationThreads && wm.conversationThreads.length > 0) {
     const activeThreads = wm.conversationThreads.filter(t => t.status === "active").slice(0, 5);
     if (activeThreads.length > 0) {
-      const threadLines = activeThreads.map(t =>
-        `  - ${t.participants.join(", ")}: "${t.topic}" (${t.messageCount} msgs, last ${timeAgo(t.lastMessageAt)})`
-      );
+      const threadLines = activeThreads.map(t => {
+        const who = t.participants?.join(", ") || (t as any).person || "unknown";
+        return `  - ${who}: "${t.topic}" (${t.messageCount || 0} msgs, last ${timeAgo(t.lastMessageAt)})`;
+      });
       parts.push(`Active threads:\n${threadLines.join("\n")}`);
     }
   }
