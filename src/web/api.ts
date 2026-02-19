@@ -2,7 +2,7 @@ import { IncomingMessage, ServerResponse } from "http";
 import { readFileSync, existsSync, appendFileSync } from "fs";
 import { askClaudeStreaming, resetSession } from "../claude.js";
 import { MessageQueue } from "../queue.js";
-import { getHistory, addMessage, clearHistory, getUsageStats } from "../history.js";
+import { getHistory, addMessage, clearHistory, getUsageStats, getUsageData } from "../history.js";
 import { syncContacts, findContacts, getAllContacts, getWhatsAppStatus } from "../whatsapp.js";
 import { getScheduledMessages } from "../scheduler.js";
 import { getWhitelist, addToWhitelist, removeFromWhitelist } from "../contact-whitelist.js";
@@ -239,6 +239,7 @@ function getDashboardData(queue: MessageQueue) {
     whitelistCount: whitelist.length,
     scheduledCount: scheduled.length,
     queueDepth: queue.size,
+    claudeUsage: getUsageData(),
     timestamp: Date.now(),
   };
 }
