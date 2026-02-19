@@ -240,6 +240,8 @@ async function main() {
         isFromMe: obs.isFromMe,
         text: obs.text,
         source: "whatsapp",
+        chatJid: obs.chatJid,
+        chatName: obs.chatName,
       });
     },
   );
