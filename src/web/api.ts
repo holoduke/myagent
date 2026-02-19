@@ -7,6 +7,7 @@ import { syncContacts, findContacts, getAllContacts, getWhatsAppStatus } from ".
 import { getScheduledMessages } from "../scheduler.js";
 import { getWhitelist, addToWhitelist, removeFromWhitelist } from "../contact-whitelist.js";
 import { getAccountStatus } from "../gmail.js";
+import { getSSHStatus, getPublicKey, addTarget, removeTarget, testConnection } from "../ssh.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
 
@@ -117,6 +118,31 @@ export function handleApiRoutes(
     return true;
   }
 
+  // ── SSH public key ──
+  if (pathname === "/api/ssh/public-key" && req.method === "GET" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ publicKey: getPublicKey() }));
+    return true;
+  }
+
+  // ── SSH targets CRUD ──
+  if (pathname === "/api/ssh/targets" && isAuthenticated(req)) {
+    if (req.method === "POST") {
+      handleSSHAddTarget(req, res);
+      return true;
+    }
+    if (req.method === "DELETE") {
+      handleSSHRemoveTarget(req, res);
+      return true;
+    }
+  }
+
+  // ── SSH test connection ──
+  if (pathname === "/api/ssh/test" && req.method === "POST" && isAuthenticated(req)) {
+    handleSSHTest(req, res);
+    return true;
+  }
+
   return false;
 }
 
@@ -127,6 +153,7 @@ function getDashboardData(queue: MessageQueue) {
   const gmailAccounts = getAccountStatus();
   const whitelist = getWhitelist();
   const scheduled = getScheduledMessages();
+  const ssh = getSSHStatus();
 
   return {
     brainState: status.brainState,
@@ -142,6 +169,7 @@ function getDashboardData(queue: MessageQueue) {
       authenticated: gmailAccounts.filter(a => a.authenticated).length,
     },
     gmailAccounts,
+    ssh,
     whitelistCount: whitelist.length,
     scheduledCount: scheduled.length,
     queueDepth: queue.size,
@@ -349,6 +377,61 @@ async function handleWhitelistRemove(req: IncomingMessage, res: ServerResponse) 
     const removed = removeFromWhitelist(jid);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ success: removed }));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+// ── SSH handlers ──
+async function handleSSHAddTarget(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { label, host, user, port } = JSON.parse(body);
+    if (!label || !host || !user) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "label, host, and user are required" }));
+      return;
+    }
+    const target = addTarget(label, host, user, port || 22);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, target }));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+async function handleSSHRemoveTarget(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { id } = JSON.parse(body);
+    if (!id) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "id is required" }));
+      return;
+    }
+    const removed = removeTarget(id);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: removed }));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+async function handleSSHTest(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { id } = JSON.parse(body);
+    if (!id) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "id is required" }));
+      return;
+    }
+    const result = await testConnection(id);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
   } catch {
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Invalid request" }));
