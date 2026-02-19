@@ -21,9 +21,9 @@ export function getStyles(): string {
       --yellow: #eab308;
       --red: #ef4444;
       --text: #d4d4d8;
-      --text-dim: #71717a;
-      --text-muted: #6b6b8a;
-      --text-ghost: #4a4a65;
+      --text-dim: #8e8e96;
+      --text-muted: #8585a0;
+      --text-ghost: #6a6a82;
       --mono: 'JetBrains Mono', 'Space Mono', monospace;
       --sans: 'Inter', system-ui, sans-serif;
       --glow-accent: 0 0 10px rgba(255,77,42,0.5);
@@ -115,21 +115,40 @@ export function getStyles(): string {
       letter-spacing: 2px;
       text-transform: uppercase;
     }
-    .login-card input {
-      width: 100%;
-      padding: 13px 16px;
+    /* ── Unified input/textarea base ── */
+    input[type="text"],
+    input[type="password"],
+    input[type="email"],
+    input[type="url"],
+    input[type="search"],
+    textarea {
+      padding: 12px 14px;
       border-radius: 10px;
       border: 1px solid var(--border);
       background: var(--bg);
       color: var(--text);
-      font-size: 14px;
+      font-size: 13px;
       font-family: var(--mono);
       outline: none;
-      transition: all .2s;
+      transition: border-color .2s, box-shadow .2s;
     }
-    .login-card input:focus {
+    input[type="text"]:focus,
+    input[type="password"]:focus,
+    input[type="email"]:focus,
+    input[type="url"]:focus,
+    input[type="search"]:focus,
+    textarea:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(255,77,42,0.1);
+    }
+    input::placeholder,
+    textarea::placeholder {
+      color: var(--text-ghost);
+    }
+
+    .login-card input {
+      width: 100%;
+      font-size: 14px;
     }
 
     /* Override browser autofill white backgrounds */
@@ -606,16 +625,7 @@ export function getStyles(): string {
     }
     .wl-add-form input {
       flex: 1;
-      padding: 8px 12px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--text);
-      font-size: 12px;
-      font-family: var(--mono);
-      outline: none;
     }
-    .wl-add-form input:focus { border-color: var(--cyan-dim); }
 
     /* ── Scheduled messages ── */
     .sched-item {
@@ -797,22 +807,14 @@ export function getStyles(): string {
     }
     #msg-input {
       flex: 1;
-      padding: 10px 14px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--text);
       font-size: 14px;
       font-family: var(--sans);
       resize: none;
-      outline: none;
       min-height: 42px;
       max-height: 160px;
       line-height: 1.4;
-      transition: all .2s;
+      border-radius: 12px;
     }
-    #msg-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,77,42,0.08); }
-    #msg-input::placeholder { color: var(--text-ghost); }
     #send-btn {
       width: 42px;
       height: 42px;
