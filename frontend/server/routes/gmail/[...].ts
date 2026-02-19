@@ -15,29 +15,36 @@ export default defineEventHandler(async (event) => {
   const base = getApiUrl()
   const url = `${base}${pathname}${search}`
 
-  const res = await fetch(url, {
-    method: getMethod(event),
-    headers: proxyHeaders(event),
-    redirect: 'manual',
-  })
+  try {
+    const res = await fetch(url, {
+      method: getMethod(event),
+      headers: proxyHeaders(event),
+      redirect: 'manual',
+    })
 
-  // Pass through redirects (e.g. 302 to Google OAuth consent screen)
-  if (res.status >= 300 && res.status < 400) {
-    const location = res.headers.get('location')
-    if (location) {
-      return sendRedirect(event, location, res.status)
+    // Pass through redirects (e.g. 302 to Google OAuth consent screen)
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location')
+      if (location) {
+        return sendRedirect(event, location, res.status)
+      }
     }
+
+    setResponseStatus(event, res.status)
+
+    const contentType = res.headers.get('content-type') || 'text/html'
+    setResponseHeader(event, 'content-type', contentType)
+
+    // Gmail callback returns HTML pages
+    if (contentType.includes('text/html')) {
+      return res.text()
+    }
+
+    return res.json()
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(`[gmail] Proxy error ${url}:`, message)
+    setResponseStatus(event, 502)
+    return 'Service temporarily unavailable'
   }
-
-  setResponseStatus(event, res.status)
-
-  const contentType = res.headers.get('content-type') || 'text/html'
-  setResponseHeader(event, 'content-type', contentType)
-
-  // Gmail callback returns HTML pages
-  if (contentType.includes('text/html')) {
-    return res.text()
-  }
-
-  return res.json()
 })

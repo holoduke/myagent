@@ -1,6 +1,7 @@
 import { marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
+import DOMPurify from 'dompurify'
 import 'highlight.js/styles/github-dark-dimmed.css'
 
 export default defineNuxtPlugin(() => {
@@ -19,7 +20,7 @@ export default defineNuxtPlugin(() => {
 
   return {
     provide: {
-      marked: (content: string) => marked.parse(content) as string,
+      marked: (content: string) => DOMPurify.sanitize(marked.parse(content) as string),
     },
   }
 })
