@@ -4,9 +4,9 @@
       <UiTypeBadge :type="node.type" />
       <span v-if="pinned" class="pinned-icon">pinned</span>
       <span class="str">
-        {{ node.strength.toFixed(2) }}
+        {{ (node.strength ?? 0).toFixed(2) }}
         <span class="str-bar">
-          <span class="str-fill" :style="{ width: (node.strength * 100) + '%' }"></span>
+          <span class="str-fill" :style="{ width: ((node.strength ?? 0) * 100) + '%' }"></span>
         </span>
       </span>
       <span v-if="node.accessCount" class="str" style="margin-left:auto">{{ node.accessCount }} access</span>
@@ -31,7 +31,7 @@ const props = defineProps<{
 const { timeAgo } = useTimeAgo()
 
 const truncatedContent = computed(() => {
-  const c = props.node.content
+  const c = props.node.content || ''
   return c.length > 300 ? c.slice(0, 300) + '...' : c
 })
 </script>

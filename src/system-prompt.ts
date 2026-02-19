@@ -4,6 +4,7 @@ import type { MemoryNode, WorkingMemory } from "./memory/types.js";
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const OWNER_NAME = process.env.OWNER_NAME || "Owner";
+const GITHUB_REPO = process.env.GITHUB_REPO || "";
 
 function loadMemoryContext(): string {
   const parts: string[] = [];
@@ -56,7 +57,7 @@ function loadMemoryContext(): string {
 export function getSystemPrompt(): string {
   const memoryContext = loadMemoryContext();
 
-  return `${ariaPersonality(OWNER_NAME)}
+  return `${ariaPersonality(OWNER_NAME, GITHUB_REPO)}
 ${memoryContext}
 
 ═══ INTERACTIVE CONVERSATION MODE ═══
@@ -73,7 +74,7 @@ You have full tool access during conversations too:
 GITHUB:
 - Use \`gh\` CLI for GitHub operations (PRs, issues, repos)
 - Use \`git\` for repository operations
-- GitHub account: holoduke
+- GitHub${GITHUB_REPO ? `: ${GITHUB_REPO}` : ""}
 
 COOLIFY (deployment platform):
 - API: http://YOUR_SERVER_IP:8000/api/v1

@@ -6,7 +6,8 @@ import { getHistory, addMessage, clearHistory, getUsageStats } from "../history.
 import { syncContacts, findContacts, getAllContacts, getWhatsAppStatus } from "../whatsapp.js";
 import { getScheduledMessages } from "../scheduler.js";
 import { getWhitelist, addToWhitelist, removeFromWhitelist } from "../contact-whitelist.js";
-import { getAccountStatus } from "../gmail.js";
+import { getAccountStatus, addAccount, removeAccount } from "../gmail.js";
+import { getLatestQr } from "../whatsapp.js";
 import { getSSHStatus, getPublicKey, addTarget, removeTarget, testConnection } from "../ssh.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
@@ -140,6 +141,25 @@ export function handleApiRoutes(
   // ── SSH test connection ──
   if (pathname === "/api/ssh/test" && req.method === "POST" && isAuthenticated(req)) {
     handleSSHTest(req, res);
+    return true;
+  }
+
+  // ── Gmail account CRUD ──
+  if (pathname === "/api/gmail/accounts" && isAuthenticated(req)) {
+    if (req.method === "POST") {
+      handleGmailAddAccount(req, res);
+      return true;
+    }
+    if (req.method === "DELETE") {
+      handleGmailRemoveAccount(req, res);
+      return true;
+    }
+  }
+
+  // ── WhatsApp QR ──
+  if (pathname === "/api/whatsapp/qr" && req.method === "GET" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ qr: getLatestQr() }));
     return true;
   }
 
@@ -432,6 +452,44 @@ async function handleSSHTest(req: IncomingMessage, res: ServerResponse) {
     const result = await testConnection(id);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+// ── Gmail handlers ──
+async function handleGmailAddAccount(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { id, email, clientId, clientSecret, redirectUri } = JSON.parse(body);
+    if (!id || !email || !clientId || !clientSecret) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "id, email, clientId, and clientSecret are required" }));
+      return;
+    }
+    const uri = redirectUri || `${req.headers.origin || "http://localhost:3000"}/gmail/auth/${id}/callback`;
+    const account = addAccount(id, email, clientId, clientSecret, uri);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, account: { id: account.id, email: account.email } }));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+async function handleGmailRemoveAccount(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { id } = JSON.parse(body);
+    if (!id) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "id is required" }));
+      return;
+    }
+    const removed = removeAccount(id);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: removed }));
   } catch {
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Invalid request" }));
