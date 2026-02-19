@@ -81,6 +81,7 @@ export interface DashboardData {
   whatsapp: { connected: boolean; contactCount: number }
   gmail: { total: number; authenticated: number }
   gmailAccounts: GmailAccount[]
+  ssh: SSHStatus
   whitelistCount: number
   scheduledCount: number
   queueDepth: number
@@ -92,6 +93,22 @@ export interface GmailAccount {
   email: string
   authenticated: boolean
   lastPoll?: number
+}
+
+export interface SSHTarget {
+  id: string
+  label: string
+  host: string
+  user: string
+  port: number
+  lastTestedAt?: number
+  lastTestOk?: boolean
+}
+
+export interface SSHStatus {
+  keyGenerated: boolean
+  publicKey: string
+  targets: SSHTarget[]
 }
 
 export interface AriaStatus {
