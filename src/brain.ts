@@ -23,6 +23,7 @@ import { GoalTracker } from "./goals.js";
 import { getDueRecurringTasks, markExecuted } from "./recurring.js";
 import type { RecurringTask } from "./recurring.js";
 import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
+import { ensureSSHKey } from "./ssh.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -332,6 +333,7 @@ export function startBrainLoop(
   }
 
   ensureBrainDir();
+  ensureSSHKey();
   const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
 
   // Load graph from disk

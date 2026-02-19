@@ -18,6 +18,14 @@
         :accounts="dashboard.gmailAccounts || []"
       />
 
+      <IntegrationsSSHCard
+        :ssh="dashboard.ssh || { keyGenerated: false, publicKey: '', targets: [] }"
+        :testing="sshTesting"
+        @test="sshTest"
+        @add="sshAdd"
+        @remove="sshRemove"
+      />
+
       <IntegrationsScheduledCard :messages="scheduled" />
     </template>
 
@@ -44,6 +52,7 @@ const dashboard = ref<DashboardData | null>(null)
 const scheduled = ref<ScheduledMessage[]>([])
 const error = ref('')
 const showQr = ref(false)
+const sshTesting = ref('')
 
 const origin = ref('')
 onMounted(() => {
@@ -71,6 +80,36 @@ async function load() {
 async function syncContacts() {
   try {
     await api<{ success: boolean }>('/api/sync-contacts', { method: 'POST' })
+    await load()
+  } catch {
+    // Silent
+  }
+}
+
+async function sshTest(id: string) {
+  sshTesting.value = id
+  try {
+    await api<{ success: boolean; error?: string }>('/api/ssh/test', { method: 'POST', body: { id } })
+    await load()
+  } catch {
+    // Silent
+  } finally {
+    sshTesting.value = ''
+  }
+}
+
+async function sshAdd(data: { label: string; host: string; user: string; port: number }) {
+  try {
+    await api<{ success: boolean }>('/api/ssh/targets', { method: 'POST', body: data })
+    await load()
+  } catch {
+    // Silent
+  }
+}
+
+async function sshRemove(id: string) {
+  try {
+    await api<{ success: boolean }>('/api/ssh/targets', { method: 'DELETE', body: { id } })
     await load()
   } catch {
     // Silent
