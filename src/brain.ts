@@ -610,6 +610,12 @@ async function handleRecurringTasks(
             log(`[recurring] Skipping digest "${task.label}": daily budget exhausted`);
             break;
           }
+          // Build context-aware digest prompt based on time of day
+          const hour = new Date().getHours();
+          const isEvening = hour >= 17;
+          const digestPrompt = isEvening
+            ? `[DIGEST REQUEST: ${task.label}] Create a brief evening briefing for the owner. Summarize the day's key events: notable conversations, important messages, things that happened, any open items or pending decisions, and anything worth reflecting on. Keep it concise and personal.`
+            : `[DIGEST REQUEST: ${task.label}] Create a brief morning briefing for the owner. Cover: what happened overnight, important messages received, pending items from yesterday, anything coming up today, and any initiative signals. Keep it concise and personal.`;
           // Inject digest trigger as synthetic observation
           const digestObs: Observation = {
             timestamp: Date.now(),
@@ -617,7 +623,7 @@ async function handleRecurringTasks(
             senderJid: "system",
             isGroup: false,
             isFromMe: true,
-            text: `[DIGEST REQUEST: ${task.label}] Summarize today's observations and key events. Create a brief morning briefing for the owner covering: important messages received, pending items, upcoming events, and any initiative signals.`,
+            text: digestPrompt,
             source: "whatsapp",
           };
           graph.addPendingObservation(digestObs);
