@@ -31,6 +31,7 @@ export interface Observation {
   text: string;
   source?: "whatsapp" | "gmail";
   emailMeta?: EmailMeta;
+  urgency?: number;
 }
 
 export function ensureBrainDir(): void {

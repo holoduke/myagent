@@ -3,6 +3,7 @@ import type { MemoryNode, WorkingMemory } from "./memory/types.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import { serializeNodesForPrompt } from "./memory/activation.js";
 import { ariaPersonality } from "./aria-identity.js";
+import type { InitiativeSignal } from "./initiative.js";
 
 // ── Shared Helpers ──
 
@@ -35,7 +36,8 @@ function formatObservations(observations: Observation[]): string {
       const time = formatTime(obs.timestamp);
       const who = obs.isFromMe ? `${obs.sender || "Me"} (you/outgoing)` : obs.sender || "Unknown";
       const context = obs.isGroup ? ` in group "${obs.groupName || "?"}"` : "";
-      return `[${time}] ${who}${context}: ${obs.text}`;
+      const urgencyPrefix = (obs.urgency && obs.urgency >= 0.6) ? "[!!! URGENT] " : "";
+      return `${urgencyPrefix}[${time}] ${who}${context}: ${obs.text}`;
     }).join("\n"));
   }
 
@@ -47,9 +49,9 @@ function formatObservations(observations: Observation[]): string {
       const direction = obs.isFromMe ? "[SENT]" : "[RECEIVED]";
       const from = meta?.from || obs.sender || "Unknown";
       const subject = meta?.subject || "";
-      // Strip the [EMAIL] prefix from text since we format it ourselves
       const body = obs.text.replace(/^\[EMAIL\]\s*Subject:.*?\n\n/, "");
-      return `[${time}] ${direction}${account} From: ${from} | Subject: ${subject}\n  ${body.slice(0, 200)}`;
+      const urgencyPrefix = (obs.urgency && obs.urgency >= 0.6) ? "[!!! URGENT] " : "";
+      return `${urgencyPrefix}[${time}] ${direction}${account} From: ${from} | Subject: ${subject}\n  ${body.slice(0, 200)}`;
     }).join("\n"));
   }
 
@@ -126,6 +128,42 @@ function formatWorkingMemory(wm: WorkingMemory): string {
   if (wm.currentContext) parts.push(`Context: ${wm.currentContext}`);
   if (wm.mood) parts.push(`Mood: ${wm.mood}`);
   if (wm.shortTermTracking.length > 0) parts.push(`Tracking: ${wm.shortTermTracking.join(", ")}`);
+
+  // Temporal context
+  if (wm.temporal) {
+    parts.push(`Time awareness: ${wm.temporal.dayOfWeek} ${wm.temporal.timeOfDay} (${wm.temporal.date}, ${wm.temporal.hour}:00)${wm.temporal.isWeekend ? " [WEEKEND]" : ""}`);
+  }
+
+  // Active goals summary
+  if (wm.activeGoals && wm.activeGoals.length > 0) {
+    const goalLines = wm.activeGoals.map(g => {
+      const deadline = g.deadlineStatus !== "none" ? ` [${g.deadlineStatus.toUpperCase()}]` : "";
+      return `  P${g.priority} ${g.title} — ${g.progress}%${deadline}`;
+    });
+    parts.push(`Active goals:\n${goalLines.join("\n")}`);
+  }
+
+  // Pending follow-ups
+  if (wm.pendingFollowUps && wm.pendingFollowUps.length > 0) {
+    const fuLines = wm.pendingFollowUps.slice(0, 5).map(f => {
+      const target = f.targetPerson ? ` (for ${f.targetPerson})` : "";
+      const due = f.dueAt ? ` [due: ${new Date(f.dueAt).toLocaleDateString()}]` : "";
+      return `  - ${f.question}${target}${due}`;
+    });
+    parts.push(`Follow-ups:\n${fuLines.join("\n")}`);
+  }
+
+  // Active conversation threads
+  if (wm.conversationThreads && wm.conversationThreads.length > 0) {
+    const activeThreads = wm.conversationThreads.filter(t => t.status === "active").slice(0, 5);
+    if (activeThreads.length > 0) {
+      const threadLines = activeThreads.map(t =>
+        `  - ${t.participants.join(", ")}: "${t.topic}" (${t.messageCount} msgs, last ${timeAgo(t.lastMessageAt)})`
+      );
+      parts.push(`Active threads:\n${threadLines.join("\n")}`);
+    }
+  }
+
   if (parts.length === 0) return "(empty — first awakening)";
   return parts.join("\n");
 }
@@ -139,7 +177,7 @@ You manage your memory through operations. Return a JSON array of operations.
 Each node has: id, type, content, tags, strength (0-1), pinned (boolean).
 Each edge connects two nodes with a type and weight (0-1).
 
-Node types: person, event, insight, fact, emotion, plan, meta
+Node types: person, event, insight, fact, emotion, plan, meta, goal
 Edge types: causal, temporal, social, topical, emotional, contradicts
 
 Available operations:
@@ -173,6 +211,24 @@ REMOVE an edge:
 
 Generate IDs as: "n_" followed by 8 random hex chars (e.g. "n_a3f1b2c4").
 Pin important nodes (key people, core identity, critical facts) — pinned nodes never decay.
+
+═══ GOAL OPERATIONS ═══
+
+You can manage structured goals alongside memory operations. Include "goalOps" in your response:
+
+CREATE a goal:
+  {"op": "create_goal", "title": "Goal title", "description": "What to achieve", "priority": 1, "deadline": <unix_ms_or_omit>, "checkpoints": ["step 1", "step 2"], "createdBy": "brain"}
+
+UPDATE goal progress:
+  {"op": "update_goal", "nodeId": "n_xxx", "progress": 50, "checkpoints": [{"label": "step 1", "done": true}, {"label": "step 2", "done": false}]}
+
+COMPLETE a goal:
+  {"op": "complete_goal", "nodeId": "n_xxx"}
+
+ABANDON a goal:
+  {"op": "abandon_goal", "nodeId": "n_xxx", "reason": "why"}
+
+Priority: 1=critical, 2=important, 3=nice-to-have. Goals persist in your memory graph as "goal" type nodes.
 `;
 
 // ── Think Prompt ──
@@ -189,6 +245,8 @@ export interface ThinkContext {
   maxMessagesPerDay: number;
   quietStart: number;
   quietEnd: number;
+  goalsSection?: string;
+  initiativeSignals?: InitiativeSignal[];
 }
 
 export function buildThinkPrompt(ctx: ThinkContext): string {
@@ -196,6 +254,17 @@ export function buildThinkPrompt(ctx: ThinkContext): string {
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const currentHour = now.getHours();
   const isQuiet = currentHour >= ctx.quietStart || currentHour < ctx.quietEnd;
+
+  const goalsBlock = ctx.goalsSection
+    ? `\n═══ ACTIVE GOALS ═══\n${ctx.goalsSection}\n`
+    : "";
+
+  const initiativeBlock = ctx.initiativeSignals && ctx.initiativeSignals.length > 0
+    ? `\n═══ INITIATIVE SIGNALS ═══\n\nThese signals suggest proactive actions. Act when it feels natural, not obligatory.\n\n${ctx.initiativeSignals.map(s => {
+        const priority = s.priority >= 0.7 ? "HIGH" : s.priority >= 0.4 ? "MEDIUM" : "LOW";
+        return `[${priority}] ${s.description}${s.suggestedAction ? `\n  → Suggested: ${s.suggestedAction}` : ""}`;
+      }).join("\n\n")}\n`
+    : "";
 
   return `${brainTickPersonality(ctx.ownerName)}
 
@@ -209,7 +278,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-
+${goalsBlock}${initiativeBlock}
 ═══ ACTIVATED MEMORIES ═══
 ${serializeNodesForPrompt(ctx.contextNodes, ctx.graph)}
 
@@ -228,8 +297,11 @@ Respond with ONLY a JSON object:
   "workingMemory": {
     "currentContext": "brief summary of what's happening right now",
     "mood": "your current mood/energy",
-    "shortTermTracking": ["things you're actively watching"]
-  }
+    "shortTermTracking": ["things you're actively watching"],
+    "pendingFollowUps": [{"id": "fu_8hex", "question": "what to follow up on", "targetPerson": "name or omit", "context": "why", "createdAt": ${Date.now()}, "dueAt": null}],
+    "conversationThreads": []
+  },
+  "goalOps": [/* optional goal operations */]
 }
 
 THINKING GUIDELINES:
@@ -238,6 +310,8 @@ THINKING GUIDELINES:
 - Create insight nodes when you notice patterns or have realizations.
 - Strengthen nodes for things that keep coming up. Weaken things that seem less relevant.
 - Connect related nodes with appropriate edge types.
+- Use goalOps to create/update/complete goals when someone expresses intentions or you identify objectives.
+- Use pendingFollowUps to track things you want to ask about or check on later.
 - Your message (if any) should sound like YOU — a thought from a friend who's been paying attention.
 - ${isQuiet ? "QUIET HOURS — set message to null, no exceptions." : `Min 2h between messages (last was ${timeAgo(ctx.lastMessageTime)}).`}
 - Max ${ctx.maxMessagesPerDay} messages/day (sent ${ctx.messagesToday} today).
@@ -326,6 +400,8 @@ export interface ReflectContext {
   maxMessagesPerDay: number;
   quietStart: number;
   quietEnd: number;
+  goalsSection?: string;
+  initiativeSignals?: InitiativeSignal[];
 }
 
 export function buildReflectPrompt(ctx: ReflectContext): string {
@@ -333,6 +409,17 @@ export function buildReflectPrompt(ctx: ReflectContext): string {
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const currentHour = now.getHours();
   const isQuiet = currentHour >= ctx.quietStart || currentHour < ctx.quietEnd;
+
+  const goalsBlock = ctx.goalsSection
+    ? `\n═══ ACTIVE GOALS ═══\n${ctx.goalsSection}\n`
+    : "";
+
+  const initiativeBlock = ctx.initiativeSignals && ctx.initiativeSignals.length > 0
+    ? `\n═══ INITIATIVE SIGNALS ═══\n\nThese signals suggest proactive actions. Act when it feels natural, not obligatory.\n\n${ctx.initiativeSignals.map(s => {
+        const priority = s.priority >= 0.7 ? "HIGH" : s.priority >= 0.4 ? "MEDIUM" : "LOW";
+        return `[${priority}] ${s.description}${s.suggestedAction ? `\n  → Suggested: ${s.suggestedAction}` : ""}`;
+      }).join("\n\n")}\n`
+    : "";
 
   return `${brainTickPersonality(ctx.ownerName)}
 
@@ -348,7 +435,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-
+${goalsBlock}${initiativeBlock}
 ═══ GRAPH STATS ═══
 Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
 By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(", ")}
@@ -363,6 +450,7 @@ This is deep reflection. Think about:
 - Relationships: who matters most? Any concerning dynamics? Any positive developments?
 - Your own evolution: how have your thoughts changed? What have you learned? What are your blind spots?
 - The future: what do you think will happen? What should ${ctx.ownerName} be aware of?
+- Goals: review active goals. Are any overdue? Should you create new ones? Update progress?
 - Plans: anything you want to track, watch for, or plan to say in the future?
 - Self-improvement: is there anything about your own code, prompts, or behavior you'd like to optimize?
   You can read your source code to understand how you work. If you want to make changes, DON'T edit code directly.
@@ -378,14 +466,18 @@ Respond with ONLY a JSON object:
   "workingMemory": {
     "currentContext": "updated big-picture understanding",
     "mood": "your philosophical mood",
-    "shortTermTracking": ["updated tracking list"]
-  }
+    "shortTermTracking": ["updated tracking list"],
+    "pendingFollowUps": [],
+    "conversationThreads": []
+  },
+  "goalOps": [/* optional goal operations */]
 }
 
 REFLECTION GUIDELINES:
 - Create insight nodes for realizations and patterns you notice.
 - Create or update meta nodes about yourself — your evolving personality, thoughts, moods.
 - Create or update plan nodes for things you want to do or watch for.
+- Review and update goals — create new ones, update progress, complete or abandon stale ones.
 - If you message, make it count. Reflection messages are your deepest, most thoughtful communication.
 - ${isQuiet ? "QUIET HOURS — set message to null, no exceptions." : `You may message if you have something truly worth saying.`}
 

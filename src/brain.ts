@@ -7,17 +7,22 @@ import type { Observation } from "./observer.js";
 import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./brain-prompt.js";
 import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
-import type { MemoryOperation, BrainResponse, BrainState } from "./memory/types.js";
+import type { MemoryOperation, BrainResponse, BrainState, GoalOperation } from "./memory/types.js";
 import { getDueMessages } from "./scheduler.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { MAX_NODES_SOFT } from "./memory/types.js";
 import { runConsolidation } from "./memory/decay.js";
-import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory } from "./memory/working-memory.js";
+import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory, populateTemporalContext, updateConversationThreads } from "./memory/working-memory.js";
 import {
   selectContextForThink,
   selectContextForConsolidate,
   selectContextForReflect,
 } from "./memory/activation.js";
+import { scoreObservations, getPendingUrgency, clearPendingUrgency } from "./urgency.js";
+import { GoalTracker } from "./goals.js";
+import { getDueRecurringTasks, markExecuted } from "./recurring.js";
+import type { RecurringTask } from "./recurring.js";
+import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -44,6 +49,15 @@ const THINK_COOLDOWN = Number(process.env.BRAIN_THINK_COOLDOWN ?? 300000);      
 const CONSOLIDATE_INTERVAL = Number(process.env.BRAIN_CONSOLIDATE_INTERVAL ?? 14400000); // 4 hours
 const REFLECT_INTERVAL = Number(process.env.BRAIN_REFLECT_INTERVAL ?? 43200000);    // 12 hours
 const TIME_AWARENESS_INTERVAL = 30 * 60 * 1000; // 30 min — think even without observations
+
+// Urgency bypass
+const URGENCY_BYPASS_THRESHOLD = 0.6;
+const URGENCY_MIN_COOLDOWN = 60000; // 1 min minimum even for urgent
+
+// Recurring task budget
+const MAX_RECURRING_THINKS_PER_DAY = 5;
+let recurringThinksToday = 0;
+let recurringBudgetDate = "";
 
 const STATE_FILE = `${BRAIN_DIR}/state.json`;
 const NOTEBOOK_FILE = `${BRAIN_DIR}/notebook.md`;
@@ -114,6 +128,7 @@ function parseBrainResponse(raw: string): BrainResponse | null {
       message: parsed.message ?? null,
       reasoning: parsed.reasoning ?? "",
       workingMemory: parsed.workingMemory ?? undefined,
+      goalOps: Array.isArray(parsed.goalOps) ? parsed.goalOps : undefined,
     };
   } catch {
     log(`Failed to parse brain response: ${raw.slice(0, 200)}`);
@@ -371,6 +386,12 @@ async function tick(
     state.messagesTodayDate = today;
   }
 
+  // Reset recurring task budget
+  if (recurringBudgetDate !== today) {
+    recurringBudgetDate = today;
+    recurringThinksToday = 0;
+  }
+
   // Daily pruning of old observations
   if (lastPruneDate !== today) {
     lastPruneDate = today;
@@ -380,10 +401,25 @@ async function tick(
   // Get new observations
   const newObs = getObservationsSince(state.lastObservationTime);
 
+  // ── Score urgency on new observations ──
+  if (newObs.length > 0) {
+    scoreObservations(newObs);
+  }
+
   // ── Observe tick (always, free) ──
   if (newObs.length > 0) {
     observeTick(state, newObs);
   }
+
+  // ── Handle recurring tasks ──
+  await handleRecurringTasks(state, queue, sendMessage, ownerJid, newObs);
+
+  // ── Detect initiative signals ──
+  const wm = loadWorkingMemory();
+  populateTemporalContext(wm);
+  const signals = detectInitiativeSignals(graph, wm);
+  const highPrioritySignals = signals.filter(s => s.priority >= 0.5);
+  saveWorkingMemory(wm);
 
   // ── Determine which Claude tick to run ──
   // Priority: reflect > consolidate > think (only one per tick to save cost)
@@ -392,6 +428,19 @@ async function tick(
   const timeSinceConsolidate = now - state.lastConsolidateTick;
   const timeSinceThink = now - state.lastThinkTick;
   const hasNewObs = newObs.length > 0;
+
+  // Urgency-based cooldown bypass
+  const urgency = getPendingUrgency();
+  const urgentBypass = urgency >= URGENCY_BYPASS_THRESHOLD && timeSinceThink >= URGENCY_MIN_COOLDOWN;
+  if (urgentBypass) {
+    log(`Urgency bypass: score ${urgency.toFixed(2)} >= ${URGENCY_BYPASS_THRESHOLD}, bypassing ${THINK_COOLDOWN / 1000}s cooldown`);
+  }
+
+  // Initiative-triggered think
+  const initiativeTriggered = highPrioritySignals.length > 0
+    && !hasNewObs
+    && timeSinceThink >= THINK_COOLDOWN
+    && canTriggerInitiativeThink();
 
   // Defer to owner messages — skip if queue is busy
   if (!queue.idle) {
@@ -403,19 +452,31 @@ async function tick(
   let tickSucceeded = false;
 
   if (timeSinceReflect >= REFLECT_INTERVAL && graph.nodeCount > 0) {
-    await reflectTick(state, queue, sendMessage, ownerJid);
+    await reflectTick(state, queue, sendMessage, ownerJid, signals);
     tickSucceeded = true;
   } else if (timeSinceConsolidate >= CONSOLIDATE_INTERVAL && graph.nodeCount > 0) {
     await consolidateTick(state, queue);
     tickSucceeded = true;
-  } else if ((hasNewObs && timeSinceThink >= THINK_COOLDOWN) || timeSinceThink >= TIME_AWARENESS_INTERVAL) {
-    await thinkTick(state, newObs, queue, sendMessage, ownerJid);
+  } else if (
+    (hasNewObs && timeSinceThink >= THINK_COOLDOWN) ||
+    (hasNewObs && urgentBypass) ||
+    timeSinceThink >= TIME_AWARENESS_INTERVAL ||
+    initiativeTriggered
+  ) {
+    if (initiativeTriggered && !hasNewObs) {
+      recordInitiativeThink();
+      log(`Initiative-triggered think (${highPrioritySignals.length} high-priority signals)`);
+    }
+    await thinkTick(state, newObs, queue, sendMessage, ownerJid, signals);
     tickSucceeded = true;
   } else {
     // Nothing to do this tick
     saveState(state);
     return;
   }
+
+  // Clear urgency after processing
+  clearPendingUrgency();
 
   // ── Track success/failure for health ──
   if (tickSucceeded) {
@@ -478,9 +539,94 @@ function observeTick(state: BrainState, observations: Observation[]): void {
     }
   }
 
+  // Update conversation threads in working memory
+  const wm = loadWorkingMemory();
+  updateConversationThreads(wm, observations);
+  saveWorkingMemory(wm);
+
   state.lastObservationTime = Date.now();
   state.lastObserveTick = Date.now();
   log(`Observe: buffered ${observations.length} observations, ${graph.getPendingObservations().length} pending total`);
+}
+
+// ── Recurring Tasks Handler ──
+
+async function handleRecurringTasks(
+  state: BrainState,
+  queue: MessageQueue,
+  sendMessage: (jid: string, text: string) => Promise<void>,
+  ownerJid: string,
+  currentObs: Observation[],
+): Promise<void> {
+  const dueTasks = getDueRecurringTasks(ownerJid);
+  if (dueTasks.length === 0) return;
+
+  for (const task of dueTasks) {
+    try {
+      switch (task.action.type) {
+        case "message": {
+          const action = task.action as { type: "message"; targetJid: string; template: string };
+          if (isWhitelisted(action.targetJid)) {
+            await sendMessage(action.targetJid, action.template);
+            state.lastMessageTime = Date.now();
+            state.messagesToday++;
+            log(`[recurring] Sent message for task "${task.label}" to ${action.targetJid}`);
+          } else {
+            log(`[recurring] Blocked message for "${task.label}": target not whitelisted`);
+          }
+          markExecuted(task.id);
+          break;
+        }
+
+        case "think_trigger": {
+          if (recurringThinksToday >= MAX_RECURRING_THINKS_PER_DAY) {
+            log(`[recurring] Skipping think_trigger "${task.label}": daily budget exhausted (${recurringThinksToday}/${MAX_RECURRING_THINKS_PER_DAY})`);
+            break;
+          }
+          const action = task.action as { type: "think_trigger"; topic: string; context?: string };
+          // Inject synthetic observation
+          const syntheticObs: Observation = {
+            timestamp: Date.now(),
+            sender: "ARIA (recurring task)",
+            senderJid: "system",
+            isGroup: false,
+            isFromMe: true,
+            text: `[RECURRING TASK: ${task.label}] ${action.topic}${action.context ? `\n${action.context}` : ""}`,
+            source: "whatsapp",
+          };
+          graph.addPendingObservation(syntheticObs);
+          recurringThinksToday++;
+          markExecuted(task.id);
+          log(`[recurring] Injected think trigger for "${task.label}" (${recurringThinksToday}/${MAX_RECURRING_THINKS_PER_DAY} today)`);
+          break;
+        }
+
+        case "digest": {
+          if (recurringThinksToday >= MAX_RECURRING_THINKS_PER_DAY) {
+            log(`[recurring] Skipping digest "${task.label}": daily budget exhausted`);
+            break;
+          }
+          // Inject digest trigger as synthetic observation
+          const digestObs: Observation = {
+            timestamp: Date.now(),
+            sender: "ARIA (digest)",
+            senderJid: "system",
+            isGroup: false,
+            isFromMe: true,
+            text: `[DIGEST REQUEST: ${task.label}] Summarize today's observations and key events. Create a brief morning briefing for the owner covering: important messages received, pending items, upcoming events, and any initiative signals.`,
+            source: "whatsapp",
+          };
+          graph.addPendingObservation(digestObs);
+          recurringThinksToday++;
+          markExecuted(task.id);
+          log(`[recurring] Injected digest trigger for "${task.label}"`);
+          break;
+        }
+      }
+    } catch (err) {
+      log(`[recurring] Error handling task "${task.label}": ${err}`);
+    }
+  }
 }
 
 // ── Think Tick (Claude call) ──
@@ -491,6 +637,7 @@ async function thinkTick(
   queue: MessageQueue,
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
+  initiativeSignals: import("./initiative.js").InitiativeSignal[] = [],
 ): Promise<void> {
   const now = Date.now();
 
@@ -499,9 +646,18 @@ async function thinkTick(
   const allObs = pending.length > 0 ? pending : newObs;
 
   const wm = loadWorkingMemory();
-  const contextNodes = selectContextForThink(graph, wm, allObs);
+  populateTemporalContext(wm);
 
-  log(`Think: ${allObs.length} observations, ${contextNodes.length} context nodes`);
+  // Boost activation for initiative signal related nodes
+  const signalNodeIds = initiativeSignals.flatMap(s => s.relatedNodeIds);
+  const contextNodes = selectContextForThink(graph, wm, allObs, signalNodeIds);
+
+  // Get goals section
+  const goalTracker = new GoalTracker(graph);
+  const goalsSection = goalTracker.serializeForPrompt();
+  wm.activeGoals = goalTracker.getWorkingGoalRefs();
+
+  log(`Think: ${allObs.length} observations, ${contextNodes.length} context nodes, ${initiativeSignals.length} initiative signals`);
 
   const prompt = buildThinkPrompt({
     ownerName: OWNER_NAME,
@@ -515,6 +671,8 @@ async function thinkTick(
     maxMessagesPerDay: MAX_MESSAGES_PER_DAY,
     quietStart: QUIET_START,
     quietEnd: QUIET_END,
+    goalsSection,
+    initiativeSignals,
   });
 
   try {
@@ -542,6 +700,12 @@ async function thinkTick(
     if (response.operations.length > 0) {
       const { applied, skipped } = graph.applyOperations(response.operations as MemoryOperation[]);
       log(`Think ops: ${applied} applied, ${skipped} skipped`);
+    }
+
+    // Apply goal operations
+    if (response.goalOps && response.goalOps.length > 0) {
+      goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
+      wm.activeGoals = goalTracker.getWorkingGoalRefs();
     }
 
     // Update working memory
@@ -589,6 +753,7 @@ async function consolidateTick(
 
   // Prepare context for Claude consolidation
   const wm = loadWorkingMemory();
+  populateTemporalContext(wm);
   const { weakNodes, orphanNodes, duplicateCandidates, stats } = selectContextForConsolidate(graph);
 
   // Only call Claude if there's cleanup work to consider
@@ -659,13 +824,20 @@ async function reflectTick(
   queue: MessageQueue,
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
+  initiativeSignals: import("./initiative.js").InitiativeSignal[] = [],
 ): Promise<void> {
   const now = Date.now();
   const wm = loadWorkingMemory();
+  populateTemporalContext(wm);
   const strongestNodes = selectContextForReflect(graph);
   const stats = graph.getStats();
 
-  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes`);
+  // Get goals section
+  const goalTracker = new GoalTracker(graph);
+  const goalsSection = goalTracker.serializeForPrompt();
+  wm.activeGoals = goalTracker.getWorkingGoalRefs();
+
+  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals`);
 
   const prompt = buildReflectPrompt({
     ownerName: OWNER_NAME,
@@ -678,6 +850,8 @@ async function reflectTick(
     maxMessagesPerDay: MAX_MESSAGES_PER_DAY,
     quietStart: QUIET_START,
     quietEnd: QUIET_END,
+    goalsSection,
+    initiativeSignals,
   });
 
   try {
@@ -703,6 +877,12 @@ async function reflectTick(
     if (response.operations.length > 0) {
       const { applied, skipped } = graph.applyOperations(response.operations as MemoryOperation[]);
       log(`Reflect ops: ${applied} applied, ${skipped} skipped`);
+    }
+
+    // Apply goal operations
+    if (response.goalOps && response.goalOps.length > 0) {
+      goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
+      wm.activeGoals = goalTracker.getWorkingGoalRefs();
     }
 
     if (response.workingMemory) {

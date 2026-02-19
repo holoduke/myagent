@@ -147,11 +147,27 @@ export function selectContextForThink(
   graph: MemoryGraph,
   wm: WorkingMemory,
   observations: Observation[],
+  boostNodeIds: string[] = [],
 ): MemoryNode[] {
   const keywords = extractKeywords(observations);
   log(`Think context: ${keywords.length} keywords from ${observations.length} observations`);
 
   const activated = spreadingActivation(graph, keywords, 25);
+
+  // Boost activation for initiative signal related nodes
+  for (const nodeId of boostNodeIds) {
+    const existing = activated.find(a => a.node.id === nodeId);
+    if (existing) {
+      existing.activation += 0.5; // Significant boost
+    } else {
+      const node = graph.getNode(nodeId);
+      if (node) {
+        activated.push({ node, activation: 0.5 });
+      }
+    }
+  }
+  // Re-sort after boosting
+  activated.sort((a, b) => b.activation - a.activation);
 
   // Also include working memory's activated nodes
   const wmNodes: MemoryNode[] = [];
