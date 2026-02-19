@@ -3,3 +3,4 @@ dist/
 auth_state/
 .env
 *.log
+SAAS-PLAN.md
