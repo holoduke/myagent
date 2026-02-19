@@ -890,6 +890,7 @@ export function getStyles(): string {
     .mob-nav-item svg { width: 18px; height: 18px; }
 
     @media (max-width: 768px) {
+      #app.visible { flex-direction: column; }
       .sidebar { display: none; }
       .mobile-nav { display: block; }
       .section { padding: 16px 12px; }
