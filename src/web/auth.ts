@@ -107,7 +107,7 @@ export async function handleLogin(req: IncomingMessage, res: ServerResponse): Pr
 
       res.writeHead(200, {
         "Content-Type": "application/json",
-        "Set-Cookie": `session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
+        "Set-Cookie": `session=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400`,
       });
       res.end(JSON.stringify({ success: true, token }));
     } else {

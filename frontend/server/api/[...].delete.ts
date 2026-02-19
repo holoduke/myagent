@@ -7,12 +7,19 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody(event)
 
-  const res = await fetch(url, {
-    method: 'DELETE',
-    headers: proxyHeaders(event),
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  try {
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: proxyHeaders(event),
+      body: body ? JSON.stringify(body) : undefined,
+    })
 
-  setResponseStatus(event, res.status)
-  return res.json()
+    setResponseStatus(event, res.status)
+    return res.json()
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(`[proxy] DELETE error ${url}:`, message)
+    setResponseStatus(event, 502)
+    return { error: true, message: 'Service temporarily unavailable' }
+  }
 })
