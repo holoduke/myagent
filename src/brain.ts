@@ -727,9 +727,12 @@ async function thinkTick(
       saveWorkingMemory(wm);
     }
 
-    // Handle message
+    // Handle message — briefings (digest-triggered thinks) bypass rate limits
     if (response.message) {
-      await trySendMessage(state, sendMessage, ownerJid, response.message);
+      const isDigestTriggered = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
+      await trySendMessage(state, sendMessage, ownerJid, response.message, {
+        bypassLimits: isDigestTriggered,
+      });
     }
 
     // Update state
@@ -979,21 +982,24 @@ async function trySendMessage(
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
   message: string,
+  options?: { bypassLimits?: boolean },
 ): Promise<void> {
   const now = Date.now();
   const currentHour = new Date().getHours();
   const isQuiet = currentHour >= QUIET_START || currentHour < QUIET_END;
   const messageIntervalOk = (now - state.lastMessageTime) >= MIN_MESSAGE_INTERVAL;
   const underDailyLimit = state.messagesToday < MAX_MESSAGES_PER_DAY;
+  const bypass = options?.bypassLimits === true;
 
-  if (isQuiet) {
+  if (!bypass && isQuiet) {
     log("Suppressed message: quiet hours");
-  } else if (!messageIntervalOk) {
+  } else if (!bypass && !messageIntervalOk) {
     log(`Suppressed message: too soon (${Math.round((now - state.lastMessageTime) / 60000)}m since last)`);
-  } else if (!underDailyLimit) {
+  } else if (!bypass && !underDailyLimit) {
     log(`Suppressed message: daily limit reached (${state.messagesToday}/${MAX_MESSAGES_PER_DAY})`);
   } else {
     try {
+      if (bypass) log("Briefing message — bypassing rate limits");
       await sendMessage(ownerJid, message);
       state.lastMessageTime = now;
       state.messagesToday++;
