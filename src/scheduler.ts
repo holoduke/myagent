@@ -18,6 +18,7 @@ export interface ScheduledMessage {
   scheduledAt: number;  // when it was created
   deliverAt: number;    // when to deliver
   source: string;       // "brain" | "chat" | "web"
+  retryCount?: number;  // incremented on delivery failure
 }
 
 function loadSchedule(): ScheduledMessage[] {
@@ -74,7 +75,9 @@ export function getScheduledMessages(): ScheduledMessage[] {
 }
 
 /**
- * Check for due messages and return them. Removes delivered messages from the schedule.
+ * Check for due messages and return them.
+ * Does NOT remove messages from the schedule — caller must use markDelivered()
+ * after successful delivery to avoid data loss on send failure.
  */
 export function getDueMessages(): ScheduledMessage[] {
   const schedule = loadSchedule();
@@ -83,9 +86,48 @@ export function getDueMessages(): ScheduledMessage[] {
   const due = schedule.filter(m => m.deliverAt <= now);
   if (due.length === 0) return [];
 
-  const remaining = schedule.filter(m => m.deliverAt > now);
-  saveSchedule(remaining);
-
   log(`${due.length} message(s) due for delivery`);
   return due;
+}
+
+const MAX_RETRIES = 3;
+
+/**
+ * Remove successfully delivered messages from the schedule file.
+ */
+export function markDelivered(ids: string[]): void {
+  if (ids.length === 0) return;
+  const schedule = loadSchedule();
+  const remaining = schedule.filter(m => !ids.includes(m.id));
+  saveSchedule(remaining);
+  log(`Marked ${ids.length} message(s) as delivered, ${remaining.length} remaining`);
+}
+
+/**
+ * Increment retryCount for failed messages. Removes messages exceeding MAX_RETRIES.
+ * Returns IDs of messages that were dropped due to exceeding retry limit.
+ */
+export function markFailed(ids: string[]): string[] {
+  if (ids.length === 0) return [];
+  const schedule = loadSchedule();
+  const droppedIds: string[] = [];
+
+  for (const msg of schedule) {
+    if (ids.includes(msg.id)) {
+      msg.retryCount = (msg.retryCount || 0) + 1;
+      if (msg.retryCount > MAX_RETRIES) {
+        droppedIds.push(msg.id);
+      } else {
+        log(`Message ${msg.id} retry ${msg.retryCount}/${MAX_RETRIES}`);
+      }
+    }
+  }
+
+  const remaining = schedule.filter(m => !droppedIds.includes(m.id));
+  saveSchedule(remaining);
+
+  if (droppedIds.length > 0) {
+    log(`Dropped ${droppedIds.length} message(s) after exceeding ${MAX_RETRIES} retries`);
+  }
+  return droppedIds;
 }

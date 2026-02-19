@@ -8,7 +8,8 @@ import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./
 import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState, GoalOperation } from "./memory/types.js";
-import { getDueMessages } from "./scheduler.js";
+import { getDueMessages, markDelivered, markFailed } from "./scheduler.js";
+import { isWhatsAppConnected } from "./whatsapp.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { MAX_NODES_SOFT } from "./memory/types.js";
 import { runConsolidation } from "./memory/decay.js";
@@ -966,22 +967,48 @@ async function deliverScheduledMessages(
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
 ): Promise<void> {
-  // New multi-message scheduler
+  // Check WhatsApp connection before attempting any deliveries.
+  // If not connected (e.g. during startup race), messages stay in schedule for next tick.
+  if (!isWhatsAppConnected()) {
+    const dueCount = getDueMessages().length;
+    if (dueCount > 0) {
+      log(`Skipping ${dueCount} scheduled message(s): WhatsApp not connected (will retry next tick)`);
+    }
+    return;
+  }
+
+  // getDueMessages() returns due messages WITHOUT removing them from the file.
+  // We only remove after successful delivery via markDelivered().
   const dueMessages = getDueMessages();
+  const deliveredIds: string[] = [];
+  const failedIds: string[] = [];
+
   for (const msg of dueMessages) {
     try {
       const jid = msg.targetJid || ownerJid;
       if (!isWhitelisted(jid)) {
         log(`Blocked scheduled message ${msg.id}: target ${jid} not on whitelist`);
+        deliveredIds.push(msg.id); // Remove blocked messages (they'll never succeed)
         continue;
       }
       await sendMessage(jid, msg.message);
       state.lastMessageTime = Date.now();
       state.messagesToday++;
+      deliveredIds.push(msg.id);
       log(`Delivered scheduled message ${msg.id} to ${jid} (${msg.message.length} chars, source: ${msg.source})`);
     } catch (err) {
       log(`Failed to deliver scheduled message ${msg.id}: ${err}`);
+      failedIds.push(msg.id);
     }
+  }
+
+  // Remove successfully delivered (and blocked) messages from schedule
+  markDelivered(deliveredIds);
+
+  // Increment retry count for failed messages; drops those exceeding max retries
+  const droppedIds = markFailed(failedIds);
+  for (const id of droppedIds) {
+    log(`Permanently dropped scheduled message ${id} after max retries`);
   }
 
   // Legacy: also check single pending-message.json for backward compatibility
