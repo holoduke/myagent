@@ -64,6 +64,62 @@
             <span class="intg-tile-stat">messages</span>
           </div>
         </div>
+
+        <!-- Google Calendar -->
+        <div class="intg-tile" @click="activeModal = 'calendar'">
+          <div class="intg-tile-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#4285F4" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </div>
+          <div class="intg-tile-name">Calendar</div>
+          <div class="intg-tile-row">
+            <span class="intg-status" :class="calendarData.enabled ? 'online' : 'offline'">
+              {{ calendarData.enabled ? 'Active' : 'Disabled' }}
+            </span>
+            <span class="intg-tile-stat">{{ calendarData.accounts.length }} accounts</span>
+          </div>
+        </div>
+
+        <!-- Home Assistant -->
+        <div class="intg-tile" @click="activeModal = 'homeassistant'">
+          <div class="intg-tile-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#03A9F4" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          </div>
+          <div class="intg-tile-name">Home Assistant</div>
+          <div class="intg-tile-row">
+            <span class="intg-status" :class="haData.connected ? 'online' : haData.enabled ? 'pending' : 'offline'">
+              {{ haData.connected ? 'Connected' : haData.enabled ? 'Disconnected' : 'Not configured' }}
+            </span>
+            <span class="intg-tile-stat">{{ haData.entityCount }} entities</span>
+          </div>
+        </div>
+
+        <!-- RSS Feeds -->
+        <div class="intg-tile" @click="activeModal = 'rss'">
+          <div class="intg-tile-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#FF9800" stroke-width="2"><path d="M4 11a9 9 0 019 9"/><path d="M4 4a16 16 0 0116 16"/><circle cx="5" cy="19" r="1"/></svg>
+          </div>
+          <div class="intg-tile-name">RSS Feeds</div>
+          <div class="intg-tile-row">
+            <span class="intg-status" :class="rssData.feeds.length ? 'online' : 'offline'">
+              {{ rssData.feeds.filter(f => f.enabled).length }} active
+            </span>
+            <span class="intg-tile-stat">{{ rssData.feeds.length }} feeds</span>
+          </div>
+        </div>
+
+        <!-- OwnTracks -->
+        <div class="intg-tile" @click="activeModal = 'owntracks'">
+          <div class="intg-tile-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#E91E63" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          </div>
+          <div class="intg-tile-name">OwnTracks</div>
+          <div class="intg-tile-row">
+            <span class="intg-status" :class="otData.lastLocation ? 'online' : otData.enabled ? 'pending' : 'offline'">
+              {{ otData.lastLocation ? 'Tracking' : otData.enabled ? 'Waiting' : 'Not configured' }}
+            </span>
+            <span class="intg-tile-stat">{{ otData.lastLocation ? 'Location known' : 'No data' }}</span>
+          </div>
+        </div>
       </div>
 
       <!-- WhatsApp Modal -->
@@ -98,6 +154,26 @@
       <UiModal :open="activeModal === 'scheduled'" title="Scheduled Messages" @close="activeModal = null">
         <IntegrationsScheduledCard :messages="scheduled" />
       </UiModal>
+
+      <!-- Calendar Modal -->
+      <UiModal :open="activeModal === 'calendar'" title="Google Calendar" @close="activeModal = null">
+        <IntegrationsCalendarCard :calendar="calendarData" />
+      </UiModal>
+
+      <!-- Home Assistant Modal -->
+      <UiModal :open="activeModal === 'homeassistant'" title="Home Assistant" @close="activeModal = null">
+        <IntegrationsHomeAssistantCard :ha="haData" />
+      </UiModal>
+
+      <!-- RSS Modal -->
+      <UiModal :open="activeModal === 'rss'" title="RSS Feeds" max-width="640px" @close="activeModal = null">
+        <IntegrationsRSSCard :rss="rssData" @reload="load" />
+      </UiModal>
+
+      <!-- OwnTracks Modal -->
+      <UiModal :open="activeModal === 'owntracks'" title="OwnTracks" @close="activeModal = null">
+        <IntegrationsOwnTracksCard :owntracks="otData" />
+      </UiModal>
     </template>
 
     <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
@@ -105,7 +181,7 @@
 </template>
 
 <script setup lang="ts">
-import type { DashboardData, ScheduledMessage, SSHStatus } from '~/types/aria'
+import type { DashboardData, ScheduledMessage, SSHStatus, CalendarStatus, HomeAssistantStatus, RSSStatus, OwnTracksStatus } from '~/types/aria'
 
 const { api } = useApi()
 
@@ -118,6 +194,10 @@ const sshTesting = ref('')
 const waData = computed(() => dashboard.value?.whatsapp || { connected: false, contactCount: 0 })
 const gmailData = computed(() => dashboard.value?.gmail || { total: 0, authenticated: 0 })
 const sshData = computed<SSHStatus>(() => dashboard.value?.ssh || { keyGenerated: false, publicKey: '', targets: [] })
+const calendarData = computed<CalendarStatus>(() => dashboard.value?.calendar || { enabled: false, accounts: [], nextEventCount: 0 })
+const haData = computed<HomeAssistantStatus>(() => dashboard.value?.homeassistant || { enabled: false, connected: false, url: '', entityCount: 0, lastPoll: 0 })
+const rssData = computed<RSSStatus>(() => dashboard.value?.rss || { feeds: [] })
+const otData = computed<OwnTracksStatus>(() => dashboard.value?.owntracks || { enabled: false, lastLocation: null })
 
 async function load() {
   try {

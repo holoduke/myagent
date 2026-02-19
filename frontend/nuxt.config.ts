@@ -16,7 +16,7 @@ export default defineNuxtConfig({
       meta: [
         { name: 'apple-mobile-web-app-capable', content: 'yes' },
         { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
-        { name: 'theme-color', content: '#060610' },
+        { name: 'theme-color', content: '#07070f' },
         { name: 'robots', content: 'noindex, nofollow' },
       ],
       link: [

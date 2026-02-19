@@ -43,7 +43,7 @@ const navItems = [
   width: var(--sidebar-w);
   background: var(--bg-card);
   border-right: 1px solid var(--border);
-  box-shadow: 1px 0 10px rgba(0,229,255,0.03);
+  box-shadow: 1px 0 10px rgba(168,85,247,0.03);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -68,7 +68,7 @@ const navItems = [
   height: 10px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 8px rgba(255,77,42,0.6);
+  box-shadow: 0 0 8px rgba(168,85,247,0.6);
   animation: breathe 3s ease-in-out infinite;
 }
 .sidebar-logo .version {
@@ -90,7 +90,7 @@ const navItems = [
   padding: 10px 16px;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   font-family: var(--sans);
   font-weight: 500;
   border-left: 3px solid transparent;
@@ -104,8 +104,8 @@ const navItems = [
 .nav-item.active {
   color: var(--accent);
   border-left-color: var(--accent);
-  box-shadow: inset 3px 0 10px rgba(255,77,42,0.15);
-  background: rgba(255,77,42,0.05);
+  box-shadow: inset 3px 0 10px rgba(168,85,247,0.15);
+  background: rgba(168,85,247,0.05);
 }
 .nav-item :deep(svg) { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.7; }
 .nav-item.active :deep(svg) { opacity: 1; }

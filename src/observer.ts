@@ -21,6 +21,23 @@ export interface EmailMeta {
   messageId: string;
 }
 
+export interface CalendarMeta {
+  eventId: string;
+  calendarId: string;
+  accountEmail: string;
+  start: string;
+  end: string;
+  location?: string;
+}
+
+export interface LocationMeta {
+  lat: number;
+  lon: number;
+  accuracy: number;
+  battery?: number;
+  velocity?: number;
+}
+
 export interface Observation {
   timestamp: number;
   sender: string;
@@ -29,8 +46,10 @@ export interface Observation {
   groupName?: string;
   isFromMe: boolean;
   text: string;
-  source?: "whatsapp" | "gmail";
+  source?: "whatsapp" | "gmail" | "calendar" | "homeassistant" | "rss" | "owntracks";
   emailMeta?: EmailMeta;
+  calendarMeta?: CalendarMeta;
+  locationMeta?: LocationMeta;
   urgency?: number;
 }
 
