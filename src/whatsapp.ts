@@ -25,6 +25,8 @@ export interface ObservationEvent {
   groupName?: string;
   isFromMe: boolean;
   text: string;
+  chatJid?: string;     // For DMs: the remote JID (who the chat is with)
+  chatName?: string;    // For DMs: resolved name of the chat counterpart
 }
 
 export type ObservationHandler = (obs: ObservationEvent) => void;
@@ -247,9 +249,24 @@ export async function startWhatsApp(
           }
         }
 
-        const senderJid = isGroup
-          ? (msg.key.participant || jid)
-          : jid;
+        // senderJid should always be the actual sender's JID
+        let senderJid: string;
+        if (msg.key.fromMe) {
+          senderJid = ownerJid; // Outgoing: sender is always the owner
+        } else if (isGroup) {
+          senderJid = msg.key.participant || jid;
+        } else {
+          senderJid = jid; // Incoming DM: remote JID is the sender
+        }
+
+        // For DMs, resolve the chat counterpart's name
+        let chatJid: string | undefined;
+        let chatName: string | undefined;
+        if (!isGroup) {
+          chatJid = jid; // remoteJid is always the other party in a DM
+          const contact = contactStore.get(jid);
+          chatName = contact?.notify || contact?.name || jid.split("@")[0];
+        }
 
         try {
           onObservation({
@@ -259,6 +276,8 @@ export async function startWhatsApp(
             groupName,
             isFromMe: msg.key.fromMe ?? false,
             text,
+            chatJid,
+            chatName,
           });
         } catch (err) {
           console.error("[whatsapp] Observation handler error:", err);

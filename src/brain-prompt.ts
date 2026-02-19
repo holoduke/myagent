@@ -35,7 +35,16 @@ function formatObservations(observations: Observation[]): string {
     parts.push("── WhatsApp Messages ──\n" + whatsapp.map((obs) => {
       const time = formatTime(obs.timestamp);
       const who = obs.isFromMe ? `${obs.sender || "Me"} (you/outgoing)` : obs.sender || "Unknown";
-      const context = obs.isGroup ? ` in group "${obs.groupName || "?"}"` : "";
+      let context: string;
+      if (obs.isGroup) {
+        context = ` in group "${obs.groupName || "?"}"`;
+      } else if (obs.isFromMe && obs.chatName) {
+        context = ` → ${obs.chatName}`;
+      } else if (!obs.isFromMe && obs.chatName) {
+        context = ` (DM)`;
+      } else {
+        context = "";
+      }
       const urgencyPrefix = (obs.urgency && obs.urgency >= 0.6) ? "[!!! URGENT] " : "";
       return `${urgencyPrefix}[${time}] ${who}${context}: ${obs.text}`;
     }).join("\n"));
@@ -157,7 +166,7 @@ function formatWorkingMemory(wm: WorkingMemory): string {
   if (wm.conversationThreads && wm.conversationThreads.length > 0) {
     const activeThreads = wm.conversationThreads.filter(t => t.status === "active").slice(0, 5);
     if (activeThreads.length > 0) {
-      const threadLines = activeThreads.map(t =>
+      const threadLines = activeThreads.filter(t => Array.isArray(t.participants)).map(t =>
         `  - ${t.participants.join(", ")}: "${t.topic}" (${t.messageCount} msgs, last ${timeAgo(t.lastMessageAt)})`
       );
       parts.push(`Active threads:\n${threadLines.join("\n")}`);

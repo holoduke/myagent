@@ -114,9 +114,11 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
   const STALE_THRESHOLD = 48 * 60 * 60 * 1000; // 48 hours
 
   for (const obs of observations) {
-    if (!obs.sender || obs.isFromMe) continue;
+    if (!obs.sender) continue;
 
-    const key = obs.isGroup ? `group:${obs.groupName || obs.senderJid}` : `dm:${obs.senderJid}`;
+    // For DMs, key by the chat counterpart (chatJid), not the sender — so both
+    // incoming and outgoing messages map to the same thread.
+    const key = obs.isGroup ? `group:${obs.groupName || obs.senderJid}` : `dm:${obs.chatJid || obs.senderJid}`;
     let thread = wm.conversationThreads.find(t => t.id === key);
 
     if (!thread) {
