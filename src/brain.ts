@@ -254,6 +254,40 @@ function pickUpImproveResult(state: BrainState): void {
   }
 }
 
+const SELF_IMPROVE_STALE_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+
+function checkAndSpawnImproveWorker(state: BrainState): void {
+  // Case 1: Task file exists but no worker is running — spawn one
+  if (existsSync(IMPROVE_TASK_FILE) && !state.pendingSelfMod) {
+    log("Found improve-task.json — spawning self-improve worker");
+    state.pendingSelfMod = true;
+    state.selfModSpawnedAt = Date.now();
+    saveState(state);
+    spawnSelfImproveWorker();
+    return;
+  }
+
+  // Case 2: Worker was spawned but seems stuck (no result after timeout)
+  // This handles container restarts that kill the worker process
+  if (state.pendingSelfMod && !existsSync(IMPROVE_RESULT_FILE)) {
+    const spawnedAt = state.selfModSpawnedAt || 0;
+    const elapsed = Date.now() - spawnedAt;
+    if (elapsed > SELF_IMPROVE_STALE_TIMEOUT) {
+      if (existsSync(IMPROVE_TASK_FILE)) {
+        log(`Self-improve worker stale (${Math.round(elapsed / 60000)}m), task file exists — re-spawning`);
+        state.selfModSpawnedAt = Date.now();
+        saveState(state);
+        spawnSelfImproveWorker();
+      } else {
+        log(`Self-improve worker stale (${Math.round(elapsed / 60000)}m), no task file — clearing flag`);
+        state.pendingSelfMod = false;
+        state.selfModSpawnedAt = undefined;
+        saveState(state);
+      }
+    }
+  }
+}
+
 function writeSelfModMarker(changes: string): void {
   try {
     writeFileSync(SELF_MOD_MARKER_FILE, JSON.stringify({
@@ -380,6 +414,9 @@ async function tick(
 
   // ── Pick up self-improve results from worker ──
   pickUpImproveResult(state);
+
+  // ── Check for pending self-improve task file (may be created during any tick type) ──
+  checkAndSpawnImproveWorker(state);
 
   // ── Deliver due scheduled messages ──
   await deliverScheduledMessages(state, sendMessage, ownerJid);
@@ -913,13 +950,6 @@ async function reflectTick(
     state.lastReflectTick = now;
     if (result.stats) {
       state.totalCost += result.stats.totalCostUsd || 0;
-    }
-
-    // ── Check if reflect tick wrote an improve task file → spawn worker ──
-    if (existsSync(IMPROVE_TASK_FILE) && !state.pendingSelfMod) {
-      log("Reflect tick produced an improvement task — spawning self-improve worker");
-      state.pendingSelfMod = true;
-      spawnSelfImproveWorker();
     }
 
     log(`Reflect complete (${graph.nodeCount} nodes, ${graph.edgeCount} edges)`);
