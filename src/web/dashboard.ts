@@ -386,6 +386,36 @@ export function getDashboardHTML(): string {
       html += '</div>';
       html += '</div>';
 
+      // Claude usage card
+      const cu = d.claudeUsage || {};
+      html += '<div class="card"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/><circle cx="12" cy="12" r="5"/></svg>Claude Usage</h2>';
+      const chatCost = cu.totalCostUsd || 0;
+      const brainCost = bs.totalCost || 0;
+      const combinedCost = chatCost + brainCost;
+      html += '<div class="stat-grid" style="margin-bottom:12px">';
+      html += stat('$' + combinedCost.toFixed(2), 'Total Cost');
+      html += stat((cu.totalTokens || 0).toLocaleString(), 'Chat Tokens');
+      html += stat(cu.totalResponses || 0, 'Chat Calls');
+      html += stat(bs.totalThinks || 0, 'Brain Thinks');
+      html += '</div>';
+      html += '<h4 style="margin:0 0 8px;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:1px">Today</h4>';
+      html += kv('Responses', cu.todayResponses || 0);
+      html += kv('Tokens', (cu.todayTokens || 0).toLocaleString());
+      html += kv('Cost', '$' + (cu.todayCostUsd || 0).toFixed(4));
+      html += '<h4 style="margin:12px 0 8px;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:1px">Averages</h4>';
+      const avgDur = cu.avgDurationMs || 0;
+      html += kv('Response Time', avgDur >= 1000 ? (avgDur / 1000).toFixed(1) + 's' : avgDur.toFixed(0) + 'ms');
+      html += kv('Cost / Response', '$' + (cu.avgCostUsd || 0).toFixed(4));
+      html += kv('Turns / Response', (cu.avgTurns || 0).toFixed(1));
+      html += '<h4 style="margin:12px 0 8px;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:1px">Breakdown</h4>';
+      html += kv('Chat Cost', '$' + chatCost.toFixed(4));
+      html += kv('Brain Cost', '$' + brainCost.toFixed(2));
+      html += kv('Input Tokens', (cu.inputTokens || 0).toLocaleString());
+      html += kv('Output Tokens', (cu.outputTokens || 0).toLocaleString());
+      html += kv('Sources', (cu.webMessages || 0) + ' web, ' + (cu.whatsappMessages || 0) + ' WhatsApp');
+      html += kv('History Span', (cu.historyDays || 0) + ' day' + ((cu.historyDays || 0) !== 1 ? 's' : ''));
+      html += '</div>';
+
       // Working memory card
       html += '<div class="card"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>Working Memory</h2>';
       if (wm.currentContext || wm.mood || (wm.shortTermTracking && wm.shortTermTracking.length)) {
