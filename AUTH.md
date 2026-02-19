@@ -20,7 +20,7 @@ If the refresh token itself expires or becomes invalid, you need to do a manual 
 SSH into the server and run inside the container:
 
 ```bash
-ssh root@46.224.74.85
+ssh root@YOUR_SERVER_IP
 docker exec -e HOME=/data/claude <CONTAINER_ID> node -e '
 const crypto = require("crypto");
 const fs = require("fs");
