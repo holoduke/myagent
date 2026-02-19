@@ -610,6 +610,12 @@ async function handleRecurringTasks(
             log(`[recurring] Skipping digest "${task.label}": daily budget exhausted`);
             break;
           }
+          // Build context-aware digest prompt based on time of day
+          const hour = new Date().getHours();
+          const isEvening = hour >= 17;
+          const digestPrompt = isEvening
+            ? `[DIGEST REQUEST: ${task.label}] Create a brief evening briefing for the owner. Summarize the day's key events: notable conversations, important messages, things that happened, any open items or pending decisions, and anything worth reflecting on. Keep it concise and personal.`
+            : `[DIGEST REQUEST: ${task.label}] Create a brief morning briefing for the owner. Cover: what happened overnight, important messages received, pending items from yesterday, anything coming up today, and any initiative signals. Keep it concise and personal.`;
           // Inject digest trigger as synthetic observation
           const digestObs: Observation = {
             timestamp: Date.now(),
@@ -617,7 +623,7 @@ async function handleRecurringTasks(
             senderJid: "system",
             isGroup: false,
             isFromMe: true,
-            text: `[DIGEST REQUEST: ${task.label}] Summarize today's observations and key events. Create a brief morning briefing for the owner covering: important messages received, pending items, upcoming events, and any initiative signals.`,
+            text: digestPrompt,
             source: "whatsapp",
           };
           graph.addPendingObservation(digestObs);
@@ -721,9 +727,12 @@ async function thinkTick(
       saveWorkingMemory(wm);
     }
 
-    // Handle message
+    // Handle message — briefings (digest-triggered thinks) bypass rate limits
     if (response.message) {
-      await trySendMessage(state, sendMessage, ownerJid, response.message);
+      const isDigestTriggered = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
+      await trySendMessage(state, sendMessage, ownerJid, response.message, {
+        bypassLimits: isDigestTriggered,
+      });
     }
 
     // Update state
@@ -973,21 +982,24 @@ async function trySendMessage(
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
   message: string,
+  options?: { bypassLimits?: boolean },
 ): Promise<void> {
   const now = Date.now();
   const currentHour = new Date().getHours();
   const isQuiet = currentHour >= QUIET_START || currentHour < QUIET_END;
   const messageIntervalOk = (now - state.lastMessageTime) >= MIN_MESSAGE_INTERVAL;
   const underDailyLimit = state.messagesToday < MAX_MESSAGES_PER_DAY;
+  const bypass = options?.bypassLimits === true;
 
-  if (isQuiet) {
+  if (!bypass && isQuiet) {
     log("Suppressed message: quiet hours");
-  } else if (!messageIntervalOk) {
+  } else if (!bypass && !messageIntervalOk) {
     log(`Suppressed message: too soon (${Math.round((now - state.lastMessageTime) / 60000)}m since last)`);
-  } else if (!underDailyLimit) {
+  } else if (!bypass && !underDailyLimit) {
     log(`Suppressed message: daily limit reached (${state.messagesToday}/${MAX_MESSAGES_PER_DAY})`);
   } else {
     try {
+      if (bypass) log("Briefing message — bypassing rate limits");
       await sendMessage(ownerJid, message);
       state.lastMessageTime = now;
       state.messagesToday++;

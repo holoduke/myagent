@@ -63,7 +63,18 @@ function seedDefaults(ownerJid: string): RecurringTask[] {
       id: "recurring_morning_briefing",
       type: "digest",
       label: "Morning briefing",
-      pattern: { hours: [8], daysOfWeek: [1, 2, 3, 4, 5] }, // Weekdays at 8am
+      pattern: { hours: [8] }, // Every day at 8am
+      action: { type: "digest", targetJid: ownerJid },
+      enabled: true,
+      createdAt: now,
+      lastRunAt: 0,
+      source: "owner",
+    },
+    {
+      id: "recurring_evening_briefing",
+      type: "digest",
+      label: "Evening briefing",
+      pattern: { hours: [21] }, // Every day at 9pm
       action: { type: "digest", targetJid: ownerJid },
       enabled: true,
       createdAt: now,
