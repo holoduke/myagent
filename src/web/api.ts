@@ -9,6 +9,10 @@ import { getWhitelist, addToWhitelist, removeFromWhitelist } from "../contact-wh
 import { getAccountStatus, addAccount, removeAccount } from "../gmail.js";
 import { getLatestQr } from "../whatsapp.js";
 import { getSSHStatus, getPublicKey, addTarget, removeTarget, testConnection } from "../ssh.js";
+import { getCalendarStatus } from "../calendar.js";
+import { getHAStatus } from "../homeassistant.js";
+import { getRSSStatus, addFeed, removeFeed } from "../rss.js";
+import { getOwnTracksStatus } from "../owntracks.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
 
@@ -163,6 +167,44 @@ export function handleApiRoutes(
     return true;
   }
 
+  // ── Calendar status ──
+  if (pathname === "/api/calendar/status" && req.method === "GET" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getCalendarStatus()));
+    return true;
+  }
+
+  // ── Home Assistant status ──
+  if (pathname === "/api/homeassistant/status" && req.method === "GET" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getHAStatus()));
+    return true;
+  }
+
+  // ── RSS feeds CRUD ──
+  if (pathname === "/api/rss/feeds" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(getRSSStatus()));
+      return true;
+    }
+    if (req.method === "POST") {
+      handleRSSAddFeed(req, res);
+      return true;
+    }
+    if (req.method === "DELETE") {
+      handleRSSRemoveFeed(req, res);
+      return true;
+    }
+  }
+
+  // ── OwnTracks status ──
+  if (pathname === "/api/owntracks/status" && req.method === "GET" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getOwnTracksStatus()));
+    return true;
+  }
+
   return false;
 }
 
@@ -190,6 +232,10 @@ function getDashboardData(queue: MessageQueue) {
     },
     gmailAccounts,
     ssh,
+    calendar: getCalendarStatus(),
+    homeassistant: getHAStatus(),
+    rss: getRSSStatus(),
+    owntracks: getOwnTracksStatus(),
     whitelistCount: whitelist.length,
     scheduledCount: scheduled.length,
     queueDepth: queue.size,
@@ -488,6 +534,43 @@ async function handleGmailRemoveAccount(req: IncomingMessage, res: ServerRespons
       return;
     }
     const removed = removeAccount(id);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: removed }));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+// ── RSS handlers ──
+async function handleRSSAddFeed(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { name, url } = JSON.parse(body);
+    if (!name || !url) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "name and url are required" }));
+      return;
+    }
+    const feed = addFeed(name.trim(), url.trim());
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, feed }));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+async function handleRSSRemoveFeed(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { id } = JSON.parse(body);
+    if (!id) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "id is required" }));
+      return;
+    }
+    const removed = removeFeed(id);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ success: removed }));
   } catch {

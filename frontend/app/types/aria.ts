@@ -73,6 +73,38 @@ export interface SelfImprove {
   lastGoodCommit: string | null
 }
 
+export interface CalendarStatus {
+  enabled: boolean
+  accounts: Array<{ id: string; email: string; lastSync: number }>
+  nextEventCount: number
+}
+
+export interface HomeAssistantStatus {
+  enabled: boolean
+  connected: boolean
+  url: string
+  entityCount: number
+  lastPoll: number
+}
+
+export interface RSSFeedStatus {
+  id: string
+  name: string
+  url: string
+  enabled: boolean
+  lastPoll: number
+  itemCount: number
+}
+
+export interface RSSStatus {
+  feeds: RSSFeedStatus[]
+}
+
+export interface OwnTracksStatus {
+  enabled: boolean
+  lastLocation: { lat: number; lon: number; timestamp: number; battery?: number } | null
+}
+
 export interface DashboardData {
   brainState: BrainState
   workingMemory: WorkingMemory
@@ -82,6 +114,10 @@ export interface DashboardData {
   gmail: { total: number; authenticated: number }
   gmailAccounts: GmailAccount[]
   ssh: SSHStatus
+  calendar: CalendarStatus
+  homeassistant: HomeAssistantStatus
+  rss: RSSStatus
+  owntracks: OwnTracksStatus
   whitelistCount: number
   scheduledCount: number
   queueDepth: number

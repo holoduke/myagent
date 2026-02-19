@@ -66,7 +66,7 @@ onMounted(() => {
   min-height: 80px;
   border-radius: 50%;
   border: 2px solid var(--accent);
-  box-shadow: 0 0 15px rgba(255,77,42,0.4), 0 0 40px rgba(255,77,42,0.15), inset 0 0 20px rgba(255,77,42,0.15);
+  box-shadow: 0 0 15px rgba(168,85,247,0.4), 0 0 40px rgba(168,85,247,0.15), inset 0 0 20px rgba(168,85,247,0.15);
   margin-bottom: 24px;
   position: relative;
   animation: eye-breathe 3s ease-in-out infinite;
@@ -77,19 +77,19 @@ onMounted(() => {
   position: absolute;
   inset: -12px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,77,42,0.08) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(168,85,247,0.08) 0%, transparent 70%);
   animation: eye-glow 3s ease-in-out infinite;
 }
 .eye-core {
   position: absolute;
   inset: 10px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,77,42,0.35) 0%, rgba(255,77,42,0.05) 60%, transparent 80%);
+  background: radial-gradient(circle, rgba(168,85,247,0.35) 0%, rgba(168,85,247,0.05) 60%, transparent 80%);
   animation: core-pulse 3s ease-in-out infinite;
 }
 @keyframes eye-breathe {
-  0%, 100% { box-shadow: 0 0 15px rgba(255,77,42,0.4), 0 0 40px rgba(255,77,42,0.15), inset 0 0 20px rgba(255,77,42,0.15); transform: scale(1); }
-  50% { box-shadow: 0 0 25px rgba(255,77,42,0.6), 0 0 60px rgba(255,77,42,0.25), inset 0 0 30px rgba(255,77,42,0.25); transform: scale(1.03); }
+  0%, 100% { box-shadow: 0 0 15px rgba(168,85,247,0.4), 0 0 40px rgba(168,85,247,0.15), inset 0 0 20px rgba(168,85,247,0.15); transform: scale(1); }
+  50% { box-shadow: 0 0 25px rgba(168,85,247,0.6), 0 0 60px rgba(168,85,247,0.25), inset 0 0 30px rgba(168,85,247,0.25); transform: scale(1.03); }
 }
 @keyframes eye-glow {
   0%, 100% { opacity: 0.5; transform: scale(1); }
@@ -139,7 +139,7 @@ onMounted(() => {
 }
 .login-card input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(255,77,42,0.1);
+  box-shadow: 0 0 0 3px rgba(168,85,247,0.1);
 }
 .login-card button {
   width: 100%;
@@ -158,7 +158,7 @@ onMounted(() => {
   transition: all .2s;
 }
 .login-card button:hover {
-  background: rgba(255,77,42,0.1);
+  background: rgba(168,85,247,0.1);
   box-shadow: var(--glow-accent);
 }
 .login-card button:disabled { opacity: 0.5; cursor: not-allowed; }

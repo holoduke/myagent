@@ -20,6 +20,7 @@ const SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/gmail.modify",
+  "https://www.googleapis.com/auth/calendar.readonly",
 ];
 
 // ── Types ──
@@ -95,7 +96,7 @@ function saveState(state: GmailState): void {
 
 // ── OAuth2 Client Factory ──
 
-function createOAuth2Client(account: GmailAccount): OAuth2Client {
+export function createOAuth2Client(account: GmailAccount): OAuth2Client {
   const client = new google.auth.OAuth2(
     account.credentials.client_id,
     account.credentials.client_secret,
