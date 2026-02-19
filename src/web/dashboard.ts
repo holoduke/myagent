@@ -474,21 +474,23 @@ export function getDashboardHTML(): string {
     // ── Integrations Section ──
     async function loadIntegrations() {
       try {
-        const [dashRes, schedRes] = await Promise.all([
+        const [dashRes, schedRes, wlRes] = await Promise.all([
           fetch('/api/dashboard', { headers: authHeaders() }),
           fetch('/api/scheduled', { headers: authHeaders() }),
+          fetch('/api/whitelist', { headers: authHeaders() }),
         ]);
         if (dashRes.status === 401) { resetAuth(); return; }
         const dash = await dashRes.json();
         const scheduled = await schedRes.json();
-        renderIntegrations(dash, scheduled);
+        const whitelist = await wlRes.json();
+        renderIntegrations(dash, scheduled, whitelist);
       } catch(e) {
         document.getElementById('integrations-content').innerHTML =
           '<div class="card"><p style="color:var(--red)">Failed to load: ' + e.message + '</p></div>';
       }
     }
 
-    function renderIntegrations(dash, scheduled) {
+    function renderIntegrations(dash, scheduled, whitelist) {
       const wa = dash.whatsapp || {};
       const gmail = dash.gmail || {};
       const gmailAccounts = dash.gmailAccounts || [];
@@ -504,6 +506,24 @@ export function getDashboardHTML(): string {
       html += '<div class="btn-row">';
       html += '<button class="btn" onclick="syncContacts()">Sync Contacts</button>';
       html += '<button class="btn" onclick="showQr()">Show QR</button>';
+      html += '</div>';
+
+      // Contact whitelist (WhatsApp)
+      html += '<h4 style="margin:16px 0 8px;color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:1px">Contact Whitelist</h4>';
+      if (whitelist.length) {
+        for (const c of whitelist) {
+          html += '<div class="wl-item">';
+          html += '<div><span class="wl-name">' + esc(c.name) + '</span><span class="wl-jid">' + esc(c.jid) + '</span></div>';
+          html += '<button class="wl-rm" onclick="removeWhitelist(\'' + esc(c.jid) + '\')">Remove</button>';
+          html += '</div>';
+        }
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:8px 0">No whitelisted contacts</div>';
+      }
+      html += '<div class="wl-add-form">';
+      html += '<input type="text" id="wl-jid" placeholder="JID (e.g. 123@s.whatsapp.net)">';
+      html += '<input type="text" id="wl-name" placeholder="Name">';
+      html += '<button class="btn primary" onclick="addWhitelist()">Add</button>';
       html += '</div>';
       html += '</div>';
 
@@ -554,42 +574,19 @@ export function getDashboardHTML(): string {
     // ── Settings Section ──
     async function loadSettings() {
       try {
-        const [wlRes, dashRes] = await Promise.all([
-          fetch('/api/whitelist', { headers: authHeaders() }),
-          fetch('/api/dashboard', { headers: authHeaders() }),
-        ]);
-        if (wlRes.status === 401) { resetAuth(); return; }
-        const whitelist = await wlRes.json();
+        const dashRes = await fetch('/api/dashboard', { headers: authHeaders() });
+        if (dashRes.status === 401) { resetAuth(); return; }
         const dash = await dashRes.json();
-        renderSettings(whitelist, dash);
+        renderSettings(dash);
       } catch(e) {
         document.getElementById('settings-content').innerHTML =
           '<div class="card"><p style="color:var(--red)">Failed to load: ' + e.message + '</p></div>';
       }
     }
 
-    function renderSettings(whitelist, dash) {
+    function renderSettings(dash) {
       const si = dash.selfImprove || {};
       let html = '';
-
-      // Contact whitelist
-      html += '<div class="card" style="margin-bottom:16px"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6m3-3h-6"/></svg>Contact Whitelist</h2>';
-      if (whitelist.length) {
-        for (const c of whitelist) {
-          html += '<div class="wl-item">';
-          html += '<div><span class="wl-name">' + esc(c.name) + '</span><span class="wl-jid">' + esc(c.jid) + '</span></div>';
-          html += '<button class="wl-rm" onclick="removeWhitelist(\'' + esc(c.jid) + '\')">Remove</button>';
-          html += '</div>';
-        }
-      } else {
-        html += '<div style="color:var(--text-ghost);font-size:13px;padding:8px 0">No whitelisted contacts</div>';
-      }
-      html += '<div class="wl-add-form">';
-      html += '<input type="text" id="wl-jid" placeholder="JID (e.g. 123@s.whatsapp.net)">';
-      html += '<input type="text" id="wl-name" placeholder="Name">';
-      html += '<button class="btn primary" onclick="addWhitelist()">Add</button>';
-      html += '</div>';
-      html += '</div>';
 
       // Self-improvement
       html += '<div class="card" style="margin-bottom:16px"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Self-Improvement</h2>';
@@ -638,7 +635,7 @@ export function getDashboardHTML(): string {
           headers: jsonHeaders(),
           body: JSON.stringify({ jid, name })
         });
-        loadSettings();
+        loadIntegrations();
       } catch {}
     }
 
@@ -649,7 +646,7 @@ export function getDashboardHTML(): string {
           headers: jsonHeaders(),
           body: JSON.stringify({ jid })
         });
-        loadSettings();
+        loadIntegrations();
       } catch {}
     }
 

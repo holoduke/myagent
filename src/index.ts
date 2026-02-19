@@ -11,6 +11,10 @@ import { recordObservation } from "./observer.js";
 import { startBrainLoop, stopBrainLoop, getBrainHealth } from "./brain.js";
 import { startGmailPolling, stopGmailPolling, getAccountStatus } from "./gmail.js";
 import { handleGmailRoutes } from "./gmail-routes.js";
+import { startCalendarPolling, stopCalendarPolling } from "./calendar.js";
+import { startHAPolling, stopHAPolling } from "./homeassistant.js";
+import { startRSSPolling, stopRSSPolling } from "./rss.js";
+import { handleOwnTracksWebhook } from "./owntracks.js";
 
 const queue = new MessageQueue();
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -38,6 +42,11 @@ async function main() {
   // Start Gmail polling (if accounts configured)
   startGmailPolling();
 
+  // Start new integration pollers
+  startCalendarPolling();
+  startHAPolling();
+  startRSSPolling();
+
   // HTTP server: health check, QR code, web chat, and Gmail OAuth
   const server = createServer((req, res) => {
     // Security headers
@@ -51,6 +60,12 @@ async function main() {
 
     // Gmail OAuth routes
     if (handleGmailRoutes(req, res)) return;
+
+    // OwnTracks webhook (public endpoint)
+    if (req.url === "/owntracks" && req.method === "POST") {
+      handleOwnTracksWebhook(req, res);
+      return;
+    }
 
     // Public status endpoint (no auth needed)
     if (req.url === "/status") {
@@ -235,6 +250,9 @@ function shutdown() {
   console.log("\n[agent] Shutting down...");
   stopBrainLoop();
   stopGmailPolling();
+  stopCalendarPolling();
+  stopHAPolling();
+  stopRSSPolling();
   process.exit(0);
 }
 

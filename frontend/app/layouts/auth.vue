@@ -11,7 +11,7 @@
   align-items: center;
   min-height: 100dvh;
   flex-direction: column;
-  background: radial-gradient(ellipse at 50% 30%, #0f0a18 0%, var(--bg) 70%);
+  background: radial-gradient(ellipse at 50% 30%, #120a20 0%, var(--bg) 70%);
   overflow: auto;
 }
 </style>

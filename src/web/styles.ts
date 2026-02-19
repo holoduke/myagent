@@ -3,7 +3,7 @@ export function getStyles(): string {
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Mono:wght@400;700&display=swap');
 
     *{margin:0;padding:0;box-sizing:border-box}
-    html{height:100%;-webkit-text-size-adjust:100%}
+    html{height:100%;-webkit-text-size-adjust:100%;color-scheme:dark}
 
     :root {
       --bg: #060610;
@@ -22,8 +22,8 @@ export function getStyles(): string {
       --red: #ef4444;
       --text: #d4d4d8;
       --text-dim: #71717a;
-      --text-muted: #3f3f5c;
-      --text-ghost: #252540;
+      --text-muted: #6b6b8a;
+      --text-ghost: #4a4a65;
       --mono: 'JetBrains Mono', 'Space Mono', monospace;
       --sans: 'Inter', system-ui, sans-serif;
       --glow-accent: 0 0 10px rgba(255,77,42,0.5);
@@ -130,6 +130,17 @@ export function getStyles(): string {
     .login-card input:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(255,77,42,0.1);
+    }
+
+    /* Override browser autofill white backgrounds */
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus,
+    textarea:-webkit-autofill {
+      -webkit-text-fill-color: var(--text);
+      -webkit-box-shadow: 0 0 0 1000px var(--bg) inset;
+      border-color: var(--border) !important;
+      transition: background-color 5000s ease-in-out 0s;
     }
     .login-card button {
       width: 100%;
@@ -626,6 +637,8 @@ export function getStyles(): string {
     #section-chat.active {
       display: flex;
       flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
     }
 
     .chat-header {
@@ -888,6 +901,7 @@ export function getStyles(): string {
     .mob-nav-item svg { width: 18px; height: 18px; }
 
     @media (max-width: 768px) {
+      #app.visible { flex-direction: column; }
       .sidebar { display: none; }
       .mobile-nav { display: block; }
       .section { padding: 16px 12px; }

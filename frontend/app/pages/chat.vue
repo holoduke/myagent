@@ -62,7 +62,7 @@ onMounted(() => {
 })
 
 const qrUrl = computed(() => {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&color=ff4d2a&bgcolor=0c0c18&data=${encodeURIComponent(origin.value)}`
+  return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&color=a855f7&bgcolor=07070f&data=${encodeURIComponent(origin.value)}`
 })
 
 const streamHtml = computed(() => {

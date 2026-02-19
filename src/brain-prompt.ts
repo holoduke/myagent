@@ -35,7 +35,16 @@ function formatObservations(observations: Observation[]): string {
     parts.push("── WhatsApp Messages ──\n" + whatsapp.map((obs) => {
       const time = formatTime(obs.timestamp);
       const who = obs.isFromMe ? `${obs.sender || "Me"} (you/outgoing)` : obs.sender || "Unknown";
-      const context = obs.isGroup ? ` in group "${obs.groupName || "?"}"` : "";
+      let context: string;
+      if (obs.isGroup) {
+        context = ` in group "${obs.groupName || "?"}"`;
+      } else if (obs.isFromMe && obs.chatName) {
+        context = ` → ${obs.chatName}`;
+      } else if (!obs.isFromMe && obs.chatName) {
+        context = ` (DM)`;
+      } else {
+        context = "";
+      }
       const urgencyPrefix = (obs.urgency && obs.urgency >= 0.6) ? "[!!! URGENT] " : "";
       return `${urgencyPrefix}[${time}] ${who}${context}: ${obs.text}`;
     }).join("\n"));
@@ -127,7 +136,7 @@ function formatWorkingMemory(wm: WorkingMemory): string {
   const parts: string[] = [];
   if (wm.currentContext) parts.push(`Context: ${wm.currentContext}`);
   if (wm.mood) parts.push(`Mood: ${wm.mood}`);
-  if (wm.shortTermTracking.length > 0) parts.push(`Tracking: ${wm.shortTermTracking.join(", ")}`);
+  if (wm.shortTermTracking?.length > 0) parts.push(`Tracking: ${wm.shortTermTracking.join(", ")}`);
 
   // Temporal context
   if (wm.temporal) {
