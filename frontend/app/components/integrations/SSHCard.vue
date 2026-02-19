@@ -10,7 +10,7 @@
 
     <!-- Public Key -->
     <div v-if="ssh.publicKey" class="ssh-pubkey-section">
-      <label class="ssh-label">Public Key</label>
+      <label class="intg-label">Public Key</label>
       <div class="ssh-pubkey-box">
         <code class="ssh-pubkey">{{ ssh.publicKey }}</code>
         <button class="btn ssh-copy-btn" @click="copyKey">{{ copied ? 'Copied!' : 'Copy' }}</button>
@@ -22,7 +22,7 @@
 
     <!-- Target List -->
     <div v-if="ssh.targets.length" class="ssh-targets">
-      <label class="ssh-label">Targets</label>
+      <label class="intg-label">Targets</label>
       <div v-for="t in ssh.targets" :key="t.id" class="ssh-target-row">
         <UiStatusDot :status="targetStatus(t)" />
         <span class="ssh-target-label">{{ t.label }}</span>
@@ -36,12 +36,12 @@
 
     <!-- Add Target Form -->
     <div class="ssh-add-form">
-      <label class="ssh-label">Add Target</label>
+      <label class="intg-label">Add Target</label>
       <div class="ssh-form-row">
-        <input v-model="form.label" placeholder="Label" class="ssh-input" />
-        <input v-model="form.host" placeholder="Host" class="ssh-input" />
-        <input v-model="form.user" placeholder="User" class="ssh-input ssh-input-sm" />
-        <input v-model.number="form.port" type="number" placeholder="22" class="ssh-input ssh-input-xs" />
+        <input v-model="form.label" placeholder="Label" class="intg-input" />
+        <input v-model="form.host" placeholder="Host" class="intg-input" />
+        <input v-model="form.user" placeholder="User" class="intg-input intg-input-sm" />
+        <input v-model.number="form.port" type="number" placeholder="22" class="intg-input intg-input-xs" />
         <button class="btn" :disabled="!canAdd" @click="submitAdd">Add</button>
       </div>
     </div>
@@ -92,7 +92,6 @@ function submitAdd() {
 
 <style scoped>
 .ssh-pubkey-section { margin: 8px 0; }
-.ssh-label { display: block; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
 .ssh-pubkey-box { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); border-radius: 6px; padding: 8px; }
 .ssh-pubkey { flex: 1; font-size: 11px; color: var(--text); word-break: break-all; line-height: 1.4; overflow: hidden; max-height: 3.6em; }
 .ssh-copy-btn { flex-shrink: 0; padding: 4px 10px; font-size: 11px; }
@@ -104,8 +103,4 @@ function submitAdd() {
 .ssh-remove-btn { color: var(--red); }
 .ssh-add-form { margin-top: 12px; }
 .ssh-form-row { display: flex; gap: 6px; flex-wrap: wrap; }
-.ssh-input { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 6px 8px; font-size: 12px; color: var(--text); flex: 1; min-width: 80px; }
-.ssh-input-sm { max-width: 80px; flex: 0 0 80px; }
-.ssh-input-xs { max-width: 60px; flex: 0 0 60px; }
-.ssh-input::placeholder { color: var(--text-ghost); }
 </style>

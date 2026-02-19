@@ -24,11 +24,11 @@
 
     <!-- Add account form -->
     <div class="gmail-add-section">
-      <label class="ssh-label">Add Account</label>
+      <label class="intg-label">Add Account</label>
       <div class="gmail-form">
-        <input v-model="form.email" placeholder="Email address" class="ssh-input" />
-        <input v-model="form.clientId" placeholder="OAuth Client ID" class="ssh-input" />
-        <input v-model="form.clientSecret" placeholder="Client Secret" type="password" class="ssh-input" />
+        <input v-model="form.email" placeholder="Email address" class="intg-input" />
+        <input v-model="form.clientId" placeholder="OAuth Client ID" class="intg-input" />
+        <input v-model="form.clientSecret" placeholder="Client Secret" type="password" class="intg-input" />
         <button class="btn" :disabled="!canAdd" @click="add">Add</button>
       </div>
       <p v-if="addError" class="gmail-error">{{ addError }}</p>

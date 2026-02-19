@@ -1,6 +1,6 @@
 <template>
   <div class="chat-page">
-    <ChatChatHeader @show-qr="showQr = true" />
+    <ChatHeader @show-qr="showQr = true" />
 
     <div ref="messagesEl" class="messages" @scroll="onScroll">
       <!-- Empty state -->
@@ -33,7 +33,7 @@
       <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
     </button>
 
-    <ChatChatInput ref="chatInput" />
+    <ChatInput ref="chatInput" />
 
     <!-- QR Modal -->
     <div v-if="showQr" class="qr-overlay" @click="showQr = false">
@@ -52,7 +52,7 @@ const chatStore = useChatStore()
 const { $marked } = useNuxtApp()
 
 const messagesEl = ref<HTMLElement>()
-const chatInput = ref<InstanceType<typeof import('~/components/chat/ChatInput.vue').default>>()
+const chatInput = ref<InstanceType<typeof import('~/components/chat/ChatInput.vue').default> | null>(null)
 const showFab = ref(false)
 const showQr = ref(false)
 
