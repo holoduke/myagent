@@ -83,7 +83,7 @@ export function detectInitiativeSignals(
       signals.push({
         type: "conversation_stale",
         priority: 0.3,
-        description: `Conversation with ${thread.participants.join(", ")} about "${thread.topic}" went quiet (${thread.messageCount} messages)`,
+        description: `Conversation with ${(thread.participants || []).join(", ") || "unknown"} about "${thread.topic}" went quiet (${thread.messageCount} messages)`,
         relatedNodeIds: [],
         suggestedAction: `Follow up on "${thread.topic}" conversation`,
       });
