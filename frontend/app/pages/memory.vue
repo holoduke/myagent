@@ -62,13 +62,18 @@ const icons = {
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
 }
 
-onMounted(async () => {
+async function loadMemory() {
   try {
     data.value = await api<AriaStatus>('/api/aria/status')
+    error.value = ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Unknown error'
   }
-})
+}
+
+useVisibilityRefresh(loadMemory)
+
+onMounted(loadMemory)
 </script>
 
 <style scoped>

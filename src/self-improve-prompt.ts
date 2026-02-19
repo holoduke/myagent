@@ -13,12 +13,14 @@ SAFETY RULES (non-negotiable):
 - If unsure, abort and write a result explaining why.
 `;
 
+const GITHUB_REPO = process.env.GITHUB_REPO || "";
+
 const ENVIRONMENT_CONTEXT = `
 ENVIRONMENT:
 - You are running as a detached worker process, independent of the main ARIA app.
 - Source code is at /app/src/. Persistent data at /data/.
 - You have full tool access: Bash, Read, Write, Edit, Glob, Grep, WebFetch, WebSearch.
-- Git and gh (GitHub CLI) are available. Repo: holoduke/myagent.
+- Git and gh (GitHub CLI) are available.${GITHUB_REPO ? ` Repo: ${GITHUB_REPO}.` : ""}
 - After creating a PR, Coolify will auto-deploy when merged to main.
 `;
 
@@ -69,7 +71,7 @@ When done, output ONLY a JSON object:
   "success": true,
   "description": "what you did",
   "branch": "aria/<branch-name>",
-  "prUrl": "https://github.com/holoduke/myagent/pull/N",
+  "prUrl": "https://github.com/${GITHUB_REPO || "<owner>/<repo>"}/pull/N",
   "filesModified": ["src/file.ts"],
   "metaNodeContent": "Self-improvement: <1-2 sentence summary for memory graph>"
 }
@@ -125,7 +127,7 @@ When done, output ONLY a JSON object:
   "success": true,
   "description": "what was wrong and how you fixed it",
   "branch": "aria/fix-<description>",
-  "prUrl": "https://github.com/holoduke/myagent/pull/N",
+  "prUrl": "https://github.com/${GITHUB_REPO || "<owner>/<repo>"}/pull/N",
   "filesModified": ["src/file.ts"],
   "metaNodeContent": "Crash recovery: <summary>",
   "wasRollback": false

@@ -7,16 +7,31 @@
         {{ gmail.authenticated }}/{{ gmail.total }} Active
       </span>
     </div>
+
+    <!-- Account list -->
     <template v-if="accounts.length">
       <div v-for="acc in accounts" :key="acc.id" class="gmail-account">
         <UiStatusDot :status="acc.authenticated ? 'ok' : 'warn'" />
         <span class="gmail-email">{{ acc.email }}</span>
         <a v-if="!acc.authenticated" :href="`/gmail/auth/${acc.id}`" class="btn" style="margin-left:auto;padding:4px 10px;font-size:11px">Authorize</a>
         <span v-else class="gmail-poll">Last poll: {{ acc.lastPoll ? timeAgo(acc.lastPoll) : 'never' }}</span>
+        <button class="btn danger" style="padding:4px 10px;font-size:11px;margin-left:8px" @click="remove(acc.id)">Remove</button>
       </div>
     </template>
     <div v-else style="color:var(--text-ghost);font-size:13px;padding:8px 0">
       No Gmail accounts configured
+    </div>
+
+    <!-- Add account form -->
+    <div class="gmail-add-section">
+      <label class="ssh-label">Add Account</label>
+      <div class="gmail-form">
+        <input v-model="form.email" placeholder="Email address" class="ssh-input" />
+        <input v-model="form.clientId" placeholder="OAuth Client ID" class="ssh-input" />
+        <input v-model="form.clientSecret" placeholder="Client Secret" type="password" class="ssh-input" />
+        <button class="btn" :disabled="!canAdd" @click="add">Add</button>
+      </div>
+      <p v-if="addError" class="gmail-error">{{ addError }}</p>
     </div>
   </div>
 </template>
@@ -24,12 +39,49 @@
 <script setup lang="ts">
 import type { GmailAccount } from '~/types/aria'
 
-defineProps<{
+const props = defineProps<{
   gmail: { total: number; authenticated: number }
   accounts: GmailAccount[]
 }>()
 
+const emit = defineEmits<{
+  reload: []
+}>()
+
+const { api } = useApi()
 const { timeAgo } = useTimeAgo()
+
+const form = reactive({ email: '', clientId: '', clientSecret: '' })
+const addError = ref('')
+
+const canAdd = computed(() => form.email.trim() && form.clientId.trim() && form.clientSecret.trim())
+
+async function add() {
+  if (!canAdd.value) return
+  addError.value = ''
+  try {
+    const id = (form.email.split('@')[0] ?? form.email).replace(/[^a-z0-9]/gi, '-').toLowerCase()
+    await api('/api/gmail/accounts', {
+      method: 'POST',
+      body: { id, email: form.email.trim(), clientId: form.clientId.trim(), clientSecret: form.clientSecret.trim() },
+    })
+    form.email = ''
+    form.clientId = ''
+    form.clientSecret = ''
+    emit('reload')
+  } catch (e) {
+    addError.value = e instanceof Error ? e.message : 'Failed to add account'
+  }
+}
+
+async function remove(id: string) {
+  try {
+    await api('/api/gmail/accounts', { method: 'DELETE', body: { id } })
+    emit('reload')
+  } catch {
+    // silent
+  }
+}
 </script>
 
 <style scoped>
@@ -42,4 +94,11 @@ const { timeAgo } = useTimeAgo()
 }
 .gmail-email { font-size: 13px; color: var(--text); }
 .gmail-poll { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-left: auto; }
+.gmail-add-section { margin-top: 14px; }
+.gmail-form {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.gmail-error { color: var(--red); font-size: 12px; margin-top: 6px; }
 </style>

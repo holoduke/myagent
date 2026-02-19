@@ -61,8 +61,8 @@ function formatObservations(observations: Observation[]): string {
 
 // ── Brain Tick Personality (extends shared identity with brain-specific details) ──
 
-function brainTickPersonality(ownerName: string): string {
-  return `${ariaPersonality(ownerName)}
+function brainTickPersonality(ownerName: string, githubRepo?: string): string {
+  return `${ariaPersonality(ownerName, githubRepo)}
 
 ═══ BRAIN TICK TOOLS ═══
 
@@ -235,6 +235,7 @@ Priority: 1=critical, 2=important, 3=nice-to-have. Goals persist in your memory 
 
 export interface ThinkContext {
   ownerName: string;
+  githubRepo?: string;
   observations: Observation[];
   contextNodes: MemoryNode[];
   graph: MemoryGraph;
@@ -266,7 +267,7 @@ export function buildThinkPrompt(ctx: ThinkContext): string {
       }).join("\n\n")}\n`
     : "";
 
-  return `${brainTickPersonality(ctx.ownerName)}
+  return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo)}
 
 ═══ CURRENT STATE ═══
 
@@ -323,6 +324,7 @@ Respond with ONLY the JSON object.`;
 
 export interface ConsolidateContext {
   ownerName: string;
+  githubRepo?: string;
   weakNodes: MemoryNode[];
   orphanNodes: MemoryNode[];
   duplicateCandidates: [MemoryNode, MemoryNode][];
@@ -340,7 +342,7 @@ export function buildConsolidatePrompt(ctx: ConsolidateContext): string {
       `  [${a.id}] "${a.content.slice(0, 60)}" ↔ [${b.id}] "${b.content.slice(0, 60)}" (shared tags: ${a.tags.filter(t => b.tags.includes(t)).join(", ")})`
     ).join("\n");
 
-  return `${brainTickPersonality(ctx.ownerName)}
+  return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo)}
 
 ═══ CONSOLIDATION CYCLE ═══
 
@@ -391,6 +393,7 @@ Respond with ONLY the JSON object.`;
 
 export interface ReflectContext {
   ownerName: string;
+  githubRepo?: string;
   strongestNodes: MemoryNode[];
   graph: MemoryGraph;
   wm: WorkingMemory;
@@ -421,7 +424,7 @@ export function buildReflectPrompt(ctx: ReflectContext): string {
       }).join("\n\n")}\n`
     : "";
 
-  return `${brainTickPersonality(ctx.ownerName)}
+  return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo)}
 
 ═══ DEEP REFLECTION CYCLE ═══
 
