@@ -121,6 +121,8 @@ async function loadDashboard() {
   }
 }
 
+useVisibilityRefresh(loadDashboard)
+
 let refreshInterval: ReturnType<typeof setInterval>
 
 onMounted(() => {

@@ -134,6 +134,8 @@ async function removeContact(jid: string) {
   }
 }
 
+useVisibilityRefresh(load)
+
 onMounted(load)
 </script>
 

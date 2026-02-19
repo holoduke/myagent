@@ -1,4 +1,4 @@
-export type NodeType = 'person' | 'event' | 'insight' | 'fact' | 'emotion' | 'plan' | 'meta'
+export type NodeType = 'person' | 'event' | 'insight' | 'fact' | 'emotion' | 'plan' | 'meta' | 'goal'
 export type EdgeType = 'causal' | 'temporal' | 'social' | 'topical' | 'emotional' | 'contradicts'
 
 export interface MemoryNode {

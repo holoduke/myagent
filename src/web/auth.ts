@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "crypto";
 import { IncomingMessage, ServerResponse } from "http";
-import { appendFileSync } from "fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { dirname } from "path";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -14,7 +15,41 @@ const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_LOGIN_ATTEMPTS = 10;
 const LOGIN_WINDOW = 15 * 60 * 1000; // 15 minutes
 
+const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+const SESSIONS_FILE = `${BRAIN_DIR}/sessions.json`;
+
 const activeSessions = new Map<string, number>(); // token → created timestamp
+
+function loadSessions(): void {
+  try {
+    if (!existsSync(SESSIONS_FILE)) return;
+    const raw = readFileSync(SESSIONS_FILE, "utf-8");
+    const entries: [string, number][] = JSON.parse(raw);
+    const now = Date.now();
+    for (const [token, created] of entries) {
+      if (now - created < SESSION_TTL) {
+        activeSessions.set(token, created);
+      }
+    }
+    log(`Loaded ${activeSessions.size} sessions from disk`);
+  } catch (e) {
+    log(`Failed to load sessions: ${e}`);
+  }
+}
+
+function saveSessions(): void {
+  try {
+    const dir = dirname(SESSIONS_FILE);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const entries = Array.from(activeSessions.entries());
+    writeFileSync(SESSIONS_FILE, JSON.stringify(entries));
+  } catch (e) {
+    log(`Failed to save sessions: ${e}`);
+  }
+}
+
+// Load persisted sessions on startup
+loadSessions();
 const loginAttempts: { ts: number }[] = [];
 const WEB_PASSWORD = process.env.WEB_PASSWORD || "";
 
@@ -44,6 +79,7 @@ export function isAuthenticated(req: IncomingMessage): boolean {
   if (!created) return false;
   if (Date.now() - created > SESSION_TTL) {
     activeSessions.delete(token);
+    saveSessions();
     return false;
   }
   return true;
@@ -104,6 +140,8 @@ export async function handleLogin(req: IncomingMessage, res: ServerResponse): Pr
       for (const [t, created] of activeSessions) {
         if (now - created > SESSION_TTL) activeSessions.delete(t);
       }
+
+      saveSessions();
 
       res.writeHead(200, {
         "Content-Type": "application/json",
