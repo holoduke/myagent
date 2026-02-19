@@ -1,7 +1,7 @@
 {
   "name": "myagent",
   "version": "1.0.0",
-  "description": "WhatsApp Claude Agent - personal assistant via WhatsApp",
+  "description": "ARIA — Autonomous Reasoning & Insight Agent",
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",
