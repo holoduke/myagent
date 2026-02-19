@@ -6,7 +6,11 @@
       <p style="color:var(--red)">Failed to load: {{ error }}</p>
     </div>
 
-    <template v-else-if="data">
+    <div v-if="renderError" class="card" style="margin-bottom:16px">
+      <p style="color:var(--red)">Render error: {{ renderError }}</p>
+    </div>
+
+    <template v-if="data && !error">
       <!-- Working Memory -->
       <UiCard v-if="wm" title="Working Memory" :icon="icons.brain" style="margin-bottom:16px">
         <div class="wm-grid">
@@ -39,7 +43,7 @@
           <UiStatCard :value="g.nodeCount || 0" label="Nodes" />
           <UiStatCard :value="g.edgeCount || 0" label="Edges" />
           <UiStatCard :value="(g.avgStrength || 0).toFixed(3)" label="Avg Strength" />
-          <UiStatCard :value="(g.pinnedNodes || []).length" label="Pinned" />
+          <UiStatCard :value="pinnedList.length" label="Pinned" />
         </div>
         <div v-if="g.byType && Object.keys(g.byType).length" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
           <span v-for="(count, type) in g.byType" :key="type" class="type-badge" :class="type">
@@ -80,44 +84,44 @@
 
       <!-- Core Directives -->
       <template v-if="!searchQuery && !typeFilter">
-        <UiCard v-if="g.pinnedNodes?.length" title="Core Directives" :icon="icons.pin" style="margin-bottom:16px">
+        <UiCard v-if="pinnedList.length" title="Core Directives" :icon="icons.pin" style="margin-bottom:16px">
           <div class="node-list">
-            <MemoryMemoryNode v-for="n in g.pinnedNodes" :key="n.id" :node="n" :pinned="true" />
+            <MemoryMemoryNode v-for="n in pinnedList" :key="n.id" :node="n" :pinned="true" />
           </div>
         </UiCard>
 
         <!-- Strongest Memories -->
-        <UiCard v-if="g.strongestNodes?.length" title="Strongest Memories" :icon="icons.star" style="margin-bottom:16px">
+        <UiCard v-if="strongList.length" title="Strongest Memories" :icon="icons.star" style="margin-bottom:16px">
           <div class="node-list">
             <MemoryMemoryNode v-for="n in displayedStrongest" :key="n.id" :node="n" />
           </div>
-          <button v-if="g.strongestNodes.length > 10 && !showAllStrongest" class="btn" style="margin-top:8px" @click="showAllStrongest = true">
-            Show all {{ g.strongestNodes.length }} memories
+          <button v-if="strongList.length > 10 && !showAllStrongest" class="btn" style="margin-top:8px" @click="showAllStrongest = true">
+            Show all {{ strongList.length }} memories
           </button>
         </UiCard>
 
         <!-- Recent Memories -->
-        <UiCard v-if="g.recentNodes?.length" title="Recent Memories" :icon="icons.clock" style="margin-bottom:16px">
+        <UiCard v-if="recentList.length" title="Recent Memories" :icon="icons.clock" style="margin-bottom:16px">
           <div class="node-list">
-            <MemoryMemoryNode v-for="n in g.recentNodes" :key="n.id" :node="n" :show-time="true" />
+            <MemoryMemoryNode v-for="n in recentList" :key="n.id" :node="n" :show-time="true" />
           </div>
         </UiCard>
 
         <!-- Weakest / Decaying Memories -->
-        <UiCard v-if="g.weakestNodes?.length" title="Decaying Memories" :icon="icons.fade" style="margin-bottom:16px">
+        <UiCard v-if="weakList.length" title="Decaying Memories" :icon="icons.fade" style="margin-bottom:16px">
           <p class="card-hint">These memories are fading and may be pruned soon.</p>
           <div class="node-list">
-            <MemoryMemoryNode v-for="n in g.weakestNodes" :key="n.id" :node="n" />
+            <MemoryMemoryNode v-for="n in weakList" :key="n.id" :node="n" />
           </div>
         </UiCard>
 
-        <div v-if="!g.pinnedNodes?.length && !g.strongestNodes?.length && !g.recentNodes?.length" class="empty-hint" style="padding:40px">
+        <div v-if="!pinnedList.length && !strongList.length && !recentList.length" class="empty-hint" style="padding:40px">
           No memories yet — ARIA will start building memories as she receives observations.
         </div>
       </template>
     </template>
 
-    <div v-else class="empty-hint" style="padding:40px">Loading...</div>
+    <div v-if="!data && !error" class="empty-hint" style="padding:40px">Loading...</div>
   </div>
 </template>
 
@@ -128,22 +132,45 @@ const { api } = useApi()
 const { timeAgo } = useTimeAgo()
 const data = ref<AriaStatus | null>(null)
 const error = ref('')
+const renderError = ref('')
 const searchQuery = ref('')
 const typeFilter = ref('')
 const showAllStrongest = ref(false)
+
+onErrorCaptured((err) => {
+  renderError.value = err instanceof Error ? err.message : String(err)
+  console.error('[memory] Render error:', err)
+  return false
+})
 
 const g = computed(() => data.value?.graph ?? {} as Partial<AriaStatus['graph']>)
 const wm = computed(() => data.value?.workingMemory ?? null)
 const bs = computed(() => data.value?.brainState ?? null)
 
+const pinnedList = computed(() => {
+  try { return Array.isArray(g.value.pinnedNodes) ? g.value.pinnedNodes : [] }
+  catch { return [] }
+})
+const strongList = computed(() => {
+  try { return Array.isArray(g.value.strongestNodes) ? g.value.strongestNodes : [] }
+  catch { return [] }
+})
+const recentList = computed(() => {
+  try { return Array.isArray(g.value.recentNodes) ? g.value.recentNodes : [] }
+  catch { return [] }
+})
+const weakList = computed(() => {
+  try { return Array.isArray(g.value.weakestNodes) ? g.value.weakestNodes : [] }
+  catch { return [] }
+})
+
 const allNodes = computed<GraphNode[]>(() => {
   if (!data.value?.graph) return []
   const seen = new Set<string>()
   const nodes: GraphNode[] = []
-  for (const list of [g.value.pinnedNodes, g.value.strongestNodes, g.value.recentNodes, g.value.weakestNodes]) {
-    if (!list) continue
+  for (const list of [pinnedList.value, strongList.value, recentList.value, weakList.value]) {
     for (const n of list) {
-      if (!seen.has(n.id)) {
+      if (n?.id && !seen.has(n.id)) {
         seen.add(n.id)
         nodes.push(n)
       }
@@ -174,8 +201,8 @@ const filteredNodes = computed(() => {
 })
 
 const displayedStrongest = computed(() => {
-  if (showAllStrongest.value) return g.value.strongestNodes || []
-  return (g.value.strongestNodes || []).slice(0, 10)
+  if (showAllStrongest.value) return strongList.value
+  return strongList.value.slice(0, 10)
 })
 
 const icons = {
@@ -191,9 +218,15 @@ const icons = {
 
 async function loadMemory() {
   try {
-    data.value = await api<AriaStatus>('/api/aria/status')
+    const result = await api<AriaStatus>('/api/aria/status')
+    console.log('[memory] API response keys:', Object.keys(result))
+    console.log('[memory] graph keys:', result.graph ? Object.keys(result.graph) : 'no graph')
+    console.log('[memory] pinnedNodes:', Array.isArray(result.graph?.pinnedNodes) ? result.graph.pinnedNodes.length : 'not array')
+    console.log('[memory] strongestNodes:', Array.isArray(result.graph?.strongestNodes) ? result.graph.strongestNodes.length : 'not array')
+    data.value = result
     error.value = ''
   } catch (e) {
+    console.error('[memory] Load failed:', e)
     error.value = e instanceof Error ? e.message : 'Unknown error'
   }
 }
