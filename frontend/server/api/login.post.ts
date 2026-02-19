@@ -20,6 +20,6 @@ export default defineEventHandler(async (event) => {
     const message = err instanceof Error ? err.message : String(err)
     console.error(`[login] Proxy error to ${url}:`, message)
     setResponseStatus(event, 502)
-    return { error: true, message: `Backend unreachable: ${message}`, url }
+    return { error: true, message: 'Service temporarily unavailable' }
   }
 })

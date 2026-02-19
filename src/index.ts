@@ -40,6 +40,12 @@ async function main() {
 
   // HTTP server: health check, QR code, web chat, and Gmail OAuth
   const server = createServer((req, res) => {
+    // Security headers
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Content-Security-Policy", "script-src 'none'; frame-ancestors 'none';");
+
     // Web chat routes
     if (handleWebRoutes(req, res, queue)) return;
 
