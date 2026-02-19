@@ -53,7 +53,7 @@ const { api } = useApi()
 const data = ref<AriaStatus | null>(null)
 const error = ref('')
 
-const g = computed(() => data.value?.graph || {} as Record<string, unknown>)
+const g = computed(() => data.value?.graph ?? {} as Partial<AriaStatus['graph']>)
 
 const icons = {
   graph: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg>',

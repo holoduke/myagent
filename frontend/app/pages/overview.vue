@@ -91,8 +91,8 @@ const { timeAgo } = useTimeAgo()
 const data = ref<DashboardData | null>(null)
 const error = ref('')
 
-const bs = computed(() => data.value?.brainState || {} as Record<string, unknown>)
-const wm = computed(() => data.value?.workingMemory || {} as Record<string, unknown>)
+const bs = computed(() => data.value?.brainState ?? {} as Partial<DashboardData['brainState']>)
+const wm = computed(() => data.value?.workingMemory ?? {} as Partial<DashboardData['workingMemory']>)
 const failures = computed(() => (data.value?.brainState?.consecutiveFailures || 0))
 const systemStatus = computed<'ok' | 'warn' | 'err'>(() => {
   if (failures.value >= 5) return 'err'
