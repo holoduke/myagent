@@ -127,7 +127,7 @@ function formatWorkingMemory(wm: WorkingMemory): string {
   const parts: string[] = [];
   if (wm.currentContext) parts.push(`Context: ${wm.currentContext}`);
   if (wm.mood) parts.push(`Mood: ${wm.mood}`);
-  if (wm.shortTermTracking.length > 0) parts.push(`Tracking: ${wm.shortTermTracking.join(", ")}`);
+  if (wm.shortTermTracking?.length > 0) parts.push(`Tracking: ${wm.shortTermTracking.join(", ")}`);
 
   // Temporal context
   if (wm.temporal) {
