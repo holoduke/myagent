@@ -117,6 +117,7 @@ export interface BrainState {
   consecutiveFailures: number;
   lastSuccessfulTick: number;
   pendingSelfMod: boolean;
+  selfModSpawnedAt?: number;
 }
 
 // ── Tick Types ──

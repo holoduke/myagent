@@ -46,6 +46,8 @@ export interface Observation {
   groupName?: string;
   isFromMe: boolean;
   text: string;
+  chatJid?: string;
+  chatName?: string;
   source?: "whatsapp" | "gmail" | "calendar" | "homeassistant" | "rss" | "owntracks";
   emailMeta?: EmailMeta;
   calendarMeta?: CalendarMeta;
