@@ -30,19 +30,44 @@
     <div v-else class="wa-connected-note">
       <span class="status-dot ok" /> Already connected
     </div>
+
+    <!-- Contact Whitelist -->
+    <h4 class="wl-heading">Contact Whitelist</h4>
+    <template v-if="whitelist.length">
+      <div v-for="c in whitelist" :key="c.jid" class="wl-item">
+        <div>
+          <span class="wl-name">{{ c.name }}</span>
+          <span class="wl-jid">{{ c.jid }}</span>
+        </div>
+        <button class="wl-rm" @click="removeContact(c.jid)">Remove</button>
+      </div>
+    </template>
+    <div v-else style="color:var(--text-ghost);font-size:13px;padding:8px 0">
+      No whitelisted contacts
+    </div>
+    <div class="wl-add-form">
+      <input v-model="newJid" type="text" placeholder='JID (e.g. 123@s.whatsapp.net)'>
+      <input v-model="newName" type="text" placeholder="Name">
+      <button class="btn primary" @click="addContact">Add</button>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import type { WhitelistContact } from '~/types/aria'
+
 const props = defineProps<{
   whatsapp: { connected: boolean; contactCount: number }
 }>()
 
-defineEmits(['syncContacts'])
+defineEmits(['syncContacts', 'reload'])
 
 const { api } = useApi()
 const qrData = ref<string | null>(null)
 const qrLoading = ref(false)
+const whitelist = ref<WhitelistContact[]>([])
+const newJid = ref('')
+const newName = ref('')
 
 const qrImageUrl = computed(() => {
   if (!qrData.value) return ''
@@ -61,6 +86,37 @@ async function fetchQr() {
   }
 }
 
+async function loadWhitelist() {
+  try {
+    whitelist.value = await api<WhitelistContact[]>('/api/whitelist')
+  } catch {
+    // Silent
+  }
+}
+
+async function addContact() {
+  const jid = newJid.value.trim()
+  const name = newName.value.trim()
+  if (!jid || !name) return
+  try {
+    await api('/api/whitelist', { method: 'POST', body: { jid, name } })
+    newJid.value = ''
+    newName.value = ''
+    await loadWhitelist()
+  } catch {
+    // Silent
+  }
+}
+
+async function removeContact(jid: string) {
+  try {
+    await api('/api/whitelist', { method: 'DELETE', body: { jid } })
+    await loadWhitelist()
+  } catch {
+    // Silent
+  }
+}
+
 let refreshInterval: ReturnType<typeof setInterval> | null = null
 
 watch(() => props.whatsapp.connected, (connected) => {
@@ -72,6 +128,8 @@ watch(() => props.whatsapp.connected, (connected) => {
     qrData.value = null
   }
 }, { immediate: true })
+
+onMounted(loadWhitelist)
 
 onUnmounted(() => {
   if (refreshInterval) clearInterval(refreshInterval)
@@ -98,5 +156,13 @@ onUnmounted(() => {
   font-size: 13px;
   color: var(--green);
   margin-top: 12px;
+}
+.wl-heading {
+  margin: 16px 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-family: var(--mono);
 }
 </style>
