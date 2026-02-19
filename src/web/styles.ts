@@ -626,6 +626,8 @@ export function getStyles(): string {
     #section-chat.active {
       display: flex;
       flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
     }
 
     .chat-header {
