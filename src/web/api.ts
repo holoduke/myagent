@@ -18,6 +18,14 @@ import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
 import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS } from "../brain-config.js";
 import type { BrainConfig } from "../brain-config.js";
+import {
+  loadQueue,
+  loadHistory,
+  approveItem,
+  rejectItem,
+  deleteItem,
+  getWeeklyCompletedCount,
+} from "../self-improve-queue.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -205,6 +213,63 @@ export function handleApiRoutes(
   if (pathname === "/api/owntracks/status" && req.method === "GET" && isAuthenticated(req)) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(getOwnTracksStatus()));
+    return true;
+  }
+
+  // ── Improve queue ──
+  if (pathname === "/api/improve-queue" && req.method === "GET" && isAuthenticated(req)) {
+    try {
+      const queue = loadQueue();
+      const history = loadHistory();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        queue: queue.items,
+        history: history.entries,
+        weeklyCount: getWeeklyCompletedCount(),
+      }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return true;
+  }
+
+  if (pathname.match(/^\/api\/improve-queue\/[^/]+\/approve$/) && req.method === "POST" && isAuthenticated(req)) {
+    const id = pathname.split("/")[3];
+    try {
+      const item = approveItem(id);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(item));
+    } catch (err) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return true;
+  }
+
+  if (pathname.match(/^\/api\/improve-queue\/[^/]+\/reject$/) && req.method === "POST" && isAuthenticated(req)) {
+    const id = pathname.split("/")[3];
+    try {
+      rejectItem(id);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return true;
+  }
+
+  if (pathname.match(/^\/api\/improve-queue\/[^/]+$/) && req.method === "DELETE" && isAuthenticated(req)) {
+    const id = pathname.split("/")[3];
+    try {
+      deleteItem(id);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
     return true;
   }
 
@@ -620,6 +685,7 @@ async function handleRSSRemoveFeed(req: IncomingMessage, res: ServerResponse) {
 const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
   "enabled", "maxMessagesPerDay", "minMessageInterval", "quietStart", "quietEnd",
   "thinkCooldown", "consolidateInterval", "reflectInterval", "tickInterval", "preset",
+  "selfImproveEnabled", "selfImproveAutoApprove", "selfImproveMaxPerWeek",
 ];
 
 async function handleBrainConfigUpdate(req: IncomingMessage, res: ServerResponse) {
