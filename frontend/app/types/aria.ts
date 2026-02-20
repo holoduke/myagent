@@ -180,4 +180,16 @@ export interface ChatStats {
   inputTokens: number
   outputTokens: number
   numTurns: number
+  provider?: string
+  model?: string
+}
+
+export interface AgentProfile {
+  id: string
+  name: string
+  provider: 'claude' | 'codex' | 'grok'
+  isDefault: boolean
+  config: Record<string, unknown>
+  createdAt: number
+  updatedAt: number
 }

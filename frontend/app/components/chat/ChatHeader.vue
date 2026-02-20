@@ -1,6 +1,7 @@
 <template>
   <div class="chat-header">
     <div class="chat-stats">
+      <span v-if="activeAgent" class="provider-badge" :class="activeAgent.provider">{{ activeAgent.name }}</span>
       <span>Msgs <b class="cv">{{ chatStore.messageCount }}</b></span>
       <span>Tokens <b class="cv">{{ chatStore.totalTokens.toLocaleString() }}</b></span>
       <span>Cost <b class="cv">${{ chatStore.totalCost.toFixed(4) }}</b></span>
@@ -19,9 +20,22 @@
 </template>
 
 <script setup lang="ts">
+import type { AgentProfile } from '~/types/aria'
+
 const chatStore = useChatStore()
+const { api } = useApi()
 
 defineEmits(['showQr'])
+
+const activeAgent = ref<AgentProfile | null>(null)
+
+onMounted(async () => {
+  try {
+    activeAgent.value = await api<AgentProfile>('/api/agents/default')
+  } catch {
+    // Silent — no agents configured yet
+  }
+})
 </script>
 
 <style scoped>
@@ -41,8 +55,20 @@ defineEmits(['showQr'])
   color: var(--text-ghost);
   font-variant-numeric: tabular-nums;
   font-family: var(--mono);
+  align-items: center;
 }
 .chat-stats .cv { color: var(--text-muted); font-weight: 500; }
+.provider-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 600;
+}
+.provider-badge.claude { background: rgba(168,85,247,0.15); color: #a855f7; }
+.provider-badge.codex { background: rgba(16,185,129,0.15); color: #10b981; }
+.provider-badge.grok { background: rgba(245,158,11,0.15); color: #f59e0b; }
 .chat-actions { display: flex; gap: 6px; }
 .chat-btn {
   padding: 6px 10px;

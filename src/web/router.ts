@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse } from "http";
 import { MessageQueue } from "../queue.js";
 import { handleLogin } from "./auth.js";
 import { handleApiRoutes } from "./api.js";
+import { handleAgentRoutes } from "./agents-api.js";
 
 export function handleWebRoutes(
   req: IncomingMessage,
@@ -14,6 +15,11 @@ export function handleWebRoutes(
   if (pathname === "/api/login" && req.method === "POST") {
     handleLogin(req, res);
     return true;
+  }
+
+  // ── Agent routes (before generic API routes) ──
+  if (pathname.startsWith("/api/agents")) {
+    return handleAgentRoutes(req, res);
   }
 
   // ── API routes ──
