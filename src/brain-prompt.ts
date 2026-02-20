@@ -3,7 +3,21 @@ import type { MemoryNode, WorkingMemory } from "./memory/types.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import { serializeNodesForPrompt } from "./memory/activation.js";
 import { ariaPersonality } from "./aria-identity.js";
+import type { CharacterOverride } from "./aria-identity.js";
+import { getBrainConfig, getCharacterPreset } from "./brain-config.js";
 import type { InitiativeSignal } from "./initiative.js";
+
+function resolveCharacter(): CharacterOverride | undefined {
+  const cfg = getBrainConfig();
+  if (cfg.characterType === "custom" && cfg.characterCustomPrompt) {
+    return { traits: cfg.characterCustomPrompt, voice: "" };
+  }
+  if (cfg.characterType && cfg.characterType !== "default") {
+    const preset = getCharacterPreset(cfg.characterType);
+    if (preset) return { traits: preset.traits, voice: preset.voice };
+  }
+  return undefined;
+}
 
 // ── Shared Helpers ──
 
@@ -71,7 +85,8 @@ function formatObservations(observations: Observation[]): string {
 // ── Brain Tick Personality (extends shared identity with brain-specific details) ──
 
 function brainTickPersonality(ownerName: string, githubRepo?: string): string {
-  return `${ariaPersonality(ownerName, githubRepo)}
+  const character = resolveCharacter();
+  return `${ariaPersonality(ownerName, githubRepo, character)}
 
 ═══ BRAIN TICK TOOLS ═══
 

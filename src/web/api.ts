@@ -17,7 +17,7 @@ import { getRSSStatus, addFeed, removeFeed } from "../rss.js";
 import { getOwnTracksStatus } from "../owntracks.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
-import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS } from "../brain-config.js";
+import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS, CHARACTER_PRESETS } from "../brain-config.js";
 import type { BrainConfig } from "../brain-config.js";
 import {
   loadQueue,
@@ -300,6 +300,7 @@ export function handleApiRoutes(
         config,
         activePreset: getActivePreset(config),
         presets: BRAIN_PRESETS,
+        characterPresets: CHARACTER_PRESETS,
       }));
       return true;
     }
@@ -771,6 +772,7 @@ const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
   "enabled", "maxMessagesPerDay", "minMessageInterval", "quietStart", "quietEnd",
   "thinkCooldown", "consolidateInterval", "reflectInterval", "tickInterval", "preset",
   "selfImproveEnabled", "selfImproveAutoApprove", "selfImproveMaxPerWeek",
+  "characterType", "characterCustomPrompt",
 ];
 
 async function handleBrainConfigUpdate(req: IncomingMessage, res: ServerResponse) {
@@ -820,6 +822,7 @@ async function handleBrainConfigUpdate(req: IncomingMessage, res: ServerResponse
       config,
       activePreset: getActivePreset(config),
       presets: BRAIN_PRESETS,
+      characterPresets: CHARACTER_PRESETS,
     }));
   } catch (err) {
     log(`Brain config update error: ${err}`);

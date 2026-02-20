@@ -602,11 +602,22 @@ export function getDashboardHTML(): string {
     }
 
     // ── Settings Section ──
+    let _characterPresets = [];
+    let _currentCharacterType = 'default';
+    let _currentCharacterCustom = '';
+
     async function loadSettings() {
       try {
-        const dashRes = await fetch('/api/dashboard', { headers: authHeaders() });
+        const [dashRes, cfgRes] = await Promise.all([
+          fetch('/api/dashboard', { headers: authHeaders() }),
+          fetch('/api/brain-config', { headers: authHeaders() }),
+        ]);
         if (dashRes.status === 401) { resetAuth(); return; }
         const dash = await dashRes.json();
+        const cfg = await cfgRes.json();
+        _characterPresets = cfg.characterPresets || [];
+        _currentCharacterType = cfg.config.characterType || 'default';
+        _currentCharacterCustom = cfg.config.characterCustomPrompt || '';
         renderSettings(dash);
       } catch(e) {
         document.getElementById('settings-content').innerHTML =
@@ -614,9 +625,70 @@ export function getDashboardHTML(): string {
       }
     }
 
+    async function saveCharacter() {
+      const sel = document.getElementById('char-select');
+      const textarea = document.getElementById('char-custom');
+      const type = sel.value;
+      const custom = type === 'custom' ? textarea.value : null;
+      try {
+        const res = await fetch('/api/brain-config', {
+          method: 'PUT',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ characterType: type, characterCustomPrompt: custom })
+        });
+        if (res.ok) {
+          _currentCharacterType = type;
+          _currentCharacterCustom = custom || '';
+          const statusEl = document.getElementById('char-status');
+          statusEl.textContent = 'Saved!';
+          statusEl.style.color = 'var(--green)';
+          setTimeout(() => { statusEl.textContent = ''; }, 2000);
+        }
+      } catch(e) {
+        const statusEl = document.getElementById('char-status');
+        statusEl.textContent = 'Failed to save';
+        statusEl.style.color = 'var(--red)';
+      }
+    }
+
+    function onCharacterChange() {
+      const sel = document.getElementById('char-select');
+      const customWrap = document.getElementById('char-custom-wrap');
+      const descEl = document.getElementById('char-desc');
+      if (sel.value === 'custom') {
+        customWrap.style.display = 'block';
+        descEl.textContent = 'Write your own personality description below.';
+      } else {
+        customWrap.style.display = 'none';
+        const preset = _characterPresets.find(p => p.name === sel.value);
+        descEl.textContent = preset ? preset.description : '';
+      }
+    }
+
     function renderSettings(dash) {
       const si = dash.selfImprove || {};
       let html = '';
+
+      // Character type
+      html += '<div class="card" style="margin-bottom:16px"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 10-16 0"/></svg>Character</h2>';
+      html += '<div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">Choose a personality preset or write your own.</div>';
+      html += '<select id="char-select" onchange="onCharacterChange()" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:13px;font-family:var(--mono);margin-bottom:8px">';
+      for (const p of _characterPresets) {
+        const selected = p.name === _currentCharacterType ? ' selected' : '';
+        html += '<option value="' + esc(p.name) + '"' + selected + '>' + esc(p.label) + '</option>';
+      }
+      html += '<option value="custom"' + (_currentCharacterType === 'custom' ? ' selected' : '') + '>Custom</option>';
+      html += '</select>';
+      const activePreset = _characterPresets.find(p => p.name === _currentCharacterType);
+      html += '<div id="char-desc" style="color:var(--text-muted);font-size:12px;margin-bottom:10px">' + esc(_currentCharacterType === 'custom' ? 'Write your own personality description below.' : (activePreset ? activePreset.description : '')) + '</div>';
+      html += '<div id="char-custom-wrap" style="display:' + (_currentCharacterType === 'custom' ? 'block' : 'none') + '">';
+      html += '<textarea id="char-custom" rows="6" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:12px;font-family:var(--mono);resize:vertical;margin-bottom:8px" placeholder="Describe the personality traits and voice...">' + esc(_currentCharacterCustom) + '</textarea>';
+      html += '</div>';
+      html += '<div class="btn-row" style="align-items:center">';
+      html += '<button class="btn" onclick="saveCharacter()">Save Character</button>';
+      html += '<span id="char-status" style="font-size:12px;font-family:var(--mono);margin-left:10px"></span>';
+      html += '</div>';
+      html += '</div>';
 
       // Self-improvement
       html += '<div class="card" style="margin-bottom:16px"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Self-Improvement</h2>';
