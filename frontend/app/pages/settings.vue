@@ -107,35 +107,74 @@
 
       <!-- Self-Improvement -->
       <UiCard title="Self-Improvement" :icon="icons.edit" style="margin-bottom:16px">
-        <UiKvRow label="Boot Counter" :value="si.bootCounter || 0" :value-class="(si.bootCounter || 0) > 1 ? 'warn' : ''" />
-        <UiKvRow label="Last Good Commit" :value="si.lastGoodCommit ? si.lastGoodCommit.slice(0, 8) : 'none'" />
-
-        <div v-if="si.pendingTask" class="si-task pending" style="margin-top:10px">
-          <div class="si-label">Pending Task</div>
-          <div class="si-val">{{ si.pendingTask.description }}</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;font-family:var(--mono)">
-            Files: {{ (si.pendingTask.files || []).join(', ') }}
+        <!-- Controls -->
+        <div class="si-controls">
+          <div class="br-toggle-row">
+            <span class="br-toggle-label">Enable self-improvement</span>
+            <button class="br-toggle" :class="{ on: brainForm.selfImproveEnabled }" @click="brainForm.selfImproveEnabled = !brainForm.selfImproveEnabled; brainDirty = true">
+              <span class="br-toggle-knob" />
+            </button>
+          </div>
+          <div class="br-toggle-row">
+            <span class="br-toggle-label">Auto-approve tasks</span>
+            <button class="br-toggle" :class="{ on: brainForm.selfImproveAutoApprove }" @click="brainForm.selfImproveAutoApprove = !brainForm.selfImproveAutoApprove; brainDirty = true">
+              <span class="br-toggle-knob" />
+            </button>
+          </div>
+          <div class="si-max-row">
+            <label class="intg-label">Max improvements / week</label>
+            <input type="number" class="intg-input intg-input-sm" v-model.number="brainForm.selfImproveMaxPerWeek" min="0" max="20" @input="brainDirty = true" style="width:70px">
+          </div>
+          <div class="si-week-count">
+            This week: {{ improveWeeklyCount }}/{{ brainForm.selfImproveMaxPerWeek }}
+          </div>
+          <div v-if="brainDirty" style="padding-top:8px">
+            <button class="btn primary" :disabled="brainSaving" @click="saveBrainConfig">
+              {{ brainSaving ? 'Saving...' : 'Save' }}
+            </button>
           </div>
         </div>
 
-        <div v-if="si.lastResult" class="si-task" :class="si.lastResult.success ? 'success' : 'failed'" style="margin-top:10px">
-          <div class="si-label">
-            Last Result &mdash;
-            <span :style="{ color: si.lastResult.success ? 'var(--green)' : 'var(--red)' }">
-              {{ si.lastResult.success ? 'Success' : 'Failed' }}
-            </span>
-          </div>
-          <div class="si-val">{{ si.lastResult.description }}</div>
-          <a v-if="si.lastResult.prUrl" :href="si.lastResult.prUrl" target="_blank" style="color:var(--cyan);text-decoration:none;font-size:12px;font-family:var(--mono)">
-            View PR
-          </a>
-          <div v-if="si.lastResult.completedAt" style="font-size:11px;color:var(--text-muted);margin-top:4px;font-family:var(--mono)">
-            {{ fmtDate(si.lastResult.completedAt) }}
+        <!-- Pending Queue -->
+        <div class="si-section">
+          <div class="si-section-title">Pending Queue</div>
+          <div v-if="improveQueue.length === 0" class="si-empty">No pending tasks</div>
+          <div v-for="item in improveQueue" :key="item.id" class="si-queue-item">
+            <div class="si-queue-desc">{{ item.task.description }}</div>
+            <div v-if="item.task.files?.length" class="si-queue-files">Files: {{ item.task.files.join(', ') }}</div>
+            <div v-if="item.task.rationale" class="si-queue-rationale">{{ item.task.rationale }}</div>
+            <div class="si-queue-meta">
+              <span class="si-badge" :class="item.status">{{ item.status }}</span>
+              <span class="si-queue-time">{{ timeAgo(item.createdAt) }}</span>
+            </div>
+            <div v-if="item.status === 'pending'" class="si-queue-actions">
+              <button class="btn primary sm" @click="handleApprove(item.id)">Approve</button>
+              <button class="btn danger sm" @click="handleReject(item.id)">Reject</button>
+            </div>
           </div>
         </div>
 
-        <div v-if="!si.pendingTask && !si.lastResult" style="color:var(--text-ghost);font-size:13px;padding:10px 0">
-          No self-improvement activity yet
+        <!-- History (collapsible) -->
+        <div class="si-section">
+          <button class="br-adv-toggle" @click="showHistory = !showHistory">
+            History ({{ improveHistory.length }})
+            <svg :class="{ open: showHistory }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div v-if="showHistory" class="si-history">
+            <div v-if="improveHistory.length === 0" class="si-empty">No history yet</div>
+            <div v-for="item in improveHistory.slice(0, 10)" :key="item.id" class="si-history-item">
+              <span class="si-badge" :class="item.status">{{ item.status === 'completed' ? '&check;' : item.status === 'failed' ? '&cross;' : '&mdash;' }}</span>
+              <span class="si-history-desc">{{ item.task.description }}</span>
+              <a v-if="item.result?.prUrl" :href="item.result.prUrl" target="_blank" class="si-history-pr">PR</a>
+              <span class="si-history-time">{{ timeAgo(item.completedAt || item.reviewedAt || item.createdAt) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Boot / commit info -->
+        <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
+          <UiKvRow label="Boot Counter" :value="si.bootCounter || 0" :value-class="(si.bootCounter || 0) > 1 ? 'warn' : ''" />
+          <UiKvRow label="Last Good Commit" :value="si.lastGoodCommit ? si.lastGoodCommit.slice(0, 8) : 'none'" />
         </div>
       </UiCard>
 
@@ -153,7 +192,7 @@
 </template>
 
 <script setup lang="ts">
-import type { DashboardData, SelfImprove, BrainConfig, BrainPreset, BrainConfigResponse } from '~/types/aria'
+import type { DashboardData, SelfImprove, BrainConfig, BrainPreset, BrainConfigResponse, ImproveQueueItem, ImproveQueueResponse } from '~/types/aria'
 
 const { api } = useApi()
 const { logout } = useAuth()
@@ -176,10 +215,19 @@ const brainForm = reactive<BrainConfig>({
   reflectInterval: 43200000,
   tickInterval: 60000,
   preset: null,
+  selfImproveEnabled: true,
+  selfImproveAutoApprove: false,
+  selfImproveMaxPerWeek: 3,
 })
 const brainDirty = ref(false)
 const brainSaving = ref(false)
 const showAdvanced = ref(false)
+
+// Improve queue state
+const improveQueue = ref<ImproveQueueItem[]>([])
+const improveHistory = ref<ImproveQueueItem[]>([])
+const improveWeeklyCount = ref(0)
+const showHistory = ref(false)
 
 const icons = {
   brain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4 7l1 1.5V21h4v-3.5L15 16c2-1.5 4-4 4-7a7 7 0 0 0-7-7z"/><line x1="10" y1="21" x2="14" y2="21"/></svg>',
@@ -217,6 +265,41 @@ async function saveBrainConfig() {
   }
 }
 
+function timeAgo(ts: number): string {
+  const diff = Date.now() - ts
+  if (diff < 60000) return 'just now'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
+  return `${Math.floor(diff / 86400000)}d ago`
+}
+
+async function loadQueue() {
+  try {
+    const resp = await api<ImproveQueueResponse>('/api/improve-queue')
+    improveQueue.value = resp.queue
+    improveHistory.value = resp.history
+    improveWeeklyCount.value = resp.weeklyCount
+  } catch {}
+}
+
+async function handleApprove(id: string) {
+  try {
+    await api(`/api/improve-queue/${id}/approve`, { method: 'POST' })
+    await loadQueue()
+  } catch (e) {
+    console.error('Failed to approve:', e)
+  }
+}
+
+async function handleReject(id: string) {
+  try {
+    await api(`/api/improve-queue/${id}/reject`, { method: 'POST' })
+    await loadQueue()
+  } catch (e) {
+    console.error('Failed to reject:', e)
+  }
+}
+
 async function load() {
   try {
     const [dash, brainResp] = await Promise.all([
@@ -226,6 +309,7 @@ async function load() {
     si.value = dash.selfImprove || { pendingTask: null, lastResult: null, bootCounter: 0, lastGoodCommit: null }
     Object.assign(brainForm, brainResp.config)
     brainPresets.value = brainResp.presets
+    await loadQueue()
     loaded.value = true
     error.value = ''
   } catch (e) {
@@ -382,6 +466,132 @@ onMounted(load)
   font-family: var(--mono);
   color: var(--text-muted);
   letter-spacing: 0.5px;
+}
+
+/* ── Self-Improvement ── */
+.si-controls {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.si-max-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+}
+.si-week-count {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+.si-section {
+  padding: 8px 0;
+}
+.si-section-title {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.si-empty {
+  color: var(--text-ghost);
+  font-size: 13px;
+  padding: 6px 0;
+}
+.si-queue-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.si-queue-desc {
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.si-queue-files {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.si-queue-rationale {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.si-queue-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.si-queue-time {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-ghost);
+}
+.si-queue-actions {
+  display: flex;
+  gap: 8px;
+}
+.si-badge {
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 2px 8px;
+  border-radius: 4px;
+  display: inline-block;
+}
+.si-badge.pending { background: rgba(234,179,8,0.15); color: #eab308; }
+.si-badge.approved { background: rgba(59,130,246,0.15); color: #3b82f6; }
+.si-badge.running { background: rgba(168,85,247,0.15); color: #a855f7; animation: pulse 2s infinite; }
+.si-badge.completed { background: rgba(34,197,94,0.15); color: #22c55e; }
+.si-badge.failed { background: rgba(239,68,68,0.15); color: #ef4444; }
+.si-badge.rejected { background: rgba(107,114,128,0.15); color: #6b7280; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.si-history {
+  padding-top: 8px;
+}
+.si-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.si-history-item:last-child { border-bottom: none; }
+.si-history-desc {
+  flex: 1;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.si-history-pr {
+  color: var(--cyan);
+  text-decoration: none;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.si-history-time {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-ghost);
+  white-space: nowrap;
+}
+.btn.sm {
+  font-size: 12px;
+  padding: 4px 12px;
 }
 
 @media (max-width: 768px) {

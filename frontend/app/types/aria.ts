@@ -195,6 +195,9 @@ export interface BrainConfig {
   reflectInterval: number
   tickInterval: number
   preset: string | null
+  selfImproveEnabled: boolean
+  selfImproveAutoApprove: boolean
+  selfImproveMaxPerWeek: number
 }
 
 export interface BrainPreset {
@@ -218,4 +221,20 @@ export interface AgentProfile {
   config: Record<string, unknown>
   createdAt: number
   updatedAt: number
+}
+
+export interface ImproveQueueItem {
+  id: string
+  task: { type: string; description: string; rationale: string; files: string[]; createdAt: number }
+  status: 'pending' | 'approved' | 'rejected' | 'running' | 'completed' | 'failed'
+  createdAt: number
+  reviewedAt?: number
+  completedAt?: number
+  result?: { success: boolean; description: string; prUrl?: string; branch?: string; wasRollback?: boolean }
+}
+
+export interface ImproveQueueResponse {
+  queue: ImproveQueueItem[]
+  history: ImproveQueueItem[]
+  weeklyCount: number
 }

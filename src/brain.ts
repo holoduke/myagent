@@ -26,6 +26,15 @@ import type { RecurringTask } from "./recurring.js";
 import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
 import { ensureSSHKey } from "./ssh.js";
 import { getBrainConfig, getActivePreset } from "./brain-config.js";
+import {
+  loadQueue,
+  enqueue,
+  approveItem,
+  dequeueApproved,
+  completeItem,
+  failItem,
+  getWeeklyCompletedCount,
+} from "./self-improve-queue.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -59,6 +68,7 @@ const IMPROVE_RESULT_FILE = `${BRAIN_DIR}/improve-result.json`;
 const SELF_MOD_MARKER_FILE = `${BRAIN_DIR}/self-mod-marker.json`;
 const BOOT_COUNTER_FILE = `${BRAIN_DIR}/boot-counter`;
 const LAST_GOOD_COMMIT_FILE = `${BRAIN_DIR}/last-good-commit`;
+const QUEUED_MARKER_FILE = `${BRAIN_DIR}/improve-task.queued`;
 
 function defaultState(): BrainState {
   return {
@@ -219,6 +229,39 @@ function pickUpImproveResult(state: BrainState): void {
     const result = JSON.parse(raw);
     log(`Picked up improve result: success=${result.success}, description=${result.description?.slice(0, 100)}`);
 
+    // Route result through queue — find the running item
+    let queueItemId: string | null = null;
+    try {
+      if (existsSync(QUEUED_MARKER_FILE)) {
+        queueItemId = readFileSync(QUEUED_MARKER_FILE, "utf-8").trim();
+      }
+    } catch {}
+
+    if (!queueItemId) {
+      // Fallback: find the single running item
+      const queue = loadQueue();
+      const running = queue.items.find(i => i.status === "running");
+      if (running) queueItemId = running.id;
+    }
+
+    if (queueItemId) {
+      const queueResult = {
+        success: !!result.success,
+        description: result.description || "",
+        prUrl: result.prUrl || undefined,
+        branch: result.branch || undefined,
+        wasRollback: result.wasRollback || undefined,
+      };
+      if (result.success) {
+        completeItem(queueItemId, queueResult);
+      } else {
+        failItem(queueItemId, queueResult);
+      }
+    }
+
+    // Clean up marker file
+    try { if (existsSync(QUEUED_MARKER_FILE)) unlinkSync(QUEUED_MARKER_FILE); } catch {}
+
     // Create meta node from result
     if (result.metaNodeContent) {
       const id = `n_${Math.random().toString(16).slice(2, 10)}`;
@@ -245,10 +288,42 @@ function pickUpImproveResult(state: BrainState): void {
   }
 }
 
+function interceptDirectTask(): void {
+  // Catch task files written by the reflect tick and route through the queue
+  if (!existsSync(IMPROVE_TASK_FILE)) return;
+  if (existsSync(QUEUED_MARKER_FILE)) return; // placed by queue system, don't intercept
+
+  try {
+    const raw = readFileSync(IMPROVE_TASK_FILE, "utf-8");
+    const task = JSON.parse(raw);
+    enqueue(task);
+    unlinkSync(IMPROVE_TASK_FILE);
+    log("Intercepted self-improvement task → queued");
+
+    const cfg = getBrainConfig();
+    if (cfg.selfImproveAutoApprove) {
+      const queue = loadQueue();
+      for (const item of queue.items) {
+        if (item.status === "pending") {
+          try { approveItem(item.id); } catch {}
+        }
+      }
+      log("Auto-approved pending queue items");
+    }
+  } catch (err) {
+    log(`Failed to intercept improve task: ${err}`);
+  }
+}
+
 const SELF_IMPROVE_STALE_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
 function checkAndSpawnImproveWorker(state: BrainState): void {
-  // Case 1: Task file exists but no worker is running — spawn one
+  const cfg = getBrainConfig();
+
+  // Skip all self-improvement if disabled
+  if (!cfg.selfImproveEnabled) return;
+
+  // Case 1: Task file exists (placed by queue system via marker) but no worker running — spawn one
   if (existsSync(IMPROVE_TASK_FILE) && !state.pendingSelfMod) {
     log("Found improve-task.json — spawning self-improve worker");
     state.pendingSelfMod = true;
@@ -259,7 +334,6 @@ function checkAndSpawnImproveWorker(state: BrainState): void {
   }
 
   // Case 2: Worker was spawned but seems stuck (no result after timeout)
-  // This handles container restarts that kill the worker process
   if (state.pendingSelfMod && !existsSync(IMPROVE_RESULT_FILE)) {
     const spawnedAt = state.selfModSpawnedAt || 0;
     const elapsed = Date.now() - spawnedAt;
@@ -274,6 +348,37 @@ function checkAndSpawnImproveWorker(state: BrainState): void {
         state.pendingSelfMod = false;
         state.selfModSpawnedAt = undefined;
         saveState(state);
+      }
+    }
+    return;
+  }
+
+  // Case 3: No worker running, no task file — try to dequeue from approval queue
+  if (!state.pendingSelfMod && !existsSync(IMPROVE_TASK_FILE)) {
+    // Check weekly cap
+    if (getWeeklyCompletedCount() >= cfg.selfImproveMaxPerWeek) {
+      return;
+    }
+
+    // Auto-approve pending items if enabled
+    if (cfg.selfImproveAutoApprove) {
+      const queue = loadQueue();
+      for (const item of queue.items) {
+        if (item.status === "pending") {
+          try { approveItem(item.id); } catch {}
+        }
+      }
+    }
+
+    // Dequeue an approved item
+    const item = dequeueApproved();
+    if (item) {
+      log(`Dequeued approved item ${item.id} — writing task file`);
+      try {
+        writeFileSync(IMPROVE_TASK_FILE, JSON.stringify(item.task, null, 2));
+        writeFileSync(QUEUED_MARKER_FILE, item.id);
+      } catch (err) {
+        log(`Failed to write task file from queue: ${err}`);
       }
     }
   }
@@ -408,6 +513,9 @@ async function tick(
 
   // ── Pick up self-improve results from worker ──
   pickUpImproveResult(state);
+
+  // ── Intercept task files written by reflect tick → route through queue ──
+  interceptDirectTask();
 
   // ── Check for pending self-improve task file (may be created during any tick type) ──
   checkAndSpawnImproveWorker(state);

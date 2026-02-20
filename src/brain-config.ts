@@ -13,6 +13,9 @@ export interface BrainConfig {
   reflectInterval: number;      // ms
   tickInterval: number;         // ms
   preset: string | null;        // preset name or null for custom
+  selfImproveEnabled: boolean;
+  selfImproveAutoApprove: boolean;
+  selfImproveMaxPerWeek: number;
 }
 
 export interface BrainPreset {
@@ -89,6 +92,9 @@ function envDefaults(): BrainConfig {
     reflectInterval: Number(process.env.BRAIN_REFLECT_INTERVAL ?? 43200000),
     tickInterval: Number(process.env.BRAIN_TICK_INTERVAL ?? 60000),
     preset: null,
+    selfImproveEnabled: process.env.SELF_IMPROVE_ENABLED !== "false",
+    selfImproveAutoApprove: process.env.SELF_IMPROVE_AUTO_APPROVE === "true",
+    selfImproveMaxPerWeek: Number(process.env.SELF_IMPROVE_MAX_PER_WEEK ?? 3),
   };
 }
 
