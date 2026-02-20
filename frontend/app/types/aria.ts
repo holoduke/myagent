@@ -198,6 +198,16 @@ export interface BrainConfig {
   selfImproveEnabled: boolean
   selfImproveAutoApprove: boolean
   selfImproveMaxPerWeek: number
+  characterType: string
+  characterCustomPrompt: string | null
+}
+
+export interface CharacterPreset {
+  name: string
+  label: string
+  description: string
+  traits: string
+  voice: string
 }
 
 export interface BrainPreset {
@@ -211,6 +221,7 @@ export interface BrainConfigResponse {
   config: BrainConfig
   activePreset: string | null
   presets: BrainPreset[]
+  characterPresets: CharacterPreset[]
 }
 
 export interface AgentProfile {
