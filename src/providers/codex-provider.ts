@@ -1,15 +1,16 @@
 import { spawn } from "child_process";
 import { appendFileSync } from "fs";
 import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, CodexConfig } from "./types.js";
+import { splitMessage } from "./util.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [codex-provider] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
+  try {
+    const line = `[${new Date().toISOString()}] [codex-provider] ${msg}`;
+    console.log(line);
+    appendFileSync(LOG_FILE, line + "\n");
+  } catch { /* prevent disk errors from crashing */ }
 }
-
-const MAX_WHATSAPP_LENGTH = 4096;
 
 export class CodexProvider implements AIProvider {
   readonly name = "codex";
@@ -54,8 +55,8 @@ export class CodexProvider implements AIProvider {
     let args: string[];
 
     if (this.currentSessionId) {
-      // Resume existing session
-      args = ["resume", this.currentSessionId, "--json"];
+      // Resume existing session with new message
+      args = ["resume", this.currentSessionId, "--json", "-m", message];
       log(`Resuming session: ${this.currentSessionId}`);
     } else {
       // New execution
@@ -83,6 +84,7 @@ export class CodexProvider implements AIProvider {
       let inputTokens = 0;
       let outputTokens = 0;
       let cachedTokens = 0;
+      let numTurns = 0;
       let buffer = "";
       let stderr = "";
 
@@ -103,14 +105,15 @@ export class CodexProvider implements AIProvider {
             } else if (event.type === "item.completed" && event.item?.type === "agent_message") {
               const text = event.item.text || "";
               if (text) {
+                // Each agent_message is standalone — append to full text
+                if (fullText) fullText += "\n";
+                fullText += text;
                 if (streaming && onDelta) {
-                  // Send incremental delta
-                  const delta = text.slice(fullText.length);
-                  if (delta) onDelta(delta);
+                  onDelta(text);
                 }
-                fullText = text;
               }
             } else if (event.type === "turn.completed" && event.usage) {
+              numTurns++;
               inputTokens += event.usage.input_tokens || 0;
               outputTokens += event.usage.output_tokens || 0;
               cachedTokens += event.usage.cached_input_tokens || 0;
@@ -154,7 +157,7 @@ export class CodexProvider implements AIProvider {
           totalCostUsd: 0,
           inputTokens,
           outputTokens,
-          numTurns: 1,
+          numTurns: numTurns || 1,
           provider: "codex",
           model,
           cacheReadTokens: cachedTokens,
@@ -171,33 +174,4 @@ export class CodexProvider implements AIProvider {
       child.stdin.end();
     });
   }
-}
-
-function splitMessage(text: string): string[] {
-  if (text.length <= MAX_WHATSAPP_LENGTH) {
-    return [text];
-  }
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= MAX_WHATSAPP_LENGTH) {
-      chunks.push(remaining);
-      break;
-    }
-
-    let splitIdx = remaining.lastIndexOf("\n", MAX_WHATSAPP_LENGTH);
-    if (splitIdx === -1 || splitIdx < MAX_WHATSAPP_LENGTH / 2) {
-      splitIdx = remaining.lastIndexOf(" ", MAX_WHATSAPP_LENGTH);
-    }
-    if (splitIdx === -1 || splitIdx < MAX_WHATSAPP_LENGTH / 2) {
-      splitIdx = MAX_WHATSAPP_LENGTH;
-    }
-
-    chunks.push(remaining.slice(0, splitIdx));
-    remaining = remaining.slice(splitIdx).trimStart();
-  }
-
-  return chunks;
 }

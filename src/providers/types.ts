@@ -57,7 +57,6 @@ export interface AIProvider {
 
 export interface ProviderAskOptions {
   timeout?: number;
-  systemPrompt?: string;
   noSession?: boolean;
   allowedTools?: string;
 }

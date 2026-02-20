@@ -3,15 +3,16 @@ import { appendFileSync } from "fs";
 import { getSystemPrompt } from "../system-prompt.js";
 import { ensureValidToken } from "../auth-refresh.js";
 import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, ClaudeConfig } from "./types.js";
+import { splitMessage } from "./util.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [claude-provider] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
+  try {
+    const line = `[${new Date().toISOString()}] [claude-provider] ${msg}`;
+    console.log(line);
+    appendFileSync(LOG_FILE, line + "\n");
+  } catch { /* prevent disk errors from crashing */ }
 }
-
-const MAX_WHATSAPP_LENGTH = 4096;
 
 interface ClaudeResponse {
   result: string;
@@ -37,7 +38,7 @@ export class ClaudeProvider implements AIProvider {
   }
 
   async ask(message: string, options: ProviderAskOptions = {}): Promise<AgentResult> {
-    const timeout = options.timeout ?? this.config.timeout ?? Number(process.env.CLAUDE_TIMEOUT) ?? 300_000;
+    const timeout = options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 300_000);
     const allowedTools = options.allowedTools ?? this.config.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
     const noSession = options.noSession ?? false;
 
@@ -61,7 +62,7 @@ export class ClaudeProvider implements AIProvider {
     onDelta: (text: string) => void,
     options: ProviderAskOptions = {},
   ): Promise<AgentResult> {
-    const timeout = options.timeout ?? this.config.timeout ?? Number(process.env.CLAUDE_TIMEOUT) ?? 300_000;
+    const timeout = options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 300_000);
     const allowedTools = options.allowedTools ?? this.config.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
 
     await ensureValidToken();
@@ -341,33 +342,4 @@ export class ClaudeProvider implements AIProvider {
       child.stdin.end();
     });
   }
-}
-
-function splitMessage(text: string): string[] {
-  if (text.length <= MAX_WHATSAPP_LENGTH) {
-    return [text];
-  }
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= MAX_WHATSAPP_LENGTH) {
-      chunks.push(remaining);
-      break;
-    }
-
-    let splitIdx = remaining.lastIndexOf("\n", MAX_WHATSAPP_LENGTH);
-    if (splitIdx === -1 || splitIdx < MAX_WHATSAPP_LENGTH / 2) {
-      splitIdx = remaining.lastIndexOf(" ", MAX_WHATSAPP_LENGTH);
-    }
-    if (splitIdx === -1 || splitIdx < MAX_WHATSAPP_LENGTH / 2) {
-      splitIdx = MAX_WHATSAPP_LENGTH;
-    }
-
-    chunks.push(remaining.slice(0, splitIdx));
-    remaining = remaining.slice(splitIdx).trimStart();
-  }
-
-  return chunks;
 }

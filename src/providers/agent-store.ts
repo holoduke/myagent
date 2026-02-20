@@ -1,13 +1,15 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "fs";
-import { join } from "path";
+import { join, basename } from "path";
 import { appendFileSync } from "fs";
 import type { AgentProfile } from "./types.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [agent-store] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
+  try {
+    const line = `[${new Date().toISOString()}] [agent-store] ${msg}`;
+    console.log(line);
+    appendFileSync(LOG_FILE, line + "\n");
+  } catch { /* prevent disk errors from crashing */ }
 }
 
 const AGENTS_DIR = process.env.AGENTS_DIR || "/data/agents";
@@ -19,8 +21,29 @@ function ensureDir(): void {
   }
 }
 
+/** Sanitize agent ID to prevent path traversal */
+function sanitizeId(id: string): string {
+  // Strip anything that isn't alphanumeric, dash, or underscore
+  return id.replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
 function profilePath(id: string): string {
-  return join(AGENTS_DIR, `${id}.json`);
+  const safe = sanitizeId(id);
+  if (!safe) throw new Error("Invalid agent ID");
+  const full = join(AGENTS_DIR, `${safe}.json`);
+  // Double-check the resolved path stays inside AGENTS_DIR
+  if (!full.startsWith(AGENTS_DIR)) throw new Error("Invalid agent ID");
+  return full;
+}
+
+/** Mask sensitive fields before returning to API callers */
+export function maskSecrets(profile: AgentProfile): AgentProfile {
+  const masked = { ...profile, config: { ...profile.config } };
+  const cfg = masked.config as Record<string, unknown>;
+  if (cfg.apiKey && typeof cfg.apiKey === "string") {
+    cfg.apiKey = cfg.apiKey.slice(0, 4) + "****";
+  }
+  return masked;
 }
 
 export function listAgents(): AgentProfile[] {
@@ -70,8 +93,11 @@ export function getDefaultAgent(): AgentProfile | null {
   return agents.find(a => a.isDefault) || agents[0] || null;
 }
 
-export function setDefault(id: string): void {
+export function setDefault(id: string): boolean {
   const agents = listAgents();
+  const target = agents.find(a => a.id === id);
+  if (!target) return false;
+
   for (const agent of agents) {
     const wasDefault = agent.isDefault;
     agent.isDefault = agent.id === id;
@@ -80,6 +106,7 @@ export function setDefault(id: string): void {
     }
   }
   log(`Set default agent: ${id}`);
+  return true;
 }
 
 export function bootstrapDefaultAgent(): void {

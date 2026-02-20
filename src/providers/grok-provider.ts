@@ -1,15 +1,16 @@
 import { spawn } from "child_process";
 import { appendFileSync } from "fs";
 import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, GrokConfig } from "./types.js";
+import { splitMessage } from "./util.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [grok-provider] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
+  try {
+    const line = `[${new Date().toISOString()}] [grok-provider] ${msg}`;
+    console.log(line);
+    appendFileSync(LOG_FILE, line + "\n");
+  } catch { /* prevent disk errors from crashing */ }
 }
-
-const MAX_WHATSAPP_LENGTH = 4096;
 
 // Keep recent messages for context (Grok has no session support)
 interface HistoryEntry {
@@ -72,7 +73,6 @@ export class GrokProvider implements AIProvider {
     const args = [
       "-p", prompt,
       "-m", model,
-      "-k", apiKey,
     ];
 
     if (this.config.maxToolRounds !== undefined) {
@@ -82,8 +82,9 @@ export class GrokProvider implements AIProvider {
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
 
+      // Pass API key via env var to avoid exposing it in process list
       const child = spawn("grok", args, {
-        env: { ...process.env },
+        env: { ...process.env, XAI_API_KEY: apiKey },
         stdio: ["pipe", "pipe", "pipe"],
       });
 
@@ -120,11 +121,13 @@ export class GrokProvider implements AIProvider {
         const text = stdout.trim() || "No response from Grok.";
         log(`Result: ${text.slice(0, 200)}`);
 
-        // Update history
-        this.history.push({ role: "user", content: message });
-        this.history.push({ role: "assistant", content: text });
-        if (this.history.length > this.maxHistory * 2) {
-          this.history = this.history.slice(-this.maxHistory * 2);
+        // Only store real responses in history, not fallback text
+        if (stdout.trim()) {
+          this.history.push({ role: "user", content: message });
+          this.history.push({ role: "assistant", content: text });
+          if (this.history.length > this.maxHistory * 2) {
+            this.history = this.history.slice(-this.maxHistory * 2);
+          }
         }
 
         const stats: AgentStats = {
@@ -148,33 +151,4 @@ export class GrokProvider implements AIProvider {
       child.stdin.end();
     });
   }
-}
-
-function splitMessage(text: string): string[] {
-  if (text.length <= MAX_WHATSAPP_LENGTH) {
-    return [text];
-  }
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= MAX_WHATSAPP_LENGTH) {
-      chunks.push(remaining);
-      break;
-    }
-
-    let splitIdx = remaining.lastIndexOf("\n", MAX_WHATSAPP_LENGTH);
-    if (splitIdx === -1 || splitIdx < MAX_WHATSAPP_LENGTH / 2) {
-      splitIdx = remaining.lastIndexOf(" ", MAX_WHATSAPP_LENGTH);
-    }
-    if (splitIdx === -1 || splitIdx < MAX_WHATSAPP_LENGTH / 2) {
-      splitIdx = MAX_WHATSAPP_LENGTH;
-    }
-
-    chunks.push(remaining.slice(0, splitIdx));
-    remaining = remaining.slice(splitIdx).trimStart();
-  }
-
-  return chunks;
 }
