@@ -708,6 +708,16 @@ async function handleBrainConfigUpdate(req: IncomingMessage, res: ServerResponse
       if ("enabled" in data && typeof data.enabled === "boolean") {
         update.enabled = data.enabled;
       }
+      // Forward self-improve fields alongside preset
+      if ("selfImproveEnabled" in data && typeof data.selfImproveEnabled === "boolean") {
+        update.selfImproveEnabled = data.selfImproveEnabled;
+      }
+      if ("selfImproveAutoApprove" in data && typeof data.selfImproveAutoApprove === "boolean") {
+        update.selfImproveAutoApprove = data.selfImproveAutoApprove;
+      }
+      if ("selfImproveMaxPerWeek" in data && typeof data.selfImproveMaxPerWeek === "number") {
+        update.selfImproveMaxPerWeek = data.selfImproveMaxPerWeek;
+      }
     } else {
       // Individual field overrides
       update = {};

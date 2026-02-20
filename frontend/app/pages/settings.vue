@@ -163,7 +163,7 @@
           <div v-if="showHistory" class="si-history">
             <div v-if="improveHistory.length === 0" class="si-empty">No history yet</div>
             <div v-for="item in improveHistory.slice(0, 10)" :key="item.id" class="si-history-item">
-              <span class="si-badge" :class="item.status">{{ item.status === 'completed' ? '&check;' : item.status === 'failed' ? '&cross;' : '&mdash;' }}</span>
+              <span class="si-badge" :class="item.status">{{ item.status === 'completed' ? '\u2713' : item.status === 'failed' ? '\u2717' : '\u2014' }}</span>
               <span class="si-history-desc">{{ item.task.description }}</span>
               <a v-if="item.result?.prUrl" :href="item.result.prUrl" target="_blank" class="si-history-pr">PR</a>
               <span class="si-history-time">{{ timeAgo(item.completedAt || item.reviewedAt || item.createdAt) }}</span>
@@ -196,7 +196,6 @@ import type { DashboardData, SelfImprove, BrainConfig, BrainPreset, BrainConfigR
 
 const { api } = useApi()
 const { logout } = useAuth()
-const { fmtDate } = useTimeAgo()
 
 const si = ref<SelfImprove>({ pendingTask: null, lastResult: null, bootCounter: 0, lastGoodCommit: null })
 const loaded = ref(false)
@@ -252,7 +251,7 @@ async function saveBrainConfig() {
   brainSaving.value = true
   try {
     const payload = brainForm.preset
-      ? { preset: brainForm.preset, enabled: brainForm.enabled }
+      ? { preset: brainForm.preset, enabled: brainForm.enabled, selfImproveEnabled: brainForm.selfImproveEnabled, selfImproveAutoApprove: brainForm.selfImproveAutoApprove, selfImproveMaxPerWeek: brainForm.selfImproveMaxPerWeek }
       : { ...toRaw(brainForm) }
     const resp = await api<BrainConfigResponse>('/api/brain-config', { method: 'PUT', body: payload })
     Object.assign(brainForm, resp.config)
@@ -302,14 +301,17 @@ async function handleReject(id: string) {
 
 async function load() {
   try {
-    const [dash, brainResp] = await Promise.all([
+    const [dash, brainResp, queueResp] = await Promise.all([
       api<DashboardData>('/api/dashboard'),
       api<BrainConfigResponse>('/api/brain-config'),
+      api<ImproveQueueResponse>('/api/improve-queue'),
     ])
     si.value = dash.selfImprove || { pendingTask: null, lastResult: null, bootCounter: 0, lastGoodCommit: null }
     Object.assign(brainForm, brainResp.config)
     brainPresets.value = brainResp.presets
-    await loadQueue()
+    improveQueue.value = queueResp.queue
+    improveHistory.value = queueResp.history
+    improveWeeklyCount.value = queueResp.weeklyCount
     loaded.value = true
     error.value = ''
   } catch (e) {
