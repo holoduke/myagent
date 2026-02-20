@@ -184,6 +184,32 @@ export interface ChatStats {
   model?: string
 }
 
+export interface BrainConfig {
+  enabled: boolean
+  maxMessagesPerDay: number
+  minMessageInterval: number
+  quietStart: number
+  quietEnd: number
+  thinkCooldown: number
+  consolidateInterval: number
+  reflectInterval: number
+  tickInterval: number
+  preset: string | null
+}
+
+export interface BrainPreset {
+  name: string
+  label: string
+  description: string
+  values: Partial<BrainConfig>
+}
+
+export interface BrainConfigResponse {
+  config: BrainConfig
+  activePreset: string | null
+  presets: BrainPreset[]
+}
+
 export interface AgentProfile {
   id: string
   name: string

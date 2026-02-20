@@ -25,6 +25,7 @@ import { getDueRecurringTasks, markExecuted } from "./recurring.js";
 import type { RecurringTask } from "./recurring.js";
 import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
 import { ensureSSHKey } from "./ssh.js";
+import { getBrainConfig, getActivePreset } from "./brain-config.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -33,24 +34,13 @@ function log(msg: string) {
   appendFileSync(LOG_FILE, line + "\n");
 }
 
-// Config from env
+// Config from env (non-responsiveness constants)
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
-const TICK_INTERVAL = Number(process.env.BRAIN_TICK_INTERVAL ?? 60000);
-const MAX_MESSAGES_PER_DAY = Number(process.env.BRAIN_MAX_MESSAGES_PER_DAY ?? 5);
-const QUIET_START = Number(process.env.BRAIN_QUIET_START ?? 23);
-const QUIET_END = Number(process.env.BRAIN_QUIET_END ?? 7);
-const MIN_MESSAGE_INTERVAL = Number(process.env.BRAIN_MIN_MESSAGE_INTERVAL ?? 7200000);
 const OWNER_NAME = process.env.OWNER_NAME || "Owner";
 const GITHUB_REPO = process.env.GITHUB_REPO || "";
-const BRAIN_ENABLED = process.env.BRAIN_ENABLED !== "false";
 
 // Tool access for brain ticks (empty string = no tools, comma-separated list = those tools)
 const BRAIN_TOOLS = process.env.BRAIN_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch";
-
-// Tick intervals
-const THINK_COOLDOWN = Number(process.env.BRAIN_THINK_COOLDOWN ?? 300000);        // 5 min
-const CONSOLIDATE_INTERVAL = Number(process.env.BRAIN_CONSOLIDATE_INTERVAL ?? 14400000); // 4 hours
-const REFLECT_INTERVAL = Number(process.env.BRAIN_REFLECT_INTERVAL ?? 43200000);    // 12 hours
 const TIME_AWARENESS_INTERVAL = 30 * 60 * 1000; // 30 min — think even without observations
 
 // Urgency bypass
@@ -364,7 +354,9 @@ export function startBrainLoop(
   queue: MessageQueue,
   sendMessage: (jid: string, text: string) => Promise<void>,
 ): void {
-  if (!BRAIN_ENABLED) {
+  const cfg = getBrainConfig();
+
+  if (!cfg.enabled) {
     log("Brain is disabled (BRAIN_ENABLED=false)");
     return;
   }
@@ -378,13 +370,13 @@ export function startBrainLoop(
   migrateNotebook(graph);
   bootstrapIdentity(graph);
 
-  log(`Brain loop starting (tick every ${TICK_INTERVAL / 1000}s, think cooldown ${THINK_COOLDOWN / 1000}s, consolidate every ${CONSOLIDATE_INTERVAL / 3600000}h, reflect every ${REFLECT_INTERVAL / 3600000}h)`);
+  log(`Brain loop starting (tick every ${cfg.tickInterval / 1000}s, think cooldown ${cfg.thinkCooldown / 1000}s, consolidate every ${cfg.consolidateInterval / 3600000}h, reflect every ${cfg.reflectInterval / 3600000}h)`);
 
   brainInterval = setInterval(() => {
     tick(queue, sendMessage, ownerJid).catch((err) => {
       log(`Tick error: ${err}`);
     });
-  }, TICK_INTERVAL);
+  }, cfg.tickInterval);
 
   // Run initial tick after delay for WhatsApp to connect
   setTimeout(() => {
@@ -409,6 +401,7 @@ async function tick(
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
 ): Promise<void> {
+  const cfg = getBrainConfig();
   const state = loadState();
   const now = Date.now();
   const today = todayStr();
@@ -475,13 +468,13 @@ async function tick(
   const urgency = getPendingUrgency();
   const urgentBypass = urgency >= URGENCY_BYPASS_THRESHOLD && timeSinceThink >= URGENCY_MIN_COOLDOWN;
   if (urgentBypass) {
-    log(`Urgency bypass: score ${urgency.toFixed(2)} >= ${URGENCY_BYPASS_THRESHOLD}, bypassing ${THINK_COOLDOWN / 1000}s cooldown`);
+    log(`Urgency bypass: score ${urgency.toFixed(2)} >= ${URGENCY_BYPASS_THRESHOLD}, bypassing ${cfg.thinkCooldown / 1000}s cooldown`);
   }
 
   // Initiative-triggered think
   const initiativeTriggered = highPrioritySignals.length > 0
     && !hasNewObs
-    && timeSinceThink >= THINK_COOLDOWN
+    && timeSinceThink >= cfg.thinkCooldown
     && canTriggerInitiativeThink();
 
   // Defer to owner messages — skip if queue is busy
@@ -493,14 +486,14 @@ async function tick(
 
   let tickSucceeded = false;
 
-  if (timeSinceReflect >= REFLECT_INTERVAL && graph.nodeCount > 0) {
+  if (timeSinceReflect >= cfg.reflectInterval && graph.nodeCount > 0) {
     await reflectTick(state, queue, sendMessage, ownerJid, signals);
     tickSucceeded = true;
-  } else if (timeSinceConsolidate >= CONSOLIDATE_INTERVAL && graph.nodeCount > 0) {
+  } else if (timeSinceConsolidate >= cfg.consolidateInterval && graph.nodeCount > 0) {
     await consolidateTick(state, queue);
     tickSucceeded = true;
   } else if (
-    (hasNewObs && timeSinceThink >= THINK_COOLDOWN) ||
+    (hasNewObs && timeSinceThink >= cfg.thinkCooldown) ||
     (hasNewObs && urgentBypass) ||
     timeSinceThink >= TIME_AWARENESS_INTERVAL ||
     initiativeTriggered
@@ -707,6 +700,8 @@ async function thinkTick(
 
   log(`Think: ${allObs.length} observations, ${contextNodes.length} context nodes, ${initiativeSignals.length} initiative signals`);
 
+  const cfg = getBrainConfig();
+
   const prompt = buildThinkPrompt({
     ownerName: OWNER_NAME,
     githubRepo: GITHUB_REPO,
@@ -717,11 +712,12 @@ async function thinkTick(
     lastThinkTime: state.lastThinkTick,
     lastMessageTime: state.lastMessageTime,
     messagesToday: state.messagesToday,
-    maxMessagesPerDay: MAX_MESSAGES_PER_DAY,
-    quietStart: QUIET_START,
-    quietEnd: QUIET_END,
+    maxMessagesPerDay: cfg.maxMessagesPerDay,
+    quietStart: cfg.quietStart,
+    quietEnd: cfg.quietEnd,
     goalsSection,
     initiativeSignals,
+    responsivenessPreset: getActivePreset(cfg),
   });
 
   try {
@@ -890,6 +886,8 @@ async function reflectTick(
   const goalsSection = goalTracker.serializeForPrompt();
   wm.activeGoals = goalTracker.getWorkingGoalRefs();
 
+  const cfg = getBrainConfig();
+
   log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals`);
 
   const prompt = buildReflectPrompt({
@@ -901,11 +899,12 @@ async function reflectTick(
     stats,
     lastMessageTime: state.lastMessageTime,
     messagesToday: state.messagesToday,
-    maxMessagesPerDay: MAX_MESSAGES_PER_DAY,
-    quietStart: QUIET_START,
-    quietEnd: QUIET_END,
+    maxMessagesPerDay: cfg.maxMessagesPerDay,
+    quietStart: cfg.quietStart,
+    quietEnd: cfg.quietEnd,
     goalsSection,
     initiativeSignals,
+    responsivenessPreset: getActivePreset(cfg),
   });
 
   try {
@@ -1041,11 +1040,12 @@ async function trySendMessage(
   message: string,
   options?: { bypassLimits?: boolean },
 ): Promise<void> {
+  const cfg = getBrainConfig();
   const now = Date.now();
   const currentHour = new Date().getHours();
-  const isQuiet = currentHour >= QUIET_START || currentHour < QUIET_END;
-  const messageIntervalOk = (now - state.lastMessageTime) >= MIN_MESSAGE_INTERVAL;
-  const underDailyLimit = state.messagesToday < MAX_MESSAGES_PER_DAY;
+  const isQuiet = cfg.quietStart !== cfg.quietEnd && (currentHour >= cfg.quietStart || currentHour < cfg.quietEnd);
+  const messageIntervalOk = (now - state.lastMessageTime) >= cfg.minMessageInterval;
+  const underDailyLimit = state.messagesToday < cfg.maxMessagesPerDay;
   const bypass = options?.bypassLimits === true;
 
   if (!bypass && isQuiet) {
@@ -1053,7 +1053,7 @@ async function trySendMessage(
   } else if (!bypass && !messageIntervalOk) {
     log(`Suppressed message: too soon (${Math.round((now - state.lastMessageTime) / 60000)}m since last)`);
   } else if (!bypass && !underDailyLimit) {
-    log(`Suppressed message: daily limit reached (${state.messagesToday}/${MAX_MESSAGES_PER_DAY})`);
+    log(`Suppressed message: daily limit reached (${state.messagesToday}/${cfg.maxMessagesPerDay})`);
   } else {
     try {
       if (bypass) log("Briefing message — bypassing rate limits");
