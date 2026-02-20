@@ -585,11 +585,9 @@ async function tick(
   let tickSucceeded = false;
 
   if (timeSinceReflect >= cfg.reflectInterval && graph.nodeCount > 0) {
-    await reflectTick(state, queue, sendMessage, ownerJid, signals);
-    tickSucceeded = true;
+    tickSucceeded = await reflectTick(state, queue, sendMessage, ownerJid, signals);
   } else if (timeSinceConsolidate >= cfg.consolidateInterval && graph.nodeCount > 0) {
-    await consolidateTick(state, queue);
-    tickSucceeded = true;
+    tickSucceeded = await consolidateTick(state, queue);
   } else if (
     (hasNewObs && timeSinceThink >= cfg.thinkCooldown) ||
     (hasNewObs && urgentBypass) ||
@@ -600,8 +598,7 @@ async function tick(
       recordInitiativeThink();
       log(`Initiative-triggered think (${highPrioritySignals.length} high-priority signals)`);
     }
-    await thinkTick(state, newObs, queue, sendMessage, ownerJid, signals);
-    tickSucceeded = true;
+    tickSucceeded = await thinkTick(state, newObs, queue, sendMessage, ownerJid, signals);
   } else {
     // Nothing to do this tick
     saveState(state);
@@ -612,7 +609,10 @@ async function tick(
   clearPendingUrgency();
 
   // ── Track success/failure for health ──
-  if (tickSucceeded) {
+  if (!tickSucceeded) {
+    state.consecutiveFailures++;
+    log(`Tick failed (${state.consecutiveFailures} consecutive failures)`);
+  } else {
     state.consecutiveFailures = 0;
     state.lastSuccessfulTick = now;
 
@@ -777,7 +777,7 @@ async function thinkTick(
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
   initiativeSignals: import("./initiative.js").InitiativeSignal[] = [],
-): Promise<void> {
+): Promise<boolean> {
   const now = Date.now();
 
   // Get all pending observations (may include buffered from previous observe ticks)
@@ -834,7 +834,7 @@ async function thinkTick(
       log("Could not parse think response, skipping");
       state.lastThinkTick = now;
       graph.clearPendingObservations();
-      return;
+      return false;
     }
 
     log(`Think reasoning: ${response.reasoning?.slice(0, 200) || "(none)"}`);
@@ -877,11 +877,13 @@ async function thinkTick(
     graph.clearPendingObservations();
 
     log(`Think #${state.totalThinks} complete (${graph.nodeCount} nodes, ${graph.edgeCount} edges, lifetime cost: $${state.totalCost.toFixed(4)})`);
+    return true;
   } catch (err) {
     log(`Think failed: ${err}`);
     state.lastThinkTick = now;
     state.lastObservationTime = now;
     graph.clearPendingObservations();
+    return false;
   }
 }
 
@@ -890,7 +892,7 @@ async function thinkTick(
 async function consolidateTick(
   state: BrainState,
   queue: MessageQueue,
-): Promise<void> {
+): Promise<boolean> {
   const now = Date.now();
 
   // Run automatic decay first (free)
@@ -906,7 +908,7 @@ async function consolidateTick(
   if (weakNodes.length === 0 && orphanNodes.length === 0 && duplicateCandidates.length === 0) {
     log("Consolidate: nothing for Claude to review, decay-only cycle");
     state.lastConsolidateTick = now;
-    return;
+    return true;
   }
 
   log(`Consolidate: ${weakNodes.length} weak, ${orphanNodes.length} orphans, ${duplicateCandidates.length} duplicates → calling Claude`);
@@ -937,7 +939,7 @@ async function consolidateTick(
     if (!response) {
       log("Could not parse consolidate response");
       state.lastConsolidateTick = now;
-      return;
+      return false;
     }
 
     log(`Consolidate reasoning: ${response.reasoning?.slice(0, 200) || "(none)"}`);
@@ -958,9 +960,11 @@ async function consolidateTick(
     }
 
     log(`Consolidate complete (${graph.nodeCount} nodes, ${graph.edgeCount} edges)`);
+    return true;
   } catch (err) {
     log(`Consolidate failed: ${err}`);
     state.lastConsolidateTick = now;
+    return false;
   }
 }
 
@@ -972,7 +976,7 @@ async function reflectTick(
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
   initiativeSignals: import("./initiative.js").InitiativeSignal[] = [],
-): Promise<void> {
+): Promise<boolean> {
   const now = Date.now();
   const wm = loadWorkingMemory();
   populateTemporalContext(wm);
@@ -1020,7 +1024,7 @@ async function reflectTick(
     if (!response) {
       log("Could not parse reflect response");
       state.lastReflectTick = now;
-      return;
+      return false;
     }
 
     log(`Reflect reasoning: ${response.reasoning?.slice(0, 300) || "(none)"}`);
@@ -1051,9 +1055,11 @@ async function reflectTick(
     }
 
     log(`Reflect complete (${graph.nodeCount} nodes, ${graph.edgeCount} edges)`);
+    return true;
   } catch (err) {
     log(`Reflect failed: ${err}`);
     state.lastReflectTick = now;
+    return false;
   }
 }
 

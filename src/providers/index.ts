@@ -13,6 +13,7 @@ export { listAgents, getAgent, saveAgent, deleteAgent, getDefaultAgent, setDefau
 
 let cachedDefaultProvider: AIProvider | null = null;
 let cachedClaudeProvider: ClaudeProvider | null = null;
+let savedSessionId: string | null = null;
 
 export function createProvider(profile: AgentProfile): AIProvider {
   switch (profile.provider) {
@@ -36,6 +37,13 @@ export function getDefaultProvider(): AIProvider {
     throw new Error("No agent profiles configured");
   }
   cachedDefaultProvider = createProvider(profile);
+
+  // Restore session ID from before invalidation so chat doesn't lose context
+  if (savedSessionId && cachedDefaultProvider instanceof ClaudeProvider) {
+    cachedDefaultProvider.restoreSession(savedSessionId);
+    savedSessionId = null;
+  }
+
   return cachedDefaultProvider;
 }
 
@@ -46,6 +54,10 @@ export function getClaudeProvider(): ClaudeProvider {
 }
 
 export function invalidateProviderCache(): void {
+  // Preserve session ID before destroying provider so chat doesn't lose context
+  if (cachedDefaultProvider && cachedDefaultProvider instanceof ClaudeProvider) {
+    savedSessionId = cachedDefaultProvider.getSessionId();
+  }
   cachedDefaultProvider = null;
   // Note: cachedClaudeProvider is NOT invalidated — brain/self-improve keep their session
 }
