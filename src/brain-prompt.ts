@@ -243,6 +243,28 @@ Priority: 1=critical, 2=important, 3=nice-to-have. Goals persist in your memory 
 
 // ── Think Prompt ──
 
+function responsivenessDirective(preset: string | null | undefined): string {
+  switch (preset) {
+    case "silent":
+      return `\n═══ RESPONSIVENESS: SILENT ═══
+${"\n"}Your owner has set you to SILENT mode. They do NOT want proactive messages right now.
+Think, observe, update memory — but do NOT send messages. Set message to null always.
+Respect this boundary. Your owner will talk to you directly when they want to interact.\n`;
+    case "quiet":
+      return `\n═══ RESPONSIVENESS: QUIET ═══
+${"\n"}Your owner has set you to QUIET mode. They want very few proactive messages.
+Only message for genuinely important things — something urgent, a direct follow-up they asked for, or something truly remarkable.
+Most of the time, just think silently. Save your messages for when they really matter.\n`;
+    case "active":
+      return `\n═══ RESPONSIVENESS: ACTIVE ═══
+${"\n"}Your owner has set you to ACTIVE mode. They welcome your proactive engagement.
+Feel free to share thoughts, observations, and reactions more freely. Be conversational.\n`;
+    default:
+      // "normal" or custom — no extra directive, the numeric limits speak for themselves
+      return "";
+  }
+}
+
 export interface ThinkContext {
   ownerName: string;
   githubRepo?: string;
@@ -258,6 +280,7 @@ export interface ThinkContext {
   quietEnd: number;
   goalsSection?: string;
   initiativeSignals?: InitiativeSignal[];
+  responsivenessPreset?: string | null;
 }
 
 export function buildThinkPrompt(ctx: ThinkContext): string {
@@ -286,7 +309,7 @@ Last think: ${timeAgo(ctx.lastThinkTime)}
 Last message to ${ctx.ownerName}: ${timeAgo(ctx.lastMessageTime)}
 Messages today: ${ctx.messagesToday}/${ctx.maxMessagesPerDay}
 Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — do NOT message" : "inactive"})
-
+${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
 ${goalsBlock}${initiativeBlock}
@@ -415,6 +438,7 @@ export interface ReflectContext {
   quietEnd: number;
   goalsSection?: string;
   initiativeSignals?: InitiativeSignal[];
+  responsivenessPreset?: string | null;
 }
 
 export function buildReflectPrompt(ctx: ReflectContext): string {
@@ -445,7 +469,7 @@ Time: ${now.toISOString()} (${dayNames[now.getDay()]}, ${formatTime(Date.now())}
 Last message to ${ctx.ownerName}: ${timeAgo(ctx.lastMessageTime)}
 Messages today: ${ctx.messagesToday}/${ctx.maxMessagesPerDay}
 Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — do NOT message" : "inactive"})
-
+${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
 ${goalsBlock}${initiativeBlock}

@@ -25,7 +25,7 @@ import { getDueRecurringTasks, markExecuted } from "./recurring.js";
 import type { RecurringTask } from "./recurring.js";
 import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
 import { ensureSSHKey } from "./ssh.js";
-import { getBrainConfig } from "./brain-config.js";
+import { getBrainConfig, getActivePreset } from "./brain-config.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -717,6 +717,7 @@ async function thinkTick(
     quietEnd: cfg.quietEnd,
     goalsSection,
     initiativeSignals,
+    responsivenessPreset: getActivePreset(cfg),
   });
 
   try {
@@ -903,6 +904,7 @@ async function reflectTick(
     quietEnd: cfg.quietEnd,
     goalsSection,
     initiativeSignals,
+    responsivenessPreset: getActivePreset(cfg),
   });
 
   try {
