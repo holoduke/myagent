@@ -10,14 +10,17 @@ import {
   createProvider,
   invalidateProviderCache,
 } from "../providers/index.js";
+import { maskSecrets } from "../providers/agent-store.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { AgentProfile } from "../providers/types.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [agents-api] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
+  try {
+    const line = `[${new Date().toISOString()}] [agents-api] ${msg}`;
+    console.log(line);
+    appendFileSync(LOG_FILE, line + "\n");
+  } catch { /* prevent disk errors from crashing */ }
 }
 
 function json(res: ServerResponse, status: number, data: unknown): void {
@@ -40,7 +43,7 @@ export function handleAgentRoutes(
 
   // GET /api/agents — list all
   if (pathname === "/api/agents" && req.method === "GET") {
-    json(res, 200, listAgents());
+    json(res, 200, listAgents().map(maskSecrets));
     return true;
   }
 
@@ -50,7 +53,7 @@ export function handleAgentRoutes(
     if (!agent) {
       json(res, 404, { error: "No agents configured" });
     } else {
-      json(res, 200, agent);
+      json(res, 200, maskSecrets(agent));
     }
     return true;
   }
@@ -71,7 +74,7 @@ export function handleAgentRoutes(
       if (!agent) {
         json(res, 404, { error: "Agent not found" });
       } else {
-        json(res, 200, agent);
+        json(res, 200, maskSecrets(agent));
       }
       return true;
     }
@@ -83,8 +86,12 @@ export function handleAgentRoutes(
 
     if (req.method === "DELETE") {
       const deleted = deleteAgent(id);
+      if (!deleted) {
+        json(res, 404, { error: "Agent not found" });
+        return true;
+      }
       invalidateProviderCache();
-      json(res, 200, { success: deleted });
+      json(res, 200, { success: true });
       return true;
     }
   }
@@ -142,7 +149,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse) {
     }
     invalidateProviderCache();
     log(`Created agent: ${id}`);
-    json(res, 201, profile);
+    json(res, 201, maskSecrets(profile));
   } catch {
     json(res, 400, { error: "Invalid request" });
   }
@@ -169,7 +176,7 @@ async function handleUpdate(req: IncomingMessage, res: ServerResponse, id: strin
     }
     invalidateProviderCache();
     log(`Updated agent: ${id}`);
-    json(res, 200, existing);
+    json(res, 200, maskSecrets(existing));
   } catch {
     json(res, 400, { error: "Invalid request" });
   }
