@@ -7,6 +7,49 @@
     </div>
 
     <template v-else-if="loaded">
+      <!-- Character Type -->
+      <UiCard title="Character" :icon="icons.character" style="margin-bottom:16px">
+        <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">Choose a personality preset or write your own.</div>
+        <div class="ch-presets">
+          <button
+            v-for="p in characterPresets"
+            :key="p.name"
+            class="ch-preset"
+            :class="{ active: characterType === p.name }"
+            @click="selectCharacter(p.name)"
+          >
+            <div class="ch-preset-name">{{ p.label }}</div>
+            <div class="ch-preset-desc">{{ p.description }}</div>
+          </button>
+          <button
+            class="ch-preset"
+            :class="{ active: characterType === 'custom' }"
+            @click="selectCharacter('custom')"
+          >
+            <div class="ch-preset-name">Custom</div>
+            <div class="ch-preset-desc">Write your own personality description.</div>
+          </button>
+        </div>
+        <div v-if="characterType === 'custom'" style="margin-top:8px">
+          <textarea
+            v-model="characterCustomPrompt"
+            rows="6"
+            class="intg-input"
+            style="width:100%;resize:vertical;font-size:12px;font-family:var(--mono)"
+            placeholder="Describe the personality traits and voice..."
+            @input="characterDirty = true"
+          />
+        </div>
+        <div class="br-footer">
+          <div class="br-status">
+            {{ characterType === 'custom' ? 'Custom personality' : `Preset: ${characterPresets.find(p => p.name === characterType)?.label || characterType}` }}
+          </div>
+          <button v-if="characterDirty" class="btn primary" :disabled="characterSaving" @click="saveCharacter">
+            {{ characterSaving ? 'Saving...' : 'Save' }}
+          </button>
+        </div>
+      </UiCard>
+
       <!-- Brain Responsiveness -->
       <UiCard title="Brain Responsiveness" :icon="icons.brain" style="margin-bottom:16px">
         <!-- Enable toggle -->
@@ -192,7 +235,7 @@
 </template>
 
 <script setup lang="ts">
-import type { DashboardData, SelfImprove, BrainConfig, BrainPreset, BrainConfigResponse, ImproveQueueItem, ImproveQueueResponse } from '~/types/aria'
+import type { DashboardData, SelfImprove, BrainConfig, BrainPreset, BrainConfigResponse, CharacterPreset, ImproveQueueItem, ImproveQueueResponse } from '~/types/aria'
 
 const { api } = useApi()
 const { logout } = useAuth()
@@ -222,6 +265,13 @@ const brainDirty = ref(false)
 const brainSaving = ref(false)
 const showAdvanced = ref(false)
 
+// Character state
+const characterPresets = ref<CharacterPreset[]>([])
+const characterType = ref('default')
+const characterCustomPrompt = ref('')
+const characterDirty = ref(false)
+const characterSaving = ref(false)
+
 // Improve queue state
 const improveQueue = ref<ImproveQueueItem[]>([])
 const improveHistory = ref<ImproveQueueItem[]>([])
@@ -229,6 +279,7 @@ const improveWeeklyCount = ref(0)
 const showHistory = ref(false)
 
 const icons = {
+  character: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 10-16 0"/></svg>',
   brain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4 7l1 1.5V21h4v-3.5L15 16c2-1.5 4-4 4-7a7 7 0 0 0-7-7z"/><line x1="10" y1="21" x2="14" y2="21"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
   logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
@@ -240,6 +291,32 @@ function selectPreset(name: string) {
   Object.assign(brainForm, preset.values)
   brainForm.preset = name
   brainDirty.value = true
+}
+
+function selectCharacter(name: string) {
+  characterType.value = name
+  characterDirty.value = true
+}
+
+async function saveCharacter() {
+  characterSaving.value = true
+  try {
+    const payload: Record<string, string | null> = { characterType: characterType.value }
+    if (characterType.value === 'custom') {
+      payload.characterCustomPrompt = characterCustomPrompt.value
+    } else {
+      payload.characterCustomPrompt = null
+    }
+    const resp = await api<BrainConfigResponse>('/api/brain-config', { method: 'PUT', body: payload })
+    characterType.value = resp.config.characterType || 'default'
+    characterCustomPrompt.value = resp.config.characterCustomPrompt || ''
+    characterPresets.value = resp.characterPresets
+    characterDirty.value = false
+  } catch (e) {
+    console.error('Failed to save character:', e)
+  } finally {
+    characterSaving.value = false
+  }
 }
 
 function onAdvancedChange() {
@@ -309,6 +386,9 @@ async function load() {
     si.value = dash.selfImprove || { pendingTask: null, lastResult: null, bootCounter: 0, lastGoodCommit: null }
     Object.assign(brainForm, brainResp.config)
     brainPresets.value = brainResp.presets
+    characterPresets.value = brainResp.characterPresets || []
+    characterType.value = brainResp.config.characterType || 'default'
+    characterCustomPrompt.value = brainResp.config.characterCustomPrompt || ''
     improveQueue.value = queueResp.queue
     improveHistory.value = queueResp.history
     improveWeeklyCount.value = queueResp.weeklyCount
@@ -330,6 +410,46 @@ onMounted(load)
   overflow-y: auto;
   padding: 24px;
   animation: fadeSection .2s ease;
+}
+
+/* ── Character Presets ── */
+.ch-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.ch-preset {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 10px;
+  cursor: pointer;
+  transition: all .15s;
+  text-align: left;
+}
+.ch-preset:hover {
+  border-color: var(--border-glow);
+  background: var(--bg-surface);
+}
+.ch-preset.active {
+  border-color: var(--accent);
+  background: rgba(168,85,247,0.06);
+  box-shadow: 0 0 8px rgba(168,85,247,0.1);
+}
+.ch-preset-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.ch-preset.active .ch-preset-name {
+  color: var(--accent-warm);
+}
+.ch-preset-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
 }
 
 /* ── Brain Responsiveness ── */
@@ -598,6 +718,7 @@ onMounted(load)
 
 @media (max-width: 768px) {
   .section { padding: 16px 12px; }
+  .ch-presets { grid-template-columns: repeat(2, 1fr); }
   .br-presets { grid-template-columns: repeat(2, 1fr); }
   .br-adv { grid-template-columns: 1fr; }
 }
