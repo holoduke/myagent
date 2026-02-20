@@ -1,6 +1,7 @@
 import { IncomingMessage, ServerResponse } from "http";
 import { readFileSync, existsSync, appendFileSync } from "fs";
-import { askClaudeStreaming, resetSession } from "../claude.js";
+import { resetSession } from "../claude.js";
+import { getDefaultProvider } from "../providers/index.js";
 import { MessageQueue } from "../queue.js";
 import { getHistory, addMessage, clearHistory, getUsageStats, getUsageData } from "../history.js";
 import { syncContacts, findContacts, getAllContacts, getWhatsAppStatus } from "../whatsapp.js";
@@ -367,13 +368,25 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, queue: Mess
 
         res.write(`data: ${JSON.stringify({ type: "start" })}\n\n`);
 
+        const provider = getDefaultProvider();
         let fullResponse = "";
-        const result = await askClaudeStreaming(message, (delta) => {
-          fullResponse += delta;
+        let result;
+
+        if (provider.supportsStreaming) {
+          result = await provider.askStreaming(message, (delta) => {
+            fullResponse += delta;
+            if (!res.writableEnded) {
+              res.write(`data: ${JSON.stringify({ type: "delta", text: delta })}\n\n`);
+            }
+          }, {});
+        } else {
+          // Non-streaming provider: run blocking then emit full response
+          result = await provider.ask(message, {});
+          fullResponse = result.messages.join("\n");
           if (!res.writableEnded) {
-            res.write(`data: ${JSON.stringify({ type: "delta", text: delta })}\n\n`);
+            res.write(`data: ${JSON.stringify({ type: "delta", text: fullResponse })}\n\n`);
           }
-        });
+        }
 
         addMessage({
           role: "assistant",

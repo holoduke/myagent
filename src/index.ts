@@ -2,7 +2,8 @@ import "dotenv/config";
 import { appendFileSync, readFileSync, existsSync } from "fs";
 import { createServer } from "http";
 import { startWhatsApp, sendMessage, sendReaction, getLatestQr } from "./whatsapp.js";
-import { askClaude, resetSession } from "./claude.js";
+import { resetSession } from "./claude.js";
+import { getDefaultProvider, bootstrapDefaultAgent } from "./providers/index.js";
 import { MessageQueue } from "./queue.js";
 import { handleWebRoutes } from "./web.js";
 import { addMessage, clearHistory, getUsageStats } from "./history.js";
@@ -32,6 +33,9 @@ async function main() {
     console.error("OWNER_PHONE is not set in .env");
     process.exit(1);
   }
+
+  // Bootstrap default agent profile on first boot
+  bootstrapDefaultAgent();
 
   // Start background OAuth token refresh loop
   startTokenRefreshLoop();
@@ -201,9 +205,10 @@ async function main() {
           // Save user message to history
           addMessage({ role: "user", content: text, timestamp: Date.now(), source: "whatsapp" });
 
-          log(`Calling Claude with: "${text.slice(0, 80)}"`);
-          const result = await askClaude(text);
-          log(`Claude returned ${result.messages.length} chunk(s), first 200 chars: ${result.messages[0]?.slice(0, 200)}`);
+          const provider = getDefaultProvider();
+          log(`Calling ${provider.name} with: "${text.slice(0, 80)}"`);
+          const result = await provider.ask(text, {});
+          log(`${provider.name} returned ${result.messages.length} chunk(s), first 200 chars: ${result.messages[0]?.slice(0, 200)}`);
 
           // Save assistant response to history
           addMessage({ role: "assistant", content: result.messages.join("\n"), timestamp: Date.now(), source: "whatsapp" });
