@@ -283,8 +283,8 @@ function getAriaStatus(): Record<string, unknown> {
     const nf = `${BRAIN_DIR}/graph/nodes.json`;
     const ef = `${BRAIN_DIR}/graph/edges.json`;
     if (existsSync(nf)) {
-      const nodes = JSON.parse(readFileSync(nf, "utf-8")) as Record<string, MemoryNode>;
-      const nodeList = Object.values(nodes);
+      const nodesRaw = JSON.parse(readFileSync(nf, "utf-8")) as Record<string, MemoryNode>;
+      const nodeList = Object.values(nodesRaw).filter((n): n is MemoryNode => n != null && typeof n === "object" && typeof n.id === "string");
       const edges: MemoryEdge[] = existsSync(ef) ? JSON.parse(readFileSync(ef, "utf-8")) : [];
 
       const byType: Record<string, number> = {};
@@ -294,17 +294,17 @@ function getAriaStatus(): Record<string, unknown> {
         totalStrength += n.strength;
       }
 
-      const pinned = nodeList.filter(n => n.pinned).sort((a, b) => b.strength - a.strength);
+      const pinned = nodeList.filter(n => n.pinned).sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0));
       const strongest = nodeList
         .filter(n => !n.pinned)
-        .sort((a, b) => b.strength - a.strength)
+        .sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0))
         .slice(0, 20);
       const weakest = nodeList
-        .filter(n => !n.pinned && n.strength < 0.2)
-        .sort((a, b) => a.strength - b.strength)
+        .filter(n => !n.pinned && (n.strength ?? 0) < 0.2)
+        .sort((a, b) => (a.strength ?? 0) - (b.strength ?? 0))
         .slice(0, 10);
       const recent = [...nodeList]
-        .sort((a, b) => b.createdAt - a.createdAt)
+        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
         .slice(0, 10);
 
       status.graph = {
@@ -312,13 +312,15 @@ function getAriaStatus(): Record<string, unknown> {
         edgeCount: edges.length,
         byType,
         avgStrength: nodeList.length > 0 ? totalStrength / nodeList.length : 0,
-        pinnedNodes: pinned.map(n => ({ id: n.id, type: n.type, content: n.content, tags: n.tags, strength: n.strength })),
-        strongestNodes: strongest.map(n => ({ id: n.id, type: n.type, content: n.content, tags: n.tags, strength: n.strength, accessCount: n.accessCount })),
-        weakestNodes: weakest.map(n => ({ id: n.id, type: n.type, content: n.content, strength: n.strength })),
-        recentNodes: recent.map(n => ({ id: n.id, type: n.type, content: n.content, tags: n.tags, strength: n.strength, createdAt: n.createdAt })),
+        pinnedNodes: pinned.map(n => ({ id: n.id, type: n.type, content: n.content || "", tags: n.tags || [], strength: n.strength ?? 0 })),
+        strongestNodes: strongest.map(n => ({ id: n.id, type: n.type, content: n.content || "", tags: n.tags || [], strength: n.strength ?? 0, accessCount: n.accessCount ?? 0 })),
+        weakestNodes: weakest.map(n => ({ id: n.id, type: n.type, content: n.content || "", strength: n.strength ?? 0 })),
+        recentNodes: recent.map(n => ({ id: n.id, type: n.type, content: n.content || "", tags: n.tags || [], strength: n.strength ?? 0, createdAt: n.createdAt ?? 0 })),
       };
     }
-  } catch {}
+  } catch (err) {
+    log(`Failed to load graph for status: ${err}`);
+  }
 
   try {
     const taskFile = `${BRAIN_DIR}/improve-task.json`;
@@ -636,6 +638,10 @@ async function handleBrainConfigUpdate(req: IncomingMessage, res: ServerResponse
         return;
       }
       update = { ...preset.values, preset: data.preset };
+      // Respect explicit enabled override alongside preset
+      if ("enabled" in data && typeof data.enabled === "boolean") {
+        update.enabled = data.enabled;
+      }
     } else {
       // Individual field overrides
       update = {};
