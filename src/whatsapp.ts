@@ -94,6 +94,11 @@ export function getWhatsAppStatus(): { connected: boolean; contactCount: number 
   };
 }
 
+/** Check if WhatsApp socket is connected and ready to send messages. */
+export function isWhatsAppConnected(): boolean {
+  return isConnected && !!sock;
+}
+
 export async function startWhatsApp(
   onMessage: MessageHandler,
   onObservation?: ObservationHandler,
