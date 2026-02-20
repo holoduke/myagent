@@ -1,5 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { ariaPersonality } from "./aria-identity.js";
+import type { CharacterOverride } from "./aria-identity.js";
+import { getBrainConfig, getCharacterPreset } from "./brain-config.js";
 import type { MemoryNode, WorkingMemory } from "./memory/types.js";
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
@@ -54,10 +56,23 @@ function loadMemoryContext(): string {
   return `\n═══ YOUR CURRENT MEMORY STATE ═══\n\n${parts.join("\n\n")}`;
 }
 
+function resolveCharacter(): CharacterOverride | undefined {
+  const cfg = getBrainConfig();
+  if (cfg.characterType === "custom" && cfg.characterCustomPrompt) {
+    return { traits: cfg.characterCustomPrompt, voice: "" };
+  }
+  if (cfg.characterType && cfg.characterType !== "default") {
+    const preset = getCharacterPreset(cfg.characterType);
+    if (preset) return { traits: preset.traits, voice: preset.voice };
+  }
+  return undefined;
+}
+
 export function getSystemPrompt(): string {
   const memoryContext = loadMemoryContext();
+  const character = resolveCharacter();
 
-  return `${ariaPersonality(OWNER_NAME, GITHUB_REPO)}
+  return `${ariaPersonality(OWNER_NAME, GITHUB_REPO, character)}
 ${memoryContext}
 
 ═══ INTERACTIVE CONVERSATION MODE ═══
