@@ -11,7 +11,8 @@ import { getAccountStatus, addAccount, removeAccount } from "../gmail.js";
 import { getLatestQr } from "../whatsapp.js";
 import { getSSHStatus, getPublicKey, addTarget, removeTarget, testConnection } from "../ssh.js";
 import { getCalendarStatus } from "../calendar.js";
-import { getHAStatus } from "../homeassistant.js";
+import { getHAStatus, saveConfig, restartHAPolling, testHAConnection } from "../homeassistant.js";
+import type { HAConfig, HAConnectionMode } from "../homeassistant.js";
 import { getRSSStatus, addFeed, removeFeed } from "../rss.js";
 import { getOwnTracksStatus } from "../owntracks.js";
 import { isAuthenticated, readBody } from "./auth.js";
@@ -185,10 +186,27 @@ export function handleApiRoutes(
     return true;
   }
 
-  // ── Home Assistant status ──
+  // ── Home Assistant config CRUD ──
   if (pathname === "/api/homeassistant/status" && req.method === "GET" && isAuthenticated(req)) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(getHAStatus()));
+    return true;
+  }
+
+  if (pathname === "/api/homeassistant/config" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(getHAStatus()));
+      return true;
+    }
+    if (req.method === "PUT") {
+      handleHASaveConfig(req, res);
+      return true;
+    }
+  }
+
+  if (pathname === "/api/homeassistant/test" && req.method === "POST" && isAuthenticated(req)) {
+    handleHATestConnection(req, res);
     return true;
   }
 
@@ -675,6 +693,73 @@ async function handleRSSRemoveFeed(req: IncomingMessage, res: ServerResponse) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ success: removed }));
   } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+// ── Home Assistant handlers ──
+
+async function handleHASaveConfig(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+
+    const mode = data.mode as HAConnectionMode;
+    if (!mode || !["direct_api", "cloud"].includes(mode)) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "mode must be 'direct_api' or 'cloud'" }));
+      return;
+    }
+
+    const config: HAConfig = {
+      mode,
+      entities: Array.isArray(data.entities) ? data.entities : ["light", "switch", "lock", "climate", "binary_sensor", "sensor"],
+      pollInterval: typeof data.pollInterval === "number" ? data.pollInterval : 60000,
+    };
+
+    if (data.direct_api && typeof data.direct_api === "object") {
+      config.direct_api = {
+        url: String(data.direct_api.url || ""),
+        token: String(data.direct_api.token || ""),
+      };
+    }
+
+    if (data.cloud && typeof data.cloud === "object") {
+      config.cloud = {
+        url: String(data.cloud.url || ""),
+        token: String(data.cloud.token || ""),
+      };
+    }
+
+    saveConfig(config);
+    restartHAPolling();
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, status: getHAStatus() }));
+  } catch (err) {
+    log(`HA config save error: ${err}`);
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+async function handleHATestConnection(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { mode, url, token } = JSON.parse(body);
+
+    if (!mode || !url || !token) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "mode, url, and token are required" }));
+      return;
+    }
+
+    const result = await testHAConnection(mode as HAConnectionMode, url, token);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    log(`HA test connection error: ${err}`);
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Invalid request" }));
   }
