@@ -16,6 +16,8 @@ import { getRSSStatus, addFeed, removeFeed } from "../rss.js";
 import { getOwnTracksStatus } from "../owntracks.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
+import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS } from "../brain-config.js";
+import type { BrainConfig } from "../brain-config.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -204,6 +206,24 @@ export function handleApiRoutes(
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(getOwnTracksStatus()));
     return true;
+  }
+
+  // ── Brain config ──
+  if (pathname === "/api/brain-config" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      const config = getBrainConfig();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        config,
+        activePreset: getActivePreset(config),
+        presets: BRAIN_PRESETS,
+      }));
+      return true;
+    }
+    if (req.method === "PUT") {
+      handleBrainConfigUpdate(req, res);
+      return true;
+    }
   }
 
   return false;
@@ -588,6 +608,54 @@ async function handleRSSRemoveFeed(req: IncomingMessage, res: ServerResponse) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ success: removed }));
   } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+// ── Brain config handler ──
+
+const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
+  "enabled", "maxMessagesPerDay", "minMessageInterval", "quietStart", "quietEnd",
+  "thinkCooldown", "consolidateInterval", "reflectInterval", "tickInterval", "preset",
+];
+
+async function handleBrainConfigUpdate(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+
+    let update: Partial<BrainConfig>;
+
+    if (data.preset && typeof data.preset === "string") {
+      // Apply preset values
+      const preset = BRAIN_PRESETS.find(p => p.name === data.preset);
+      if (!preset) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `Unknown preset: ${data.preset}` }));
+        return;
+      }
+      update = { ...preset.values, preset: data.preset };
+    } else {
+      // Individual field overrides
+      update = {};
+      for (const key of BRAIN_CONFIG_ALLOWED_KEYS) {
+        if (key in data && key !== "preset") {
+          (update as Record<string, unknown>)[key] = data[key];
+        }
+      }
+      update.preset = null;
+    }
+
+    const config = saveBrainConfig(update);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      config,
+      activePreset: getActivePreset(config),
+      presets: BRAIN_PRESETS,
+    }));
+  } catch (err) {
+    log(`Brain config update error: ${err}`);
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Invalid request" }));
   }
