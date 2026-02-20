@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import { appendFileSync } from "fs";
-import { getSystemPrompt, getMessageMemoryContext } from "../system-prompt.js";
+import { getSystemPrompt, getMessageMemoryContext, resetMemoryContextTracker } from "../system-prompt.js";
 import { ensureValidToken } from "../auth-refresh.js";
 import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, ClaudeConfig } from "./types.js";
 import { splitMessage } from "./util.js";
@@ -34,6 +34,7 @@ export class ClaudeProvider implements AIProvider {
 
   resetSession(): void {
     this.currentSessionId = null;
+    resetMemoryContextTracker();
     log("Session reset");
   }
 
@@ -99,8 +100,8 @@ export class ClaudeProvider implements AIProvider {
     if (noSession) {
       prompt = message;
     } else if (this.currentSessionId) {
-      // Resumed session: inject fresh memory context so chat has up-to-date memories
-      const memCtx = getMessageMemoryContext(message);
+      // Resumed session: inject working memory update only if changed
+      const memCtx = getMessageMemoryContext();
       prompt = memCtx ? `${memCtx}${message}` : message;
     } else {
       // First message: full system prompt with initial memory snapshot
@@ -215,8 +216,8 @@ export class ClaudeProvider implements AIProvider {
 
     let prompt: string;
     if (this.currentSessionId) {
-      // Resumed session: inject fresh memory context so chat has up-to-date memories
-      const memCtx = getMessageMemoryContext(message);
+      // Resumed session: inject working memory update only if changed
+      const memCtx = getMessageMemoryContext();
       prompt = memCtx ? `${memCtx}${message}` : message;
     } else {
       // First message: full system prompt with initial memory snapshot
