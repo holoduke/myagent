@@ -266,7 +266,15 @@ function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 process.on("uncaughtException", (err) => {
-  log(`Uncaught exception: ${err.message}`);
+  log(`Uncaught exception: ${err.message}\n${err.stack || ""}`);
+  // Exit so process manager can restart cleanly.
+  // Continuing after uncaughtException leaves the process in undefined state.
+  stopBrainLoop();
+  stopGmailPolling();
+  stopCalendarPolling();
+  stopHAPolling();
+  stopRSSPolling();
+  process.exit(1);
 });
 process.on("unhandledRejection", (err) => {
   log(`Unhandled rejection: ${err}`);

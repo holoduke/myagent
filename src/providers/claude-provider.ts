@@ -37,6 +37,15 @@ export class ClaudeProvider implements AIProvider {
     log("Session reset");
   }
 
+  getSessionId(): string | null {
+    return this.currentSessionId;
+  }
+
+  restoreSession(sessionId: string): void {
+    this.currentSessionId = sessionId;
+    log(`Session restored: ${sessionId}`);
+  }
+
   async ask(message: string, options: ProviderAskOptions = {}): Promise<AgentResult> {
     const timeout = options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 300_000);
     const allowedTools = options.allowedTools ?? this.config.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
@@ -131,10 +140,8 @@ export class ClaudeProvider implements AIProvider {
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill("SIGTERM");
-        if (!noSession && this.currentSessionId) {
-          log("Timeout: resetting session");
-          this.currentSessionId = null;
-        }
+        // Don't reset session on timeout — the server-side session may still be valid
+        log(`Timeout: killed process (session ${this.currentSessionId || "none"} preserved)`);
         reject(new Error(`Claude timed out after ${timeout / 1000}s`));
       }, timeout);
 
@@ -146,9 +153,13 @@ export class ClaudeProvider implements AIProvider {
         if (stderr) log(`stderr: ${stderr.slice(0, 500)}`);
 
         if (code !== 0 && !stdout.trim()) {
-          if (!noSession && this.currentSessionId) {
-            log("Resume failed, resetting session");
+          // Only reset session for session-specific errors, not transient failures
+          const isSessionError = stderr.includes("session") && (stderr.includes("not found") || stderr.includes("invalid") || stderr.includes("expired"));
+          if (!noSession && this.currentSessionId && isSessionError) {
+            log("Session error detected, resetting session");
             this.currentSessionId = null;
+          } else if (!noSession && this.currentSessionId) {
+            log(`Transient error (code ${code}), session ${this.currentSessionId} preserved`);
           }
           reject(new Error(`Claude exited with code ${code}: ${stderr.slice(0, 500)}`));
           return;
@@ -301,10 +312,8 @@ export class ClaudeProvider implements AIProvider {
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill("SIGTERM");
-        if (this.currentSessionId) {
-          log("Streaming timeout: resetting session");
-          this.currentSessionId = null;
-        }
+        // Don't reset session on timeout — the server-side session may still be valid
+        log(`Streaming timeout: killed process (session ${this.currentSessionId || "none"} preserved)`);
         reject(new Error(`Claude timed out after ${timeout / 1000}s`));
       }, timeout);
 
@@ -320,9 +329,13 @@ export class ClaudeProvider implements AIProvider {
         }
 
         if (!fullText && code !== 0) {
-          if (this.currentSessionId) {
-            log("Streaming resume failed, resetting session");
+          // Only reset session for session-specific errors, not transient failures
+          const isSessionError = stderr.includes("session") && (stderr.includes("not found") || stderr.includes("invalid") || stderr.includes("expired"));
+          if (this.currentSessionId && isSessionError) {
+            log("Streaming session error detected, resetting session");
             this.currentSessionId = null;
+          } else if (this.currentSessionId) {
+            log(`Streaming transient error (code ${code}), session ${this.currentSessionId} preserved`);
           }
           reject(new Error(`Claude exited with code ${code}: ${stderr.slice(0, 500)}`));
           return;
