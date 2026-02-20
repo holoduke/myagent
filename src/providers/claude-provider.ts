@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import { appendFileSync } from "fs";
-import { getSystemPrompt } from "../system-prompt.js";
+import { getSystemPrompt, getMessageMemoryContext } from "../system-prompt.js";
 import { ensureValidToken } from "../auth-refresh.js";
 import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, ClaudeConfig } from "./types.js";
 import { splitMessage } from "./util.js";
@@ -95,11 +95,17 @@ export class ClaudeProvider implements AIProvider {
   ): Promise<AgentResult & { isAuthError?: boolean }> {
     const { timeout, allowedTools, noSession } = options;
 
-    const prompt = noSession
-      ? message
-      : (this.currentSessionId
-        ? message
-        : `${getSystemPrompt()}\n\nUser message:\n${message}`);
+    let prompt: string;
+    if (noSession) {
+      prompt = message;
+    } else if (this.currentSessionId) {
+      // Resumed session: inject fresh memory context so chat has up-to-date memories
+      const memCtx = getMessageMemoryContext(message);
+      prompt = memCtx ? `${memCtx}${message}` : message;
+    } else {
+      // First message: full system prompt with initial memory snapshot
+      prompt = `${getSystemPrompt()}\n\nUser message:\n${message}`;
+    }
 
     const args = [
       "-p", prompt,
@@ -207,9 +213,15 @@ export class ClaudeProvider implements AIProvider {
   ): Promise<AgentResult & { isAuthError?: boolean }> {
     const { timeout, allowedTools } = options;
 
-    const prompt = this.currentSessionId
-      ? message
-      : `${getSystemPrompt()}\n\nUser message:\n${message}`;
+    let prompt: string;
+    if (this.currentSessionId) {
+      // Resumed session: inject fresh memory context so chat has up-to-date memories
+      const memCtx = getMessageMemoryContext(message);
+      prompt = memCtx ? `${memCtx}${message}` : message;
+    } else {
+      // First message: full system prompt with initial memory snapshot
+      prompt = `${getSystemPrompt()}\n\nUser message:\n${message}`;
+    }
 
     const args = [
       "-p", prompt,
