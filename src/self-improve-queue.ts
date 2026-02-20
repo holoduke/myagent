@@ -118,6 +118,16 @@ export function approveItem(id: string): QueueItem {
   return item;
 }
 
+function moveToHistory(queue: ImproveQueue, idx: number): QueueItem {
+  const item = queue.items[idx];
+  queue.items.splice(idx, 1);
+  saveQueue(queue);
+  const history = loadHistory();
+  history.entries.unshift(item);
+  saveHistory(history);
+  return item;
+}
+
 export function rejectItem(id: string): QueueItem {
   const queue = loadQueue();
   const idx = queue.items.findIndex(i => i.id === id);
@@ -126,12 +136,7 @@ export function rejectItem(id: string): QueueItem {
   if (item.status !== "pending") throw new Error(`Cannot reject item with status: ${item.status}`);
   item.status = "rejected";
   item.reviewedAt = Date.now();
-  // Move to history
-  queue.items.splice(idx, 1);
-  saveQueue(queue);
-  const history = loadHistory();
-  history.entries.unshift(item);
-  saveHistory(history);
+  moveToHistory(queue, idx);
   log(`Rejected: ${id}`);
   return item;
 }
@@ -157,12 +162,7 @@ export function completeItem(id: string, result: ImproveResult): void {
   item.status = "completed";
   item.completedAt = Date.now();
   item.result = result;
-  // Move to history
-  queue.items.splice(idx, 1);
-  saveQueue(queue);
-  const history = loadHistory();
-  history.entries.unshift(item);
-  saveHistory(history);
+  moveToHistory(queue, idx);
   log(`Completed: ${id}`);
 }
 
@@ -177,12 +177,7 @@ export function failItem(id: string, result: ImproveResult): void {
   item.status = "failed";
   item.completedAt = Date.now();
   item.result = result;
-  // Move to history
-  queue.items.splice(idx, 1);
-  saveQueue(queue);
-  const history = loadHistory();
-  history.entries.unshift(item);
-  saveHistory(history);
+  moveToHistory(queue, idx);
   log(`Failed: ${id}`);
 }
 

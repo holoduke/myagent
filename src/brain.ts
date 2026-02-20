@@ -299,17 +299,7 @@ function interceptDirectTask(): void {
     enqueue(task);
     unlinkSync(IMPROVE_TASK_FILE);
     log("Intercepted self-improvement task → queued");
-
-    const cfg = getBrainConfig();
-    if (cfg.selfImproveAutoApprove) {
-      const queue = loadQueue();
-      for (const item of queue.items) {
-        if (item.status === "pending") {
-          try { approveItem(item.id); } catch {}
-        }
-      }
-      log("Auto-approved pending queue items");
-    }
+    // Auto-approve (if enabled) is handled by checkAndSpawnImproveWorker on the same tick
   } catch (err) {
     log(`Failed to intercept improve task: ${err}`);
   }
