@@ -104,6 +104,7 @@ export async function startWhatsApp(
   onObservation?: ObservationHandler,
 ): Promise<void> {
   const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
+  // Owner LID will be set from credentials after auth state is loaded
   let ownerLid: string | null = null;
 
   // Clean up previous socket if it exists
@@ -119,6 +120,13 @@ export async function startWhatsApp(
   const authDir = process.env.AUTH_STATE_DIR || "./auth_state";
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
   const { version } = await fetchLatestBaileysVersion();
+
+  // Detect owner LID from stored credentials (strip device suffix for matching)
+  const credLid = (state.creds.me as { lid?: string } | undefined)?.lid;
+  if (credLid) {
+    ownerLid = credLid.replace(/:\d+@/, "@");
+    console.log(`[whatsapp] Owner LID from credentials: ${ownerLid}`);
+  }
 
   sock = makeWASocket({
     version,
@@ -238,10 +246,13 @@ export async function startWhatsApp(
       // Log all incoming messages for debugging (before any filtering)
       console.log(`[whatsapp] MSG jid=${jid} fromMe=${msg.key.fromMe} group=${isGroup} participant=${msg.key.participant || "N/A"} text=${text.slice(0, 50) || "(no text)"}`);
 
-      // Detect owner's LID early — before text filter, so non-text messages (images, reactions) also set it
-      if (msg.key.fromMe && jid.endsWith("@lid") && !ownerLid) {
-        ownerLid = jid;
-        console.log(`[whatsapp] Detected owner LID: ${ownerLid}`);
+      // Update owner LID from credentials if not yet set (e.g. after reconnect)
+      if (!ownerLid && sock?.user) {
+        const lid = (sock.user as { lid?: string }).lid;
+        if (lid) {
+          ownerLid = lid.replace(/:\d+@/, "@");
+          console.log(`[whatsapp] Owner LID from socket: ${ownerLid}`);
+        }
       }
 
       if (!text.trim()) continue;
@@ -317,11 +328,10 @@ export async function startWhatsApp(
       if (isGroup) continue;
 
       const matchesJid = jid === ownerJid;
-      const matchesLid = jid === ownerLid;
-      const matchesFromMe = msg.key.fromMe === true && jid.endsWith("@lid");
-      const isOwner = matchesJid || matchesLid || matchesFromMe;
+      const matchesLid = ownerLid !== null && jid === ownerLid;
+      const isOwner = matchesJid || matchesLid;
 
-      console.log(`[whatsapp] DM check: jid=${jid} ownerJid=${ownerJid} ownerLid=${ownerLid || "unset"} fromMe=${msg.key.fromMe} matchJid=${matchesJid} matchLid=${matchesLid} matchFromMe=${matchesFromMe} → isOwner=${isOwner}`);
+      console.log(`[whatsapp] DM check: jid=${jid} ownerJid=${ownerJid} ownerLid=${ownerLid || "unset"} fromMe=${msg.key.fromMe} matchJid=${matchesJid} matchLid=${matchesLid} → isOwner=${isOwner}`);
 
       if (!isOwner) {
         console.log(`[whatsapp] Skipping non-owner DM from: ${jid}`);
