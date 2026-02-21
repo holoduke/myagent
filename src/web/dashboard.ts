@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { id: "chat", label: "Chat", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>` },
   { id: "memory", label: "Memory", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>` },
   { id: "integrations", label: "Integrations", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>` },
+  { id: "tasks", label: "Tasks", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>` },
   { id: "settings", label: "Settings", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>` },
 ];
 
@@ -121,6 +122,14 @@ export function getDashboardHTML(): string {
         </div>
       </div>
 
+      <!-- Tasks Section -->
+      <div class="section" id="section-tasks">
+        <div class="section-header">Tasks & Tools</div>
+        <div id="tasks-content">
+          <div style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
+        </div>
+      </div>
+
       <!-- Settings Section -->
       <div class="section" id="section-settings">
         <div class="section-header">Settings</div>
@@ -214,7 +223,7 @@ export function getDashboardHTML(): string {
 
     // ── Navigation ──
     function navigate(section, skipHash) {
-      const valid = ['overview','chat','memory','integrations','settings'];
+      const valid = ['overview','chat','memory','integrations','tasks','settings'];
       if (!valid.includes(section)) section = 'overview';
       currentSection = section;
       if (!skipHash) location.hash = section;
@@ -237,6 +246,7 @@ export function getDashboardHTML(): string {
       else if (section === 'chat' && !chatLoaded) { loadHistory(); chatLoaded = true; }
       else if (section === 'memory') loadMemory();
       else if (section === 'integrations') loadIntegrations();
+      else if (section === 'tasks') loadTasks();
       else if (section === 'settings') loadSettings();
 
       // Auto-refresh for overview
@@ -804,6 +814,225 @@ export function getDashboardHTML(): string {
       html += '</div>';
 
       document.getElementById('settings-content').innerHTML = html;
+    }
+
+    // ── Tasks Section ──
+    let tasksRefreshInterval = null;
+
+    async function loadTasks() {
+      try {
+        const [jobsRes, toolsRes] = await Promise.all([
+          fetch('/api/jobs', { headers: authHeaders() }),
+          fetch('/api/tools', { headers: authHeaders() }),
+        ]);
+        if (jobsRes.status === 401) { resetAuth(); return; }
+        const jobsData = await jobsRes.json();
+        const toolsData = await toolsRes.json();
+        renderTasks(jobsData, toolsData);
+
+        // Auto-refresh tasks every 10s
+        if (tasksRefreshInterval) clearInterval(tasksRefreshInterval);
+        tasksRefreshInterval = setInterval(() => {
+          if (currentSection === 'tasks') loadTasks();
+        }, 10000);
+      } catch(e) {
+        document.getElementById('tasks-content').innerHTML =
+          '<div class="card"><p style="color:var(--red)">Failed to load: ' + e.message + '</p></div>';
+      }
+    }
+
+    function renderTasks(jobsData, toolsData) {
+      const jobs = jobsData.jobs || [];
+      const executor = jobsData.executor || {};
+      const tools = toolsData.tools || [];
+
+      const todos = jobs.filter(j => j.type === 'todo');
+      const taskJobs = jobs.filter(j => j.type === 'job');
+      const systemJobs = jobs.filter(j => j.type === 'system');
+
+      let html = '';
+
+      // Executor status bar
+      html += '<div class="card" style="margin-bottom:16px;padding:12px 16px">';
+      html += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
+      html += '<span class="status-dot ' + (executor.running ? 'ok' : 'warn') + '"></span>';
+      html += '<span style="font-size:13px;color:var(--text)">Job Executor</span>';
+      html += '<span style="font-family:var(--mono);font-size:11px;color:var(--text-muted)">' + (executor.running ? 'Running' : 'Stopped') + '</span>';
+      html += '<span style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-left:auto">Docker: ' + (executor.dockerAvailable ? 'Available' : 'Unavailable') + '</span>';
+      html += '<span style="font-family:var(--mono);font-size:11px;color:var(--text-muted)">Queue: ' + (executor.queueLength || 0) + '</span>';
+      if (executor.currentJob) {
+        html += '<span style="font-family:var(--mono);font-size:11px;color:var(--yellow)">Running: ' + esc(executor.currentJob) + '</span>';
+      }
+      html += '</div></div>';
+
+      // Quick actions
+      html += '<div class="card" style="margin-bottom:16px">';
+      html += '<h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create</h2>';
+      html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+      html += '<div style="flex:1;min-width:200px">';
+      html += '<input type="text" id="new-task-title" placeholder="Task title" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:13px;font-family:var(--mono);margin-bottom:6px">';
+      html += '<textarea id="new-task-desc" placeholder="Description (optional)" rows="2" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:12px;font-family:var(--mono);resize:vertical;margin-bottom:6px"></textarea>';
+      html += '</div>';
+      html += '<div style="display:flex;flex-direction:column;gap:6px">';
+      html += '<button class="btn primary" onclick="createTask(\'todo\')" style="white-space:nowrap">Add Todo</button>';
+      html += '<button class="btn" onclick="createTask(\'job\')" style="white-space:nowrap">Add Job</button>';
+      html += '<button class="btn" onclick="createTask(\'system\')" style="white-space:nowrap">Add System</button>';
+      html += '</div></div>';
+      html += '<div style="margin-top:8px">';
+      html += '<input type="text" id="new-task-cmd" placeholder="Command to execute (optional, auto-queues job)" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:12px;font-family:var(--mono)">';
+      html += '</div></div>';
+
+      // Todos
+      html += '<div class="card" style="margin-bottom:16px"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>Todos (' + todos.length + ')</h2>';
+      if (todos.length) {
+        for (const t of todos) html += renderTaskItem(t);
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:10px 0">No todos</div>';
+      }
+      html += '</div>';
+
+      // Complex tasks (jobs)
+      html += '<div class="card" style="margin-bottom:16px"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M12 12h.01"/><path d="M17 12h.01"/><path d="M7 12h.01"/></svg>Jobs (' + taskJobs.length + ')</h2>';
+      html += '<div style="color:var(--text-muted);font-size:11px;margin-bottom:8px;font-family:var(--mono)">Sandboxed Docker execution</div>';
+      if (taskJobs.length) {
+        for (const t of taskJobs) html += renderTaskItem(t);
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:10px 0">No jobs</div>';
+      }
+      html += '</div>';
+
+      // System tasks
+      html += '<div class="card" style="margin-bottom:16px"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>System Tasks (' + systemJobs.length + ')</h2>';
+      if (systemJobs.length) {
+        for (const t of systemJobs) html += renderTaskItem(t);
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:10px 0">No system tasks</div>';
+      }
+      html += '</div>';
+
+      // Tool registry
+      html += '<div class="card" style="margin-bottom:16px"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>Tool Registry (' + tools.length + ')</h2>';
+      html += '<div style="color:var(--text-muted);font-size:11px;margin-bottom:10px;font-family:var(--mono)">Reusable Docker tool images</div>';
+      if (tools.length) {
+        for (const tool of tools) {
+          html += '<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px">';
+          html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">';
+          html += '<span style="font-weight:600;font-size:13px;color:var(--text)">' + esc(tool.name) + '</span>';
+          const statusColor = tool.status === 'ready' ? 'var(--green)' : tool.status === 'building' ? 'var(--yellow)' : tool.status === 'failed' ? 'var(--red)' : 'var(--text-ghost)';
+          html += '<span style="font-family:var(--mono);font-size:10px;color:' + statusColor + ';text-transform:uppercase">' + esc(tool.status) + '</span>';
+          html += '<span style="font-family:var(--mono);font-size:10px;color:var(--text-muted);margin-left:auto">' + (tool.timesUsed || 0) + ' uses</span>';
+          html += '</div>';
+          html += '<div style="font-size:12px;color:var(--text-muted)">' + esc(tool.description) + '</div>';
+          if (tool.capabilities && tool.capabilities.length) {
+            html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">';
+            for (const cap of tool.capabilities) {
+              html += '<span class="tag">' + esc(cap) + '</span>';
+            }
+            html += '</div>';
+          }
+          html += kv('Image', tool.imageName || 'N/A');
+          if (tool.imageSize) html += kv('Size', tool.imageSize);
+          html += kv('Last Used', timeAgo(tool.lastUsedAt));
+          html += '</div>';
+        }
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:10px 0">No tools registered. Tools are created automatically when jobs need them.</div>';
+      }
+      html += '</div>';
+
+      document.getElementById('tasks-content').innerHTML = html;
+    }
+
+    function renderTaskItem(t) {
+      const statusColors = {
+        pending: 'var(--text-muted)', queued: 'var(--yellow)', running: 'var(--cyan)',
+        completed: 'var(--green)', failed: 'var(--red)', cancelled: 'var(--text-ghost)'
+      };
+      const statusIcons = {
+        pending: '○', queued: '◉', running: '◈', completed: '✓', failed: '✗', cancelled: '—'
+      };
+      let h = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:6px">';
+      h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">';
+      h += '<span style="color:' + (statusColors[t.status] || 'var(--text)') + ';font-weight:bold;font-size:14px">' + (statusIcons[t.status] || '?') + '</span>';
+      h += '<span style="font-weight:600;font-size:13px;color:var(--text);flex:1">' + esc(t.title || t.description.slice(0, 60)) + '</span>';
+      h += '<span class="type-badge ' + t.type + '" style="font-size:10px;padding:2px 6px">' + esc(t.type) + '</span>';
+      h += '</div>';
+      if (t.description && t.description !== t.title) {
+        h += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;word-break:break-word">' + esc(t.description.slice(0, 200)) + (t.description.length > 200 ? '...' : '') + '</div>';
+      }
+      h += '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
+      h += '<span style="font-family:var(--mono);font-size:10px;color:var(--text-ghost)">' + esc(t.id) + '</span>';
+      h += '<span style="font-family:var(--mono);font-size:10px;color:var(--text-ghost)">' + esc(t.source) + '</span>';
+      h += '<span style="font-family:var(--mono);font-size:10px;color:var(--text-ghost)">' + fmtDate(t.createdAt) + '</span>';
+      if (t.command) {
+        h += '<span style="font-family:var(--mono);font-size:10px;color:var(--cyan)">cmd</span>';
+      }
+      if (t.toolId) {
+        h += '<span style="font-family:var(--mono);font-size:10px;color:var(--cyan)">tool:' + esc(t.toolId) + '</span>';
+      }
+      // Action buttons
+      h += '<span style="margin-left:auto;display:flex;gap:4px">';
+      if (t.status === 'pending' && t.type !== 'todo') {
+        h += '<button class="btn" style="font-size:10px;padding:3px 8px" onclick="queueTask(\'' + esc(t.id) + '\')">Queue</button>';
+      }
+      if (t.status === 'pending' && t.type === 'todo') {
+        h += '<button class="btn" style="font-size:10px;padding:3px 8px" onclick="completeTask(\'' + esc(t.id) + '\')">Done</button>';
+      }
+      if (t.status !== 'completed' && t.status !== 'failed' && t.status !== 'cancelled') {
+        h += '<button class="btn danger" style="font-size:10px;padding:3px 8px" onclick="cancelTask(\'' + esc(t.id) + '\')">Cancel</button>';
+      }
+      h += '</span></div>';
+      // Output (if completed/failed)
+      if (t.output) {
+        h += '<details style="margin-top:8px"><summary style="cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--text-muted)">Output (exit ' + (t.exitCode ?? '?') + ')</summary>';
+        h += '<pre style="margin-top:4px;padding:8px;background:rgba(0,0,0,0.3);border-radius:4px;font-size:11px;color:var(--text);white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto">' + esc(t.output) + '</pre>';
+        h += '</details>';
+      }
+      h += '</div>';
+      return h;
+    }
+
+    async function createTask(type) {
+      const title = document.getElementById('new-task-title')?.value?.trim();
+      const desc = document.getElementById('new-task-desc')?.value?.trim();
+      const cmd = document.getElementById('new-task-cmd')?.value?.trim();
+      if (!title) return;
+      try {
+        await fetch('/api/jobs', {
+          method: 'POST',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ type, title, description: desc || title, command: cmd || undefined })
+        });
+        document.getElementById('new-task-title').value = '';
+        document.getElementById('new-task-desc').value = '';
+        document.getElementById('new-task-cmd').value = '';
+        loadTasks();
+      } catch(e) { console.error('Create task failed:', e); }
+    }
+
+    async function queueTask(id) {
+      try {
+        await fetch('/api/jobs/' + id + '/queue', { method: 'POST', headers: authHeaders() });
+        loadTasks();
+      } catch(e) { console.error('Queue task failed:', e); }
+    }
+
+    async function completeTask(id) {
+      try {
+        await fetch('/api/jobs/' + id, {
+          method: 'PUT',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ status: 'completed', completedAt: Date.now() })
+        });
+        loadTasks();
+      } catch(e) { console.error('Complete task failed:', e); }
+    }
+
+    async function cancelTask(id) {
+      try {
+        await fetch('/api/jobs/' + id, { method: 'DELETE', headers: authHeaders() });
+        loadTasks();
+      } catch(e) { console.error('Cancel task failed:', e); }
     }
 
     // ── Whitelist CRUD ──

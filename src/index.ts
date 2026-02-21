@@ -16,6 +16,7 @@ import { startCalendarPolling, stopCalendarPolling } from "./calendar.js";
 import { startHAPolling, stopHAPolling } from "./homeassistant.js";
 import { startRSSPolling, stopRSSPolling } from "./rss.js";
 import { handleOwnTracksWebhook } from "./owntracks.js";
+import { startJobExecutor, stopJobExecutor } from "./job-executor.js";
 
 const queue = new MessageQueue();
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -50,6 +51,9 @@ async function main() {
   startCalendarPolling();
   startHAPolling();
   startRSSPolling();
+
+  // Start job executor (Docker-based task runner)
+  startJobExecutor();
 
   // HTTP server: health check, QR code, web chat, and Gmail OAuth
   const server = createServer((req, res) => {
@@ -260,6 +264,7 @@ function shutdown() {
   stopCalendarPolling();
   stopHAPolling();
   stopRSSPolling();
+  stopJobExecutor();
   process.exit(0);
 }
 
@@ -274,6 +279,7 @@ process.on("uncaughtException", (err) => {
   stopCalendarPolling();
   stopHAPolling();
   stopRSSPolling();
+  stopJobExecutor();
   process.exit(1);
 });
 process.on("unhandledRejection", (err) => {
