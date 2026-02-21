@@ -64,6 +64,26 @@ See `.env.example` for all options (brain tuning, integrations, self-improvement
 | **RSS Feeds** | Add via web dashboard |
 | **OwnTracks** | POST location to `/owntracks` |
 
+## Running Locally vs. Cloud
+
+ARIA works on a local machine (laptop/desktop), but a cloud server is recommended. Key differences:
+
+| | Local | Cloud Server |
+|---|---|---|
+| **WhatsApp** | Works fine | Works fine |
+| **Dashboard** | `localhost:3000` | Public URL |
+| **Brain ticks** | Stop when machine sleeps/shuts down | Runs 24/7 |
+| **Gmail OAuth** | Callback to `localhost` works during setup | Works with any domain |
+| **OwnTracks** | Needs port forwarding or tunnel for phone to reach it | Reachable directly |
+| **Self-improve PRs** | Works (needs internet) | Works |
+
+**Localhost limitations:**
+- **Must stay running** — ARIA is designed to run 24/7. If your machine sleeps, the WhatsApp connection drops, brain ticks stop, and you miss messages. It reconnects on wake, but gaps will exist.
+- **OwnTracks/webhooks** — external services can't reach `localhost` without a tunnel (e.g. ngrok, Cloudflare Tunnel).
+- **No remote dashboard** — you can only access the web UI from the same machine (unless you set up port forwarding).
+
+**Recommended:** A small cloud VPS (Hetzner, DigitalOcean, etc.) with Docker. Coolify makes management easy.
+
 ## Architecture
 
 - **Runtime**: Node.js 20 + TypeScript (tsx)
