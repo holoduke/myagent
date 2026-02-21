@@ -1,0 +1,11 @@
+services:
+  aria:
+    build: .
+    container_name: aria
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/data
+    env_file:
+      - .env
