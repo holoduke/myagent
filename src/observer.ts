@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { appendFileSync as logAppend } from "fs";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -134,7 +134,9 @@ export function pruneObservations(days?: number): void {
       }
     }
     if (pruned > 0) {
-      writeFileSync(OBS_FILE, kept.join("\n") + (kept.length ? "\n" : ""));
+      const tmp = OBS_FILE + ".tmp";
+      writeFileSync(tmp, kept.join("\n") + (kept.length ? "\n" : ""));
+      renameSync(tmp, OBS_FILE);
       log(`Pruned ${pruned} old observations, kept ${kept.length}`);
     }
   } catch (err) {
