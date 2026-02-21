@@ -627,11 +627,16 @@ export function getDashboardHTML(): string {
       }
     }
 
+    let _charSaveTimer = null;
+
     async function saveCharacter() {
       const sel = document.getElementById('char-select');
       const textarea = document.getElementById('char-custom');
       const type = sel.value;
       const custom = type === 'custom' ? textarea.value : null;
+      const statusEl = document.getElementById('char-status');
+      statusEl.textContent = 'Saving...';
+      statusEl.style.color = 'var(--text-muted)';
       try {
         const res = await fetch('/api/brain-config', {
           method: 'PUT',
@@ -641,16 +646,22 @@ export function getDashboardHTML(): string {
         if (res.ok) {
           _currentCharacterType = type;
           _currentCharacterCustom = custom || '';
-          const statusEl = document.getElementById('char-status');
-          statusEl.textContent = 'Saved!';
+          statusEl.textContent = 'Saved';
           statusEl.style.color = 'var(--green)';
-          setTimeout(() => { statusEl.textContent = ''; }, 2000);
+          setTimeout(() => { statusEl.textContent = ''; }, 1500);
+        } else {
+          statusEl.textContent = 'Failed to save';
+          statusEl.style.color = 'var(--red)';
         }
       } catch(e) {
-        const statusEl = document.getElementById('char-status');
         statusEl.textContent = 'Failed to save';
         statusEl.style.color = 'var(--red)';
       }
+    }
+
+    function debouncedSaveCharacter() {
+      if (_charSaveTimer) clearTimeout(_charSaveTimer);
+      _charSaveTimer = setTimeout(saveCharacter, 800);
     }
 
     function onCharacterChange() {
@@ -665,6 +676,7 @@ export function getDashboardHTML(): string {
         const preset = _characterPresets.find(p => p.name === sel.value);
         descEl.textContent = preset ? preset.description : '';
       }
+      saveCharacter();
     }
 
     async function approveImprovement(id) {
@@ -700,11 +712,10 @@ export function getDashboardHTML(): string {
       const activePreset = _characterPresets.find(p => p.name === _currentCharacterType);
       html += '<div id="char-desc" style="color:var(--text-muted);font-size:12px;margin-bottom:10px">' + esc(_currentCharacterType === 'custom' ? 'Write your own personality description below.' : (activePreset ? activePreset.description : '')) + '</div>';
       html += '<div id="char-custom-wrap" style="display:' + (_currentCharacterType === 'custom' ? 'block' : 'none') + '">';
-      html += '<textarea id="char-custom" rows="6" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:12px;font-family:var(--mono);resize:vertical;margin-bottom:8px" placeholder="Describe the personality traits and voice...">' + esc(_currentCharacterCustom) + '</textarea>';
+      html += '<textarea id="char-custom" rows="6" oninput="debouncedSaveCharacter()" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:12px;font-family:var(--mono);resize:vertical;margin-bottom:8px" placeholder="Describe the personality traits and voice...">' + esc(_currentCharacterCustom) + '</textarea>';
       html += '</div>';
-      html += '<div class="btn-row" style="align-items:center">';
-      html += '<button class="btn" onclick="saveCharacter()">Save Character</button>';
-      html += '<span id="char-status" style="font-size:12px;font-family:var(--mono);margin-left:10px"></span>';
+      html += '<div style="min-height:18px;margin-top:4px">';
+      html += '<span id="char-status" style="font-size:11px;font-family:var(--mono)"></span>';
       html += '</div>';
       html += '</div>';
 
