@@ -29,6 +29,7 @@ import { getBrainConfig, getActivePreset } from "./brain-config.js";
 import {
   loadQueue,
   enqueue,
+  enqueueApproved,
   approveItem,
   dequeueApproved,
   completeItem,
@@ -1102,8 +1103,10 @@ async function reflectTick(
           planNodeId: proposal.planNodeId || "",
           createdAt: Date.now(),
         };
-        enqueue(task);
-        log(`Enqueued improvement proposal: ${proposal.description.slice(0, 80)}`);
+        // Brain-originated proposals are pre-approved — they've already been
+        // through the brain's deliberation. No need for selfImproveAutoApprove.
+        enqueueApproved(task);
+        log(`Enqueued improvement proposal (pre-approved): ${proposal.description.slice(0, 80)}`);
       }
 
       if (response.improvementProposals.length > canEnqueue) {

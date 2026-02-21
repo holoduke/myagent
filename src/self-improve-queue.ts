@@ -106,6 +106,27 @@ export function enqueue(task: ImprovementTask): QueueItem {
   return item;
 }
 
+/**
+ * Enqueue a task as pre-approved. Used for brain-originated proposals
+ * that have already been through the brain's deliberation process.
+ * These bypass the manual approval step without needing selfImproveAutoApprove.
+ */
+export function enqueueApproved(task: ImprovementTask): QueueItem {
+  const queue = loadQueue();
+  const now = Date.now();
+  const item: QueueItem = {
+    id: `si_${now}`,
+    task,
+    status: "approved",
+    createdAt: now,
+    reviewedAt: now,
+  };
+  queue.items.push(item);
+  saveQueue(queue);
+  log(`Enqueued (pre-approved): ${item.id} — ${task.description.slice(0, 80)}`);
+  return item;
+}
+
 export function approveItem(id: string): QueueItem {
   const queue = loadQueue();
   const item = queue.items.find(i => i.id === id);
