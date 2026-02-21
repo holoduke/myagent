@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
 import { appendFileSync } from "fs";
 import { spawn, execSync } from "child_process";
-import { askClaude } from "./claude.js";
+import { askClaudeStreaming } from "./claude.js";
 import { getObservationsSince, pruneObservations, ensureBrainDir } from "./observer.js";
 import type { Observation } from "./observer.js";
 import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./brain-prompt.js";
@@ -820,14 +820,24 @@ async function thinkTick(
   });
 
   try {
+    let lastLogTime = Date.now();
+    let deltaChars = 0;
     const result = await queue.add(async () => {
-      return await askClaude(prompt, {
+      return await askClaudeStreaming(prompt, (delta) => {
+        deltaChars += delta.length;
+        const elapsed = Date.now() - lastLogTime;
+        if (elapsed > 30_000) {
+          log(`Think streaming: ${deltaChars} chars received so far...`);
+          lastLogTime = Date.now();
+        }
+      }, {
         timeout: 300_000,
         allowedTools: BRAIN_TOOLS,
         noSession: true,
       });
     });
 
+    log(`Think streaming complete: ${deltaChars} chars total`);
     const responseText = result.messages.join("\n");
     const response = parseBrainResponse(responseText);
 
@@ -926,14 +936,24 @@ async function consolidateTick(
   });
 
   try {
+    let lastLogTime = Date.now();
+    let deltaChars = 0;
     const result = await queue.add(async () => {
-      return await askClaude(prompt, {
+      return await askClaudeStreaming(prompt, (delta) => {
+        deltaChars += delta.length;
+        const elapsed = Date.now() - lastLogTime;
+        if (elapsed > 30_000) {
+          log(`Consolidate streaming: ${deltaChars} chars received so far...`);
+          lastLogTime = Date.now();
+        }
+      }, {
         timeout: 300_000,
         allowedTools: BRAIN_TOOLS,
         noSession: true,
       });
     });
 
+    log(`Consolidate streaming complete: ${deltaChars} chars total`);
     const responseText = result.messages.join("\n");
     const response = parseBrainResponse(responseText);
 
@@ -1022,14 +1042,24 @@ async function reflectTick(
   });
 
   try {
+    let lastLogTime = Date.now();
+    let deltaChars = 0;
     const result = await queue.add(async () => {
-      return await askClaude(prompt, {
+      return await askClaudeStreaming(prompt, (delta) => {
+        deltaChars += delta.length;
+        const elapsed = Date.now() - lastLogTime;
+        if (elapsed > 30_000) {
+          log(`Reflect streaming: ${deltaChars} chars received so far...`);
+          lastLogTime = Date.now();
+        }
+      }, {
         timeout: 600_000,
         allowedTools: BRAIN_TOOLS,
         noSession: true,
       });
     });
 
+    log(`Reflect streaming complete: ${deltaChars} chars total`);
     const responseText = result.messages.join("\n");
     const response = parseBrainResponse(responseText);
 
