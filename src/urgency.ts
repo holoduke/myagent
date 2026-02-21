@@ -11,6 +11,7 @@ function log(msg: string) {
 // ── Keyword Urgency Scores ──
 
 const URGENCY_KEYWORDS: Record<string, number> = {
+  // English
   emergency: 0.9,
   critical: 0.8,
   urgent: 0.7,
@@ -23,6 +24,17 @@ const URGENCY_KEYWORDS: Record<string, number> = {
   soon: 0.2,
   sos: 0.9,
   "911": 0.9,
+  // Dutch
+  spoed: 0.9,
+  spoedgeval: 0.9,
+  noodgeval: 0.9,
+  gevaar: 0.8,
+  dringend: 0.7,
+  meteen: 0.6,
+  direct: 0.5,
+  hulp: 0.4,
+  belangrijk: 0.4,
+  snel: 0.3,
 };
 
 const OWNER_NAME = (process.env.OWNER_NAME || "Owner").toLowerCase();
