@@ -135,13 +135,11 @@ Your source code is at /app/src/. Key files:
   - src/index.ts — application entry point
   - src/self-improve.ts — independent worker for implementing improvements (DO NOT modify this during ticks)
 
-IMPORTANT: Do NOT directly edit code during brain ticks. Instead, use the self-improve worker architecture:
-  1. During a reflect tick, if you identify an improvement, create a plan node in your memory graph.
-  2. Write an improvement task file to /data/brain/improve-task.json using the Write tool:
-     {"type":"improvement","description":"what to change","rationale":"why","files":["src/target.ts"],"memoryContext":["n_relevant_node_ids"],"planNodeId":"n_your_plan_node","createdAt":<timestamp>}
-  3. A separate Claude process (the self-improve worker) will pick up this task, implement it on a feature branch, and create a PR.
-  4. Results appear as meta nodes in your memory graph on the next tick.
-This architecture is safer: if the worker crashes, your main process keeps running.
+IMPORTANT: Do NOT directly edit code during brain ticks. To propose code improvements:
+  During reflect ticks, include an "improvementProposals" array in your JSON response. Each proposal needs:
+    description (what to change), rationale (why), files (target source files), memoryContext (relevant node IDs).
+  The system will enqueue proposals for review. A separate worker process implements approved proposals on feature branches.
+  Results appear as meta nodes in your memory graph.
 Never modify self-improve.ts, self-improve-prompt.ts, or entrypoint.sh — those are your lifeline.`;
 }
 
@@ -454,6 +452,13 @@ export interface ReflectContext {
   goalsSection?: string;
   initiativeSignals?: InitiativeSignal[];
   responsivenessPreset?: string | null;
+  selfImproveStats?: {
+    enabled: boolean;
+    maxPerWeek: number;
+    completedThisWeek: number;
+    pendingInQueue: number;
+    autoApprove: boolean;
+  };
 }
 
 export function buildReflectPrompt(ctx: ReflectContext): string {
@@ -472,6 +477,27 @@ export function buildReflectPrompt(ctx: ReflectContext): string {
         return `[${priority}] ${s.description}${s.suggestedAction ? `\n  → Suggested: ${s.suggestedAction}` : ""}`;
       }).join("\n\n")}\n`
     : "";
+
+  const siStats = ctx.selfImproveStats;
+  const selfImproveBlock = siStats?.enabled ? `
+═══ SELF-IMPROVEMENT STATUS ═══
+Enabled: YES | Budget: ${siStats.completedThisWeek}/${siStats.maxPerWeek} used this week (${siStats.maxPerWeek - siStats.completedThisWeek} remaining)
+Pending in queue: ${siStats.pendingInQueue} | Auto-approve: ${siStats.autoApprove ? "ON" : `OFF (${ctx.ownerName} reviews proposals in dashboard)`}
+
+You SHOULD propose at least one improvement per reflect cycle when budget allows.
+Read your own source code (src/) to find concrete things to improve. Think about:
+- Bugs or edge cases you've hit during recent ticks
+- Missing features ${ctx.ownerName} has mentioned or would benefit from
+- Code quality: error handling, logging, performance, reliability
+- Your own prompts: could your think/consolidate/reflect prompts be better?
+- New capabilities: what would make you more useful?
+
+To propose an improvement, add it to the "improvementProposals" array in your response.
+Each proposal needs: description (what to change), rationale (why), files (which source files), memoryContext (relevant node IDs).
+A separate worker process will implement each approved proposal on a feature branch and create a PR.
+DO NOT edit code directly during this tick — only propose via the JSON field.` : `
+═══ SELF-IMPROVEMENT STATUS ═══
+Self-improvement is DISABLED. Skip code improvement proposals.`;
 
   return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo)}
 
@@ -494,6 +520,7 @@ By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(",
 
 ═══ STRONGEST MEMORIES ═══
 ${serializeNodesForPrompt(ctx.strongestNodes, ctx.graph)}
+${selfImproveBlock}
 ${OPERATION_INSTRUCTIONS}
 ═══ WHAT TO DO ═══
 
@@ -504,11 +531,7 @@ This is deep reflection. Think about:
 - The future: what do you think will happen? What should ${ctx.ownerName} be aware of?
 - Goals: review active goals. Are any overdue? Should you create new ones? Update progress?
 - Plans: anything you want to track, watch for, or plan to say in the future?
-- Self-improvement: is there anything about your own code, prompts, or behavior you'd like to optimize?
-  You can read your source code to understand how you work. If you want to make changes, DON'T edit code directly.
-  Instead: create a plan node, then write an improvement task to /data/brain/improve-task.json using the Write tool.
-  A separate worker process will implement it safely on a feature branch and create a PR.
-  Task format: {"type":"improvement","description":"...","rationale":"...","files":["src/..."],"memoryContext":["n_..."],"planNodeId":"n_...","createdAt":<timestamp>}
+- Self-improvement: USE YOUR TOOLS to read source files and identify concrete improvements. Propose them via the improvementProposals field.
 
 Respond with ONLY a JSON object:
 {
@@ -522,7 +545,15 @@ Respond with ONLY a JSON object:
     "pendingFollowUps": [],
     "conversationThreads": []
   },
-  "goalOps": [/* optional goal operations */]
+  "goalOps": [/* optional goal operations */],
+  "improvementProposals": [
+    {
+      "description": "What to change — be specific and actionable",
+      "rationale": "Why this improvement matters",
+      "files": ["src/file-to-modify.ts"],
+      "memoryContext": ["n_relevant_node_id"]
+    }
+  ]
 }
 
 REFLECTION GUIDELINES:
@@ -532,6 +563,7 @@ REFLECTION GUIDELINES:
 - Review and update goals — create new ones, update progress, complete or abandon stale ones.
 - If you message, make it count. Reflection messages are your deepest, most thoughtful communication.
 - ${isQuiet ? "QUIET HOURS — set message to null, no exceptions." : `You may message if you have something truly worth saying.`}
+- SELF-IMPROVEMENT IS PART OF EVERY REFLECT CYCLE. Read your source code, find something to improve, and propose it. Even small improvements count.
 
 Respond with ONLY the JSON object.`;
 }

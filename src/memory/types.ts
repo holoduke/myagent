@@ -157,6 +157,14 @@ export type GoalOperation =
   | { op: "complete_goal"; nodeId: string }
   | { op: "abandon_goal"; nodeId: string; reason?: string };
 
+export interface ImprovementProposal {
+  description: string;
+  rationale: string;
+  files: string[];
+  memoryContext: string[];
+  planNodeId: string;
+}
+
 export interface BrainResponse {
   operations: MemoryOperation[];
   message: string | null;
@@ -169,6 +177,7 @@ export interface BrainResponse {
     conversationThreads?: ConversationThread[];
   };
   goalOps?: GoalOperation[];
+  improvementProposals?: ImprovementProposal[];
 }
 
 // ── Decay Constants ──

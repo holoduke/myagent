@@ -608,17 +608,19 @@ export function getDashboardHTML(): string {
 
     async function loadSettings() {
       try {
-        const [dashRes, cfgRes] = await Promise.all([
+        const [dashRes, cfgRes, queueRes] = await Promise.all([
           fetch('/api/dashboard', { headers: authHeaders() }),
           fetch('/api/brain-config', { headers: authHeaders() }),
+          fetch('/api/improve-queue', { headers: authHeaders() }),
         ]);
         if (dashRes.status === 401) { resetAuth(); return; }
         const dash = await dashRes.json();
         const cfg = await cfgRes.json();
+        const queueData = queueRes.ok ? await queueRes.json() : { queue: [], history: [] };
         _characterPresets = cfg.characterPresets || [];
         _currentCharacterType = cfg.config.characterType || 'default';
         _currentCharacterCustom = cfg.config.characterCustomPrompt || '';
-        renderSettings(dash);
+        renderSettings(dash, queueData);
       } catch(e) {
         document.getElementById('settings-content').innerHTML =
           '<div class="card"><p style="color:var(--red)">Failed to load: ' + e.message + '</p></div>';
@@ -665,8 +667,24 @@ export function getDashboardHTML(): string {
       }
     }
 
-    function renderSettings(dash) {
+    async function approveImprovement(id) {
+      try {
+        const res = await fetch('/api/improve-queue/' + id + '/approve', { method: 'POST', headers: authHeaders() });
+        if (res.ok) loadSettings();
+      } catch(e) { console.error('Approve failed:', e); }
+    }
+
+    async function rejectImprovement(id) {
+      try {
+        const res = await fetch('/api/improve-queue/' + id + '/reject', { method: 'POST', headers: authHeaders() });
+        if (res.ok) loadSettings();
+      } catch(e) { console.error('Reject failed:', e); }
+    }
+
+    function renderSettings(dash, queueData) {
       const si = dash.selfImprove || {};
+      const queue = (queueData && queueData.queue) || [];
+      const history = (queueData && queueData.history) || [];
       let html = '';
 
       // Character type
@@ -710,8 +728,59 @@ export function getDashboardHTML(): string {
         if (r.completedAt) html += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px;font-family:var(--mono)">' + fmtDate(r.completedAt) + '</div>';
         html += '</div>';
       }
-      if (!si.pendingTask && !si.lastResult) {
+      if (!si.pendingTask && !si.lastResult && queue.length === 0 && history.length === 0) {
         html += '<div style="color:var(--text-ghost);font-size:13px;padding:10px 0">No self-improvement activity yet</div>';
+      }
+
+      // Improvement queue
+      const pending = queue.filter(function(i) { return i.status === 'pending'; });
+      const running = queue.filter(function(i) { return i.status === 'running' || i.status === 'approved'; });
+      if (pending.length > 0) {
+        html += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">';
+        html += '<div style="font-size:12px;font-family:var(--mono);color:var(--text-muted);margin-bottom:8px">PROPOSALS AWAITING REVIEW (' + pending.length + ')</div>';
+        for (var qi = 0; qi < pending.length; qi++) {
+          var item = pending[qi];
+          html += '<div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px">';
+          html += '<div style="font-size:13px;color:var(--text)">' + esc(item.task.description) + '</div>';
+          html += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px;font-family:var(--mono)">' + esc(item.task.rationale || '') + '</div>';
+          if (item.task.files && item.task.files.length > 0) {
+            html += '<div style="font-size:11px;color:var(--text-ghost);margin-top:2px;font-family:var(--mono)">Files: ' + esc(item.task.files.join(', ')) + '</div>';
+          }
+          html += '<div class="btn-row" style="margin-top:8px">';
+          html += '<button class="btn" style="font-size:11px;padding:4px 12px" onclick="approveImprovement(\'' + esc(item.id) + '\')">Approve</button>';
+          html += '<button class="btn danger" style="font-size:11px;padding:4px 12px" onclick="rejectImprovement(\'' + esc(item.id) + '\')">Reject</button>';
+          html += '</div></div>';
+        }
+        html += '</div>';
+      }
+      if (running.length > 0) {
+        html += '<div style="margin-top:8px">';
+        for (var ri = 0; ri < running.length; ri++) {
+          var rItem = running[ri];
+          html += '<div style="font-size:12px;color:var(--yellow);font-family:var(--mono);padding:4px 0">';
+          html += (rItem.status === 'running' ? 'Running' : 'Approved, waiting') + ': ' + esc(rItem.task.description.slice(0, 60));
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+
+      // Recent history
+      var recentHistory = history.slice(0, 5);
+      if (recentHistory.length > 0) {
+        html += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">';
+        html += '<div style="font-size:12px;font-family:var(--mono);color:var(--text-muted);margin-bottom:8px">RECENT HISTORY</div>';
+        for (var hi = 0; hi < recentHistory.length; hi++) {
+          var hItem = recentHistory[hi];
+          var statusColor = hItem.status === 'completed' ? 'var(--green)' : hItem.status === 'rejected' ? 'var(--text-ghost)' : 'var(--red)';
+          html += '<div style="font-size:12px;font-family:var(--mono);padding:3px 0">';
+          html += '<span style="color:' + statusColor + '">' + esc(hItem.status) + '</span> ';
+          html += '<span style="color:var(--text-muted)">' + esc((hItem.task.description || '').slice(0, 50)) + '</span>';
+          if (hItem.result && hItem.result.prUrl) {
+            html += ' <a href="' + esc(hItem.result.prUrl) + '" target="_blank" style="color:var(--cyan);text-decoration:none">PR</a>';
+          }
+          html += '</div>';
+        }
+        html += '</div>';
       }
       html += '</div>';
 

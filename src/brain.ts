@@ -132,6 +132,7 @@ function parseBrainResponse(raw: string): BrainResponse | null {
       reasoning: parsed.reasoning ?? "",
       workingMemory: parsed.workingMemory ?? undefined,
       goalOps: Array.isArray(parsed.goalOps) ? parsed.goalOps : undefined,
+      improvementProposals: Array.isArray(parsed.improvementProposals) ? parsed.improvementProposals : undefined,
     };
   } catch {
     log(`Failed to parse brain response: ${raw.slice(0, 200)}`);
@@ -990,6 +991,16 @@ async function reflectTick(
 
   const cfg = getBrainConfig();
 
+  // Gather self-improvement stats for the reflect prompt
+  const improveQueue = loadQueue();
+  const selfImproveStats = {
+    enabled: cfg.selfImproveEnabled,
+    maxPerWeek: cfg.selfImproveMaxPerWeek,
+    completedThisWeek: getWeeklyCompletedCount(),
+    pendingInQueue: improveQueue.items.filter(i => i.status === "pending" || i.status === "approved").length,
+    autoApprove: cfg.selfImproveAutoApprove,
+  };
+
   log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals`);
 
   const prompt = buildReflectPrompt({
@@ -1007,6 +1018,7 @@ async function reflectTick(
     goalsSection,
     initiativeSignals,
     responsivenessPreset: getActivePreset(cfg),
+    selfImproveStats,
   });
 
   try {
@@ -1038,6 +1050,35 @@ async function reflectTick(
     if (response.goalOps && response.goalOps.length > 0) {
       goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
       wm.activeGoals = goalTracker.getWorkingGoalRefs();
+    }
+
+    // Enqueue self-improvement proposals
+    if (response.improvementProposals && response.improvementProposals.length > 0 && cfg.selfImproveEnabled) {
+      const weeklyRemaining = cfg.selfImproveMaxPerWeek - getWeeklyCompletedCount();
+      const currentPending = loadQueue().items.filter(i => i.status === "pending" || i.status === "approved" || i.status === "running").length;
+      const canEnqueue = Math.max(0, weeklyRemaining - currentPending);
+
+      for (const proposal of response.improvementProposals.slice(0, canEnqueue)) {
+        if (!proposal.description || !proposal.rationale) {
+          log(`Skipping invalid improvement proposal: missing description or rationale`);
+          continue;
+        }
+        const task = {
+          type: "improvement" as const,
+          description: proposal.description,
+          rationale: proposal.rationale,
+          files: Array.isArray(proposal.files) ? proposal.files : [],
+          memoryContext: Array.isArray(proposal.memoryContext) ? proposal.memoryContext : [],
+          planNodeId: proposal.planNodeId || "",
+          createdAt: Date.now(),
+        };
+        enqueue(task);
+        log(`Enqueued improvement proposal: ${proposal.description.slice(0, 80)}`);
+      }
+
+      if (response.improvementProposals.length > canEnqueue) {
+        log(`Dropped ${response.improvementProposals.length - canEnqueue} proposals (weekly budget/queue limit)`);
+      }
     }
 
     if (response.workingMemory) {
