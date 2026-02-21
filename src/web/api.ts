@@ -16,6 +16,9 @@ import type { HAConfig, HAConnectionMode } from "../homeassistant.js";
 import { getRSSStatus, addFeed, removeFeed } from "../rss.js";
 import { getOwnTracksStatus } from "../owntracks.js";
 import { isAuthenticated, readBody } from "./auth.js";
+import { loadJobs, createJob, getJob, updateJob, cancelJob, getJobStats } from "../jobs.js";
+import { getAllTools, getTool, registerTool, updateTool as updateToolReg } from "../tool-registry.js";
+import { getExecutorStatus } from "../job-executor.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
 import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS, CHARACTER_PRESETS } from "../brain-config.js";
 import type { BrainConfig } from "../brain-config.js";
@@ -306,6 +309,108 @@ export function handleApiRoutes(
     }
     if (req.method === "PUT") {
       handleBrainConfigUpdate(req, res);
+      return true;
+    }
+  }
+
+  // ── Jobs API ──
+
+  if (pathname === "/api/jobs" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      const store = loadJobs();
+      const stats = getJobStats();
+      const executor = getExecutorStatus();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ jobs: store.jobs, stats, executor }));
+      return true;
+    }
+    if (req.method === "POST") {
+      handleJobCreate(req, res);
+      return true;
+    }
+  }
+
+  const jobMatch = pathname.match(/^\/api\/jobs\/([^/]+)$/);
+  if (jobMatch && isAuthenticated(req)) {
+    const jobId = jobMatch[1];
+    if (req.method === "GET") {
+      const job = getJob(jobId);
+      if (!job) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Job not found" }));
+      } else {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(job));
+      }
+      return true;
+    }
+    if (req.method === "PUT") {
+      handleJobUpdate(req, res, jobId);
+      return true;
+    }
+    if (req.method === "DELETE") {
+      try {
+        cancelJob(jobId);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return true;
+    }
+  }
+
+  const jobQueueMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/queue$/);
+  if (jobQueueMatch && req.method === "POST" && isAuthenticated(req)) {
+    try {
+      updateJob(jobQueueMatch[1], { status: "queued" });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return true;
+  }
+
+  // ── Tools API ──
+
+  if (pathname === "/api/tools" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      const tools = getAllTools();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ tools }));
+      return true;
+    }
+    if (req.method === "POST") {
+      handleToolRegister(req, res);
+      return true;
+    }
+  }
+
+  const toolMatch = pathname.match(/^\/api\/tools\/([^/]+)$/);
+  if (toolMatch && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      const tool = getTool(toolMatch[1]);
+      if (!tool) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Tool not found" }));
+      } else {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(tool));
+      }
+      return true;
+    }
+    if (req.method === "DELETE") {
+      try {
+        updateToolReg(toolMatch[1], { status: "removed" });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
       return true;
     }
   }
@@ -763,6 +868,64 @@ async function handleHATestConnection(req: IncomingMessage, res: ServerResponse)
     log(`HA test connection error: ${err}`);
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+// ── Job handlers ──
+
+async function handleJobCreate(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    const job = createJob({
+      type: body.type || "job",
+      title: body.title || "",
+      description: body.description || "",
+      source: "dashboard",
+      toolId: body.toolId,
+      scheduledFor: body.scheduledFor,
+    });
+    // Auto-queue if it has a command
+    if (body.command) {
+      updateJob(job.id, { command: body.command, status: "queued" });
+    }
+    res.writeHead(201, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(job));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+async function handleJobUpdate(req: IncomingMessage, res: ServerResponse, jobId: string) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    const job = updateJob(jobId, body);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(job));
+  } catch (err) {
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: String(err) }));
+  }
+}
+
+// ── Tool handlers ──
+
+async function handleToolRegister(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    const tool = registerTool({
+      name: body.name || "",
+      description: body.description || "",
+      imageName: body.imageName || `aria-tool-${(body.name || "unknown").toLowerCase().replace(/[^a-z0-9]/g, "-")}`,
+      dockerfile: body.dockerfile || "",
+      capabilities: Array.isArray(body.capabilities) ? body.capabilities : [],
+      status: body.status,
+    });
+    res.writeHead(201, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(tool));
+  } catch (err) {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: String(err) }));
   }
 }
 
