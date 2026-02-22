@@ -601,14 +601,13 @@ async function tick(
       log(`Initiative-triggered think (${highPrioritySignals.length} high-priority signals)`);
     }
     tickSucceeded = await thinkTick(state, newObs, queue, sendMessage, ownerJid, signals);
+    // Clear urgency only after think ticks — reflect/consolidate don't process urgent messages
+    clearPendingUrgency();
   } else {
     // Nothing to do this tick
     saveState(state);
     return;
   }
-
-  // Clear urgency after processing
-  clearPendingUrgency();
 
   // ── Track success/failure for health ──
   if (!tickSucceeded) {
