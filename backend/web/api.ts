@@ -809,7 +809,7 @@ async function handleGmailAddAccount(req: IncomingMessage, res: ServerResponse) 
       res.end(JSON.stringify({ error: "id, email, clientId, and clientSecret are required" }));
       return;
     }
-    const uri = redirectUri || `${req.headers.origin || "http://localhost:3000"}/gmail/auth/${id}/callback`;
+    const uri = redirectUri || `${req.headers.origin || "http://localhost:3000"}/gmail/callback`;
     const account = addAccount(id, email, clientId, clientSecret, uri);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ success: true, account: { id: account.id, email: account.email } }));
