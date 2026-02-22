@@ -8,7 +8,8 @@ export type NodeType =
   | "emotion"
   | "plan"
   | "meta"
-  | "goal";
+  | "goal"
+  | "concept";
 
 export interface MemoryNode {
   id: string;
@@ -30,7 +31,8 @@ export type EdgeType =
   | "social"
   | "topical"
   | "emotional"
-  | "contradicts";
+  | "contradicts"
+  | "hierarchical";
 
 export interface MemoryEdge {
   from: string;
@@ -191,6 +193,7 @@ export const DECAY_LAMBDA: Record<NodeType, number> = {
   emotion: 0.008,   // ~3.6-day half-life
   meta:    0.003,
   goal:    0.001,   // very slow — goals persist
+  concept: 0.001,   // very slow — concepts are structural
 };
 
 export const PRUNE_NODE_THRESHOLD = 0.05;

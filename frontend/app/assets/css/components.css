@@ -119,6 +119,7 @@
 .type-badge.plan { background: #0e1a30; color: #60c0e0; border: 1px solid #1a3040; }
 .type-badge.meta { background: #1a1a22; color: #9090a0; border: 1px solid #2a2a38; }
 .type-badge.goal { background: #1a2e2e; color: #60d4d4; border: 1px solid #1a4040; }
+.type-badge.concept { background: #2a1a2e; color: #c080e0; border: 1px solid #3a2a40; }
 
 /* ── Memory nodes ── */
 .node {
