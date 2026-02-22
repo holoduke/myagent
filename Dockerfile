@@ -21,7 +21,7 @@ RUN npm ci --omit=dev
 
 # Copy source
 COPY tsconfig.json ./
-COPY src/ ./src/
+COPY backend/ ./backend/
 
 # Create directories for persistent data (will be mounted as volumes)
 RUN mkdir -p /data/auth_state /data/claude /data/brain /data/agents

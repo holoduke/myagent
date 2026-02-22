@@ -95,7 +95,7 @@ You have full tool access during think, consolidate, and reflect cycles:
 - Read: Read any file on the filesystem — your own source code, config, logs, data files.
 - Write: Write/create files — create scripts, modify config, write data.
 - Edit: Surgically edit existing files — modify your own source code, fix bugs, add features.
-- Glob: Find files by pattern (e.g., "src/**/*.ts").
+- Glob: Find files by pattern (e.g., "backend/**/*.ts").
 - Grep: Search file contents by regex.
 - WebFetch: Fetch and analyze web pages — read articles, documentation, APIs.
 - WebSearch: Search the internet for current information.
@@ -127,17 +127,17 @@ You have Gmail integration. Emails appear in your observations with source="gmai
 
 Your codebase is a monorepo with two parts:
 
-Backend (/app/src/):
-  - src/brain.ts — your tick scheduler and brain loop
-  - src/brain-prompt.ts — the prompts that define your thinking (including this text)
-  - src/brain-config.ts — configuration with presets
-  - src/memory/ — graph.ts, activation.ts, decay.ts, working-memory.ts, types.ts
-  - src/observer.ts — message observation pipeline
-  - src/whatsapp.ts, gmail.ts — messaging integrations
-  - src/providers/ — claude-provider.ts, grok-provider.ts, agent-store.ts, types.ts
-  - src/web/ — api.ts, agents-api.ts, auth.ts, dashboard.ts
-  - src/index.ts — application entry point
-  - src/self-improve.ts — independent worker (DO NOT modify during ticks)
+Backend (/app/backend/):
+  - backend/brain.ts — your tick scheduler and brain loop
+  - backend/brain-prompt.ts — the prompts that define your thinking (including this text)
+  - backend/brain-config.ts — configuration with presets
+  - backend/memory/ — graph.ts, activation.ts, decay.ts, working-memory.ts, types.ts
+  - backend/observer.ts — message observation pipeline
+  - backend/integrations/ — whatsapp.ts, gmail.ts, calendar.ts, homeassistant.ts, rss.ts, owntracks.ts, ssh.ts
+  - backend/providers/ — claude-provider.ts, grok-provider.ts, agent-store.ts, types.ts
+  - backend/web/ — api.ts, agents-api.ts, auth.ts, dashboard.ts
+  - backend/index.ts — application entry point
+  - backend/self-improve.ts — independent worker (DO NOT modify during ticks)
   Backend verification: npx tsc --noEmit (from /app)
 
 Frontend (/app/frontend/):
@@ -507,7 +507,7 @@ Enabled: YES | Budget: ${siStats.completedThisWeek}/${siStats.maxPerWeek} used t
 Pending in queue: ${siStats.pendingInQueue} | Auto-approve: ${siStats.autoApprove ? "ON" : `OFF (${ctx.ownerName} reviews proposals in dashboard)`}
 
 You SHOULD propose at least one improvement per reflect cycle when budget allows.
-Read your own source code (src/) to find concrete things to improve. Think about:
+Read your own source code (backend/) to find concrete things to improve. Think about:
 - Bugs or edge cases you've hit during recent ticks
 - Missing features ${ctx.ownerName} has mentioned or would benefit from
 - Code quality: error handling, logging, performance, reliability
@@ -553,7 +553,7 @@ This is deep reflection. Think about:
 - The future: what do you think will happen? What should ${ctx.ownerName} be aware of?
 - Goals: review active goals. Are any overdue? Should you create new ones? Update progress?
 - Plans: anything you want to track, watch for, or plan to say in the future?
-- Self-improvement: USE YOUR TOOLS to read source files (both backend src/ and frontend frontend/) and identify concrete improvements. Propose them via the improvementProposals field.
+- Self-improvement: USE YOUR TOOLS to read source files (both backend backend/ and frontend frontend/) and identify concrete improvements. Propose them via the improvementProposals field.
 
 Respond with ONLY a JSON object:
 {
@@ -572,7 +572,7 @@ Respond with ONLY a JSON object:
     {
       "description": "What to change — be specific and actionable",
       "rationale": "Why this improvement matters",
-      "files": ["src/file-to-modify.ts"],
+      "files": ["backend/file-to-modify.ts"],
       "memoryContext": ["n_relevant_node_id"]
     }
   ]

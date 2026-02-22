@@ -4,8 +4,8 @@
   "description": "ARIA — Autonomous Reasoning & Insight Agent",
   "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts"
+    "start": "tsx backend/index.ts",
+    "dev": "tsx watch backend/index.ts"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.16",

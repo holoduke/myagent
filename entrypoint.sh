@@ -52,7 +52,7 @@ echo "[entrypoint] Boot count: $BOOT_COUNT (deploy: ${CURRENT_DEPLOY})"
 # We start the app immediately so healthcheck passes, recovery runs alongside
 if [ "$BOOT_COUNT" -gt 2 ]; then
   echo "[entrypoint] Repeated crashes detected (boot #$BOOT_COUNT), running recovery worker in background..."
-  (timeout 300 npx tsx src/self-improve.ts --recover 2>&1 || echo "[entrypoint] Recovery worker exited with code $?") &
+  (timeout 300 npx tsx backend/self-improve.ts --recover 2>&1 || echo "[entrypoint] Recovery worker exited with code $?") &
   RECOVERY_PID=$!
   echo "[entrypoint] Recovery worker started (PID: $RECOVERY_PID), continuing with app startup..."
 fi
@@ -60,4 +60,4 @@ fi
 # Start the agent (reset boot counter on clean exit via trap)
 trap 'echo "0" > "$BOOT_COUNTER_FILE"; exit 0' SIGTERM
 
-exec npx tsx src/index.ts
+exec npx tsx backend/index.ts
