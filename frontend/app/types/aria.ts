@@ -1,5 +1,5 @@
-export type NodeType = 'person' | 'event' | 'insight' | 'fact' | 'emotion' | 'plan' | 'meta' | 'goal'
-export type EdgeType = 'causal' | 'temporal' | 'social' | 'topical' | 'emotional' | 'contradicts'
+export type NodeType = 'person' | 'event' | 'insight' | 'fact' | 'emotion' | 'plan' | 'meta' | 'goal' | 'concept'
+export type EdgeType = 'causal' | 'temporal' | 'social' | 'topical' | 'emotional' | 'contradicts' | 'hierarchical'
 
 export interface MemoryNode {
   id: string
@@ -37,6 +37,21 @@ export interface BrainState {
   pendingSelfMod: boolean
 }
 
+export interface GraphEdge {
+  from: string
+  to: string
+  type: EdgeType
+  weight: number
+}
+
+export interface ConceptTreeNode {
+  id: string
+  content: string
+  strength: number
+  childCount: number
+  children: GraphNode[]
+}
+
 export interface GraphData {
   nodeCount: number
   edgeCount: number
@@ -46,6 +61,8 @@ export interface GraphData {
   strongestNodes: GraphNode[]
   weakestNodes: GraphNode[]
   recentNodes: GraphNode[]
+  edges?: GraphEdge[]
+  conceptTree?: ConceptTreeNode[]
 }
 
 export interface GraphNode {

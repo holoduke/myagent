@@ -35,7 +35,15 @@ export function applyDecay(graph: MemoryGraph): { decayed: number; pruned: numbe
     const lambda = DECAY_LAMBDA[node.type] ?? 0.004;
     // Logarithmic resistance: more accesses = slower decay
     const resistance = 1 / (1 + Math.log2(1 + node.accessCount));
-    const effectiveLambda = lambda * resistance;
+    let effectiveLambda = lambda * resistance;
+
+    // Concept nodes with children decay slower — they're structurally important
+    if (node.type === "concept") {
+      const childCount = graph.getChildren(node.id).length;
+      if (childCount > 0) {
+        effectiveLambda *= 0.5;
+      }
+    }
 
     const newStrength = node.strength * Math.exp(-effectiveLambda * hoursSinceAccess);
     if (newStrength !== node.strength) {
@@ -108,6 +116,8 @@ export function pruneOrphans(graph: MemoryGraph): number {
     if (node.pinned) continue;
     const edges = graph.edgesFor(node.id);
     if (edges.length > 0) continue;
+    // Skip concept nodes with children — they're not truly orphaned
+    if (node.type === "concept" && graph.getChildren(node.id).length > 0) continue;
     if (now - node.createdAt < graceMs) continue;
 
     graph.removeNode(node.id);

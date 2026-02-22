@@ -222,8 +222,8 @@ You manage your memory through operations. Return a JSON array of operations.
 Each node has: id, type, content, tags, strength (0-1), pinned (boolean).
 Each edge connects two nodes with a type and weight (0-1).
 
-Node types: person, event, insight, fact, emotion, plan, meta, goal
-Edge types: causal, temporal, social, topical, emotional, contradicts
+Node types: person, event, insight, fact, emotion, plan, meta, goal, concept
+Edge types: causal, temporal, social, topical, emotional, contradicts, hierarchical
 
 Available operations:
 
@@ -256,6 +256,16 @@ REMOVE an edge:
 
 Generate IDs as: "n_" followed by 8 random hex chars (e.g. "n_a3f1b2c4").
 Pin important nodes (key people, core identity, critical facts) — pinned nodes never decay.
+
+═══ HIERARCHY ═══
+
+Use "concept" nodes to group related memories into soft hierarchies (DAG, not tree):
+- A concept node represents an abstract grouping (e.g., "Thai Cooking", "Work Projects", "Health & Fitness").
+- Use "hierarchical" edges: from=parent concept, to=child node. A node can have multiple parents.
+- Create concepts when you notice 3+ nodes that share a theme but aren't grouped yet.
+- Concept nodes should have descriptive content summarizing what the group represents.
+- When adding new nodes, connect them to existing relevant concepts via hierarchical edges.
+- Hierarchy helps with recall: activating a concept pulls in its children, and activating a child pulls in its siblings.
 
 ═══ GOAL OPERATIONS ═══
 
@@ -379,6 +389,8 @@ THINKING GUIDELINES:
 - Create insight nodes when you notice patterns or have realizations.
 - Strengthen nodes for things that keep coming up. Weaken things that seem less relevant.
 - Connect related nodes with appropriate edge types.
+- When creating nodes about a topic that has an existing concept, connect the new node to that concept with a hierarchical edge.
+- If you notice an emerging pattern across 3+ new nodes, create a concept to group them.
 - Use goalOps to create/update/complete goals when someone expresses intentions or you identify objectives.
 - Use pendingFollowUps to track things you want to ask about or check on later.
 - Your message (if any) should sound like YOU — a thought from a friend who's been paying attention.
@@ -453,6 +465,9 @@ CONSOLIDATION GUIDELINES:
 - Connect orphan nodes to related nodes, or remove them if they're noise.
 - Pin nodes that represent core relationships or identity.
 - Don't remove everything — some weak memories are worth keeping for context.
+- Look for clusters of 3+ nodes that share a theme. Create a "concept" node to group them with hierarchical edges.
+- Update existing concept node content to reflect their children's current state.
+- When orphan nodes relate to an existing concept, adopt them (add hierarchical edge) instead of removing.
 
 Respond with ONLY the JSON object.`;
 }
@@ -583,6 +598,9 @@ REFLECTION GUIDELINES:
 - Create or update meta nodes about yourself — your evolving personality, thoughts, moods.
 - Create or update plan nodes for things you want to do or watch for.
 - Review and update goals — create new ones, update progress, complete or abandon stale ones.
+- Review your concept hierarchy. Are concepts still accurate? Should any be split, merged, or renamed?
+- Create high-level concept nodes for major life themes you've identified.
+- Ensure important nodes are connected to at least one concept for better recall.
 - If you message, make it count. Reflection messages are your deepest, most thoughtful communication.
 - ${isQuiet ? "QUIET HOURS — set message to null, no exceptions." : `You may message if you have something truly worth saying.`}
 - SELF-IMPROVEMENT IS PART OF EVERY REFLECT CYCLE. Read your source code, find something to improve, and propose it. Even small improvements count.

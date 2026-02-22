@@ -128,6 +128,43 @@ export function spreadingActivation(
     }
   }
 
+  // Hierarchical boost pass: after normal spreading, boost via hierarchy
+  const hierarchicalIds = Array.from(activations.keys());
+  for (const id of hierarchicalIds) {
+    const nodeActivation = activations.get(id)!;
+
+    // If this node has concept parents, activate siblings
+    const parents = graph.getParents(id);
+    for (const parent of parents) {
+      const parentAct = activations.get(parent.id) || 0;
+      // Activate the parent concept if not already
+      if (!activations.has(parent.id)) {
+        activations.set(parent.id, nodeActivation * 0.4);
+      }
+      // Activate siblings (other children of the same parent)
+      const siblings = graph.getChildren(parent.id);
+      for (const sibling of siblings) {
+        if (sibling.id === id) continue;
+        const siblingBoost = 0.3 * (parentAct || nodeActivation * 0.4) * sibling.strength;
+        if (siblingBoost < 0.01) continue;
+        const existing = activations.get(sibling.id) || 0;
+        activations.set(sibling.id, Math.max(existing, siblingBoost));
+      }
+    }
+
+    // If this is a concept node, activate all children
+    const node = graph.getNode(id);
+    if (node && node.type === "concept") {
+      const children = graph.getChildren(id);
+      for (const child of children) {
+        const childBoost = 0.6 * nodeActivation * child.strength;
+        if (childBoost < 0.01) continue;
+        const existing = activations.get(child.id) || 0;
+        activations.set(child.id, Math.max(existing, childBoost));
+      }
+    }
+  }
+
   // Collect and sort by activation
   const results: ActivatedNode[] = [];
   for (const [id, activation] of activations) {
@@ -169,11 +206,24 @@ export function selectContextForThink(
   // Re-sort after boosting
   activated.sort((a, b) => b.activation - a.activation);
 
+  // Inject concept parents for activated nodes
+  const conceptNodes: MemoryNode[] = [];
+  const seenConcepts = new Set<string>();
+  for (const a of activated) {
+    const parents = graph.getParents(a.node.id);
+    for (const parent of parents) {
+      if (parent.type === "concept" && !seenConcepts.has(parent.id) && !activated.some(x => x.node.id === parent.id)) {
+        seenConcepts.add(parent.id);
+        conceptNodes.push(parent);
+      }
+    }
+  }
+
   // Also include working memory's activated nodes
   const wmNodes: MemoryNode[] = [];
   for (const id of wm.activatedNodeIds) {
     const node = graph.getNode(id);
-    if (node && !activated.some(a => a.node.id === id)) {
+    if (node && !activated.some(a => a.node.id === id) && !conceptNodes.some(c => c.id === id)) {
       wmNodes.push(node);
     }
   }
@@ -185,11 +235,12 @@ export function selectContextForThink(
 
   const result = [
     ...pinned,
+    ...conceptNodes,
     ...activated.map(a => a.node),
     ...wmNodes.slice(0, 5),
   ];
 
-  log(`Think context selected: ${result.length} nodes (${pinned.length} pinned, ${activated.length} activated, ${wmNodes.length} from WM)`);
+  log(`Think context selected: ${result.length} nodes (${pinned.length} pinned, ${conceptNodes.length} concepts, ${activated.length} activated, ${wmNodes.length} from WM)`);
   return result.slice(0, 35);
 }
 
@@ -267,17 +318,35 @@ export function serializeNodesForPrompt(nodes: MemoryNode[], graph: MemoryGraph)
 
   return nodes.map(node => {
     const edges = graph.edgesFor(node.id);
-    const connections = edges.slice(0, 5).map(e => {
+    const nonHierarchical = edges.filter(e => e.type !== "hierarchical").slice(0, 5);
+    const connections = nonHierarchical.map(e => {
       const otherId = e.from === node.id ? e.to : e.from;
       const other = graph.getNode(otherId);
       const label = other ? other.content.slice(0, 30) : otherId;
       return `${e.type}→${label}`;
     });
 
+    // Show hierarchical info
+    const parents = graph.getParents(node.id);
+    const children = graph.getChildren(node.id);
+    const parentStr = parents.length > 0
+      ? ` | parent: ${parents.map(p => `${p.content.slice(0, 30)} (${p.type})`).join(", ")}`
+      : "";
+    const childStr = children.length > 0
+      ? ` | children: ${children.length}`
+      : "";
+
+    // For concept nodes, show sibling count
+    let siblingStr = "";
+    if (parents.length > 0) {
+      const siblingCount = parents.reduce((sum, p) => sum + graph.getChildren(p.id).length - 1, 0);
+      if (siblingCount > 0) siblingStr = ` | siblings: ${siblingCount} more`;
+    }
+
     const connStr = connections.length > 0 ? ` | links: ${connections.join(", ")}` : "";
     const pinStr = node.pinned ? " [PINNED]" : "";
     const tags = node.tags.length > 0 ? ` #${node.tags.join(" #")}` : "";
 
-    return `[${node.id}] (${node.type}, str:${node.strength.toFixed(2)}${pinStr})${tags}\n  ${node.content.slice(0, 200)}${connStr}`;
+    return `[${node.id}] (${node.type}, str:${node.strength.toFixed(2)}${pinStr})${tags}\n  ${node.content.slice(0, 200)}${connStr}${parentStr}${childStr}${siblingStr}`;
   }).join("\n\n");
 }

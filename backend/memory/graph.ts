@@ -231,6 +231,70 @@ export class MemoryGraph {
     return [...this.edgesFrom(id), ...this.edgesTo(id)];
   }
 
+  // ── Hierarchical Traversal ──
+
+  /** Get direct children of a node (via hierarchical edges where this node is parent) */
+  getChildren(id: string): MemoryNode[] {
+    return this.edgesFrom(id)
+      .filter(e => e.type === "hierarchical")
+      .map(e => this.nodes.get(e.to))
+      .filter((n): n is MemoryNode => n != null);
+  }
+
+  /** Get direct parents of a node (via hierarchical edges where this node is child) */
+  getParents(id: string): MemoryNode[] {
+    return this.edgesTo(id)
+      .filter(e => e.type === "hierarchical")
+      .map(e => this.nodes.get(e.from))
+      .filter((n): n is MemoryNode => n != null);
+  }
+
+  /** Get all ancestors up to maxDepth (BFS up through parents) */
+  getAncestors(id: string, maxDepth = 5): MemoryNode[] {
+    const visited = new Set<string>([id]);
+    const result: MemoryNode[] = [];
+    let frontier = [id];
+
+    for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
+      const nextFrontier: string[] = [];
+      for (const nodeId of frontier) {
+        for (const parent of this.getParents(nodeId)) {
+          if (!visited.has(parent.id)) {
+            visited.add(parent.id);
+            result.push(parent);
+            nextFrontier.push(parent.id);
+          }
+        }
+      }
+      frontier = nextFrontier;
+    }
+
+    return result;
+  }
+
+  /** Get all descendants down to maxDepth (BFS down through children) */
+  getDescendants(id: string, maxDepth = 3): MemoryNode[] {
+    const visited = new Set<string>([id]);
+    const result: MemoryNode[] = [];
+    let frontier = [id];
+
+    for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
+      const nextFrontier: string[] = [];
+      for (const nodeId of frontier) {
+        for (const child of this.getChildren(nodeId)) {
+          if (!visited.has(child.id)) {
+            visited.add(child.id);
+            result.push(child);
+            nextFrontier.push(child.id);
+          }
+        }
+      }
+      frontier = nextFrontier;
+    }
+
+    return result;
+  }
+
   // ── Merge ──
 
   mergeNodes(ids: string[], into: { content: string; tags: string[] }): string | null {

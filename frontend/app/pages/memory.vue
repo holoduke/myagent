@@ -44,6 +44,7 @@
           <UiStatCard :value="g.edgeCount || 0" label="Edges" />
           <UiStatCard :value="(g.avgStrength || 0).toFixed(3)" label="Avg Strength" />
           <UiStatCard :value="pinnedList.length" label="Pinned" />
+          <UiStatCard :value="conceptCount" label="Concepts" />
         </div>
         <div v-if="g.byType && Object.keys(g.byType).length" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
           <span v-for="(count, type) in g.byType" :key="type" class="type-badge" :class="type">
@@ -77,23 +78,65 @@
       <!-- Filtered results -->
       <UiCard v-if="searchQuery || typeFilter" title="Search Results" :icon="icons.search" style="margin-bottom:16px">
         <div v-if="filteredNodes.length" class="node-list">
-          <MemoryNode v-for="n in filteredNodes" :key="n.id" :node="n" :show-time="true" />
+          <MemoryNode
+            v-for="n in filteredNodes" :key="n.id" :node="n" :show-time="true"
+            :parent-concepts="getParentConcepts(n.id)"
+          />
         </div>
         <div v-else class="empty-hint">No memories match your search</div>
       </UiCard>
 
-      <!-- Core Directives -->
       <template v-if="!searchQuery && !typeFilter">
+        <!-- Concept Map -->
+        <UiCard title="Concept Map" :icon="icons.concept" style="margin-bottom:16px">
+          <div v-if="conceptTree.length" class="concept-grid">
+            <div
+              v-for="concept in conceptTree" :key="concept.id"
+              class="concept-card"
+              :class="{ expanded: expandedConcepts.has(concept.id) }"
+              @click="toggleConcept(concept.id)"
+            >
+              <div class="concept-hdr">
+                <span class="concept-name">{{ concept.content.slice(0, 60) }}</span>
+                <span class="concept-count">{{ concept.childCount }} nodes</span>
+                <span class="str">
+                  <span class="str-bar">
+                    <span class="str-fill" :style="{ width: ((concept.strength ?? 0) * 100) + '%' }"></span>
+                  </span>
+                </span>
+              </div>
+              <div v-if="expandedConcepts.has(concept.id) && concept.children.length" class="concept-children">
+                <MemoryNode
+                  v-for="child in concept.children" :key="child.id" :node="child"
+                />
+              </div>
+              <div v-if="expandedConcepts.has(concept.id) && !concept.children.length" class="empty-hint" style="padding:8px">
+                No children loaded
+              </div>
+            </div>
+          </div>
+          <div v-else class="empty-hint" style="padding:20px">
+            No concepts yet — ARIA will organize memories as patterns emerge
+          </div>
+        </UiCard>
+
+        <!-- Core Directives -->
         <UiCard v-if="pinnedList.length" title="Core Directives" :icon="icons.pin" style="margin-bottom:16px">
           <div class="node-list">
-            <MemoryNode v-for="n in pinnedList" :key="n.id" :node="n" :pinned="true" />
+            <MemoryNode
+              v-for="n in pinnedList" :key="n.id" :node="n" :pinned="true"
+              :parent-concepts="getParentConcepts(n.id)"
+            />
           </div>
         </UiCard>
 
         <!-- Strongest Memories -->
         <UiCard v-if="strongList.length" title="Strongest Memories" :icon="icons.star" style="margin-bottom:16px">
           <div class="node-list">
-            <MemoryNode v-for="n in displayedStrongest" :key="n.id" :node="n" />
+            <MemoryNode
+              v-for="n in displayedStrongest" :key="n.id" :node="n"
+              :parent-concepts="getParentConcepts(n.id)"
+            />
           </div>
           <button v-if="strongList.length > 10 && !showAllStrongest" class="btn" style="margin-top:8px" @click="showAllStrongest = true">
             Show all {{ strongList.length }} memories
@@ -103,7 +146,10 @@
         <!-- Recent Memories -->
         <UiCard v-if="recentList.length" title="Recent Memories" :icon="icons.clock" style="margin-bottom:16px">
           <div class="node-list">
-            <MemoryNode v-for="n in recentList" :key="n.id" :node="n" :show-time="true" />
+            <MemoryNode
+              v-for="n in recentList" :key="n.id" :node="n" :show-time="true"
+              :parent-concepts="getParentConcepts(n.id)"
+            />
           </div>
         </UiCard>
 
@@ -111,7 +157,10 @@
         <UiCard v-if="weakList.length" title="Decaying Memories" :icon="icons.fade" style="margin-bottom:16px">
           <p class="card-hint">These memories are fading and may be pruned soon.</p>
           <div class="node-list">
-            <MemoryNode v-for="n in weakList" :key="n.id" :node="n" />
+            <MemoryNode
+              v-for="n in weakList" :key="n.id" :node="n"
+              :parent-concepts="getParentConcepts(n.id)"
+            />
           </div>
         </UiCard>
 
@@ -126,7 +175,7 @@
 </template>
 
 <script setup lang="ts">
-import type { AriaStatus, GraphNode } from '~/types/aria'
+import type { AriaStatus, GraphNode, ConceptTreeNode } from '~/types/aria'
 
 const { api } = useApi()
 const { timeAgo } = useTimeAgo()
@@ -136,6 +185,7 @@ const renderError = ref('')
 const searchQuery = ref('')
 const typeFilter = ref('')
 const showAllStrongest = ref(false)
+const expandedConcepts = ref(new Set<string>())
 
 onErrorCaptured((err) => {
   renderError.value = err instanceof Error ? err.message : String(err)
@@ -146,6 +196,38 @@ onErrorCaptured((err) => {
 const g = computed(() => data.value?.graph ?? {} as Partial<AriaStatus['graph']>)
 const wm = computed(() => data.value?.workingMemory ?? null)
 const bs = computed(() => data.value?.brainState ?? null)
+
+const conceptTree = computed<ConceptTreeNode[]>(() => {
+  try { return Array.isArray(g.value.conceptTree) ? g.value.conceptTree : [] }
+  catch { return [] }
+})
+
+const conceptCount = computed(() => g.value.byType?.concept ?? 0)
+
+// Build a map of nodeId → parent concept names for badge display
+const parentConceptMap = computed(() => {
+  const map = new Map<string, string[]>()
+  for (const concept of conceptTree.value) {
+    for (const child of concept.children) {
+      const existing = map.get(child.id) || []
+      existing.push(concept.content.slice(0, 30))
+      map.set(child.id, existing)
+    }
+  }
+  return map
+})
+
+function getParentConcepts(nodeId: string): string[] | undefined {
+  const parents = parentConceptMap.value.get(nodeId)
+  return parents && parents.length > 0 ? parents : undefined
+}
+
+function toggleConcept(id: string) {
+  const s = new Set(expandedConcepts.value)
+  if (s.has(id)) s.delete(id)
+  else s.add(id)
+  expandedConcepts.value = s
+}
 
 const pinnedList = computed(() => {
   try { return Array.isArray(g.value.pinnedNodes) ? g.value.pinnedNodes : [] }
@@ -214,15 +296,12 @@ const icons = {
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
   fade: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>',
+  concept: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 8v3m-4.5 3L10 11.5m7 2.5L14 11.5"/></svg>',
 }
 
 async function loadMemory() {
   try {
     const result = await api<AriaStatus>('/api/aria/status')
-    console.log('[memory] API response keys:', Object.keys(result))
-    console.log('[memory] graph keys:', result.graph ? Object.keys(result.graph) : 'no graph')
-    console.log('[memory] pinnedNodes:', Array.isArray(result.graph?.pinnedNodes) ? result.graph.pinnedNodes.length : 'not array')
-    console.log('[memory] strongestNodes:', Array.isArray(result.graph?.strongestNodes) ? result.graph.strongestNodes.length : 'not array')
     data.value = result
     error.value = ''
   } catch (e) {
@@ -350,11 +429,62 @@ onMounted(loadMemory)
   font-size: 13px;
 }
 
+/* Concept Map */
+.concept-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+.concept-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid #c080e0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color .15s;
+}
+.concept-card:hover { border-color: #c080e0; }
+.concept-card.expanded {
+  grid-column: 1 / -1;
+  border-color: #c080e0;
+}
+.concept-hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.concept-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.concept-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.concept-children {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 @media (max-width: 768px) {
   .section { padding: 16px 12px; }
   .wm-grid { grid-template-columns: 1fr; }
   .kv-grid { grid-template-columns: 1fr 1fr; }
   .search-bar { flex-wrap: wrap; }
   .type-select { width: 100%; }
+  .concept-grid { grid-template-columns: 1fr; }
 }
 </style>

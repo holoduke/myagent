@@ -404,6 +404,47 @@ export function handleApiRoutes(
     return true;
   }
 
+  // ── Memory node relationships ──
+  if (pathname.match(/^\/api\/memory\/node\/[^/]+\/relationships$/) && req.method === "GET" && isAuthenticated(req)) {
+    const nodeId = pathname.split("/")[4];
+    try {
+      const graph = new MemoryGraph();
+      graph.load();
+      const node = graph.getNode(nodeId);
+      if (!node) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Node not found" }));
+        return true;
+      }
+      const parents = graph.getParents(nodeId).map(n => ({ id: n.id, type: n.type, content: n.content, strength: n.strength }));
+      const children = graph.getChildren(nodeId).map(n => ({ id: n.id, type: n.type, content: n.content, strength: n.strength }));
+      // Siblings: other children of this node's parents
+      const siblingIds = new Set<string>();
+      const siblings: { id: string; type: string; content: string; strength: number }[] = [];
+      for (const parent of graph.getParents(nodeId)) {
+        for (const child of graph.getChildren(parent.id)) {
+          if (child.id !== nodeId && !siblingIds.has(child.id)) {
+            siblingIds.add(child.id);
+            siblings.push({ id: child.id, type: child.type, content: child.content, strength: child.strength });
+          }
+        }
+      }
+      const edges = graph.edgesFor(nodeId).map(e => ({ from: e.from, to: e.to, type: e.type, weight: e.weight }));
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        node: { id: node.id, type: node.type, content: node.content, tags: node.tags, strength: node.strength },
+        parents,
+        children,
+        siblings,
+        edges,
+      }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return true;
+  }
+
   // ── Brain config ──
   if (pathname === "/api/brain-config" && isAuthenticated(req)) {
     if (req.method === "GET") {
@@ -504,6 +545,25 @@ function getAriaStatus(): Record<string, unknown> {
         .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
         .slice(0, 10);
 
+      // Build concept tree: find concept nodes and their hierarchical children
+      const conceptTree = nodeList
+        .filter(n => n.type === "concept")
+        .map(concept => {
+          const children = edges
+            .filter(e => e.from === concept.id && e.type === "hierarchical")
+            .map(e => nodeList.find(n => n.id === e.to))
+            .filter((n): n is MemoryNode => n != null)
+            .map(n => ({ id: n.id, type: n.type, content: n.content || "", tags: n.tags || [], strength: n.strength ?? 0 }));
+          return {
+            id: concept.id,
+            content: concept.content || "",
+            strength: concept.strength ?? 0,
+            childCount: children.length,
+            children,
+          };
+        })
+        .sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0));
+
       status.graph = {
         nodeCount: nodeList.length,
         edgeCount: edges.length,
@@ -513,6 +573,8 @@ function getAriaStatus(): Record<string, unknown> {
         strongestNodes: strongest.map(n => ({ id: n.id, type: n.type, content: n.content || "", tags: n.tags || [], strength: n.strength ?? 0, accessCount: n.accessCount ?? 0 })),
         weakestNodes: weakest.map(n => ({ id: n.id, type: n.type, content: n.content || "", strength: n.strength ?? 0 })),
         recentNodes: recent.map(n => ({ id: n.id, type: n.type, content: n.content || "", tags: n.tags || [], strength: n.strength ?? 0, createdAt: n.createdAt ?? 0 })),
+        edges: edges.slice(0, 200).map(e => ({ from: e.from, to: e.to, type: e.type, weight: e.weight })),
+        conceptTree,
       };
     }
   } catch (err) {
