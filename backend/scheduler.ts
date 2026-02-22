@@ -21,10 +21,39 @@ export interface ScheduledMessage {
   retryCount?: number;  // incremented on delivery failure
 }
 
+function isValidScheduledMessage(entry: unknown): entry is ScheduledMessage {
+  if (typeof entry !== "object" || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    typeof e.id === "string" &&
+    typeof e.targetJid === "string" &&
+    typeof e.message === "string" &&
+    typeof e.scheduledAt === "number" &&
+    typeof e.deliverAt === "number" &&
+    typeof e.source === "string"
+  );
+}
+
 function loadSchedule(): ScheduledMessage[] {
   try {
     if (existsSync(SCHEDULE_FILE)) {
-      return JSON.parse(readFileSync(SCHEDULE_FILE, "utf-8"));
+      const raw = JSON.parse(readFileSync(SCHEDULE_FILE, "utf-8"));
+      if (!Array.isArray(raw)) {
+        log("Schedule file is not a JSON array, starting fresh");
+        return [];
+      }
+      const valid: ScheduledMessage[] = [];
+      for (const entry of raw) {
+        if (isValidScheduledMessage(entry)) {
+          valid.push(entry);
+        } else {
+          log(`Skipping invalid schedule entry: ${JSON.stringify(entry).slice(0, 200)}`);
+        }
+      }
+      if (valid.length < raw.length) {
+        log(`Filtered out ${raw.length - valid.length} invalid entry/entries from schedule (${valid.length} valid remaining)`);
+      }
+      return valid;
     }
   } catch {
     log("Failed to read schedule, starting fresh");
