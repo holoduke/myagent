@@ -3,6 +3,7 @@ import { OAuth2Client } from "google-auth-library";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { appendFileSync } from "fs";
 import { recordObservation } from "../observer.js";
+import { isIntegrationEnabled } from "./integration-config.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -418,6 +419,7 @@ export function restartGmailPolling(): void {
 }
 
 async function pollAllAccounts(): Promise<void> {
+  if (!isIntegrationEnabled("gmail")) return;
   const accounts = loadAccounts();
   const state = loadState();
 

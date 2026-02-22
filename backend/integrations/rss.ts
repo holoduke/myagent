@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "
 import { appendFileSync } from "fs";
 import { randomUUID } from "crypto";
 import { recordObservation } from "../observer.js";
+import { isIntegrationEnabled } from "./integration-config.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -148,6 +149,7 @@ export function stopRSSPolling(): void {
 }
 
 async function pollAllFeeds(): Promise<void> {
+  if (!isIntegrationEnabled("rss")) return;
   const feeds = loadFeeds();
   const state = loadState();
 

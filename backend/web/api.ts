@@ -15,6 +15,7 @@ import { getHAStatus, saveConfig, restartHAPolling, testHAConnection } from "../
 import type { HAConfig, HAConnectionMode } from "../integrations/homeassistant.js";
 import { getRSSStatus, addFeed, removeFeed } from "../integrations/rss.js";
 import { getOwnTracksStatus } from "../integrations/owntracks.js";
+import { getIntegrationsConfig, saveIntegrationsConfig, isValidIntegrationKey } from "../integrations/integration-config.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
 import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS, CHARACTER_PRESETS } from "../brain-config.js";
@@ -237,6 +238,12 @@ export function handleApiRoutes(
   if (pathname === "/api/owntracks/status" && req.method === "GET" && isAuthenticated(req)) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(getOwnTracksStatus()));
+    return true;
+  }
+
+  // ── Integrations config ──
+  if (pathname === "/api/integrations/config" && req.method === "PUT" && isAuthenticated(req)) {
+    handleIntegrationsConfigUpdate(req, res);
     return true;
   }
 
@@ -499,6 +506,7 @@ function getDashboardData(queue: MessageQueue) {
     scheduledCount: scheduled.length,
     queueDepth: queue.size,
     claudeUsage: getUsageData(),
+    integrationsEnabled: getIntegrationsConfig(),
     timestamp: Date.now(),
   };
 }
@@ -868,6 +876,36 @@ async function handleRSSRemoveFeed(req: IncomingMessage, res: ServerResponse) {
     const removed = removeFeed(id);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ success: removed }));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+// ── Integrations config handler ──
+
+async function handleIntegrationsConfigUpdate(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+
+    // Validate: all keys must be valid integration keys with boolean values
+    for (const [key, val] of Object.entries(data)) {
+      if (!isValidIntegrationKey(key)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `Unknown integration key: ${key}` }));
+        return;
+      }
+      if (typeof val !== "boolean") {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `Value for "${key}" must be a boolean` }));
+        return;
+      }
+    }
+
+    const config = saveIntegrationsConfig(data);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(config));
   } catch {
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Invalid request" }));

@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { appendFileSync } from "fs";
 import { recordObservation } from "../observer.js";
+import { isIntegrationEnabled } from "./integration-config.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -140,6 +141,7 @@ function matchesEntityFilter(entityId: string, entities: string[]): boolean {
 }
 
 async function pollHA(): Promise<void> {
+  if (!isIntegrationEnabled("homeassistant")) return;
   const config = loadConfig();
   if (!config) return;
 
