@@ -18,10 +18,18 @@ const GITHUB_REPO = process.env.GITHUB_REPO || "";
 const ENVIRONMENT_CONTEXT = `
 ENVIRONMENT:
 - You are running as a detached worker process, independent of the main ARIA app.
-- Source code is at /app/src/. Persistent data at /data/.
+- The codebase is a monorepo with two parts:
+  - Backend: /app/src/ (Node.js/TypeScript). Brain, memory, providers, API, integrations.
+  - Frontend: /app/frontend/ (Nuxt 3/Vue 3). Dashboard pages, components, composables, types.
+- Persistent data at /data/.
 - You have full tool access: Bash, Read, Write, Edit, Glob, Grep, WebFetch, WebSearch.
 - Git and gh (GitHub CLI) are available.${GITHUB_REPO ? ` Repo: ${GITHUB_REPO}.` : ""}
 - After creating a PR, Coolify will auto-deploy when merged to main.
+
+VERIFICATION:
+- Backend changes: npx tsc --noEmit (from /app)
+- Frontend changes: cd /app/frontend && npx nuxi typecheck
+- Always run the appropriate check(s) before committing.
 `;
 
 // ── Improvement Prompt ──
@@ -61,7 +69,10 @@ ${nodeContext}
 1. Read the target files to understand current code.
 2. Create a feature branch: git checkout -b aria/<short-description>
 3. Implement the improvement. Keep changes minimal and focused.
-4. Run: npx tsc --noEmit — fix any compile errors.
+4. Verify your changes compile:
+   - For backend files (src/): npx tsc --noEmit
+   - For frontend files (frontend/): cd /app/frontend && npx nuxi typecheck
+   - If both are changed, run BOTH checks.
 5. Commit with a clear message: "ARIA self-improvement: <what changed>"
 6. Push the branch: git push origin aria/<short-description>
 7. Create a PR: gh pr create --title "ARIA: <description>" --body "<explanation>"
@@ -116,10 +127,13 @@ ${lastGoodCommit ? `Last known good commit: ${lastGoodCommit}` : "No last known 
 1. Analyze the logs to identify the crash cause.
 2. Read relevant source files to understand the bug.
 3. Fix the bug — edit the minimum code necessary.
-4. Verify: npx tsc --noEmit — must compile cleanly.
+4. Verify compilation:
+   - Backend: npx tsc --noEmit
+   - Frontend: cd /app/frontend && npx nuxi typecheck
+   Both must pass cleanly.
 5. Commit the fix on a feature branch, push, and create a PR.
 6. If you cannot fix it after careful analysis, and a lastGoodCommit exists, rollback:
-   git checkout <lastGoodCommit> -- src/
+   git checkout <lastGoodCommit> -- src/ frontend/
    Then commit that as a rollback.
 
 When done, output ONLY a JSON object:
