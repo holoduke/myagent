@@ -14,11 +14,18 @@
     <template v-else-if="dashboard">
       <!-- Active Integration Tiles -->
       <div v-if="activeIntegrations.length" class="intg-tiles">
-        <div v-for="intg in activeIntegrations" :key="intg.key" class="intg-tile" @click="activeModal = intg.key">
-          <div class="intg-tile-icon" v-html="intg.icon"></div>
+        <div v-for="intg in activeIntegrations" :key="intg.key" class="intg-tile" :class="{ 'intg-tile--disabled': !isEnabled(intg.key) }" @click="activeModal = intg.key">
+          <div class="intg-tile-header">
+            <div class="intg-tile-icon" v-html="intg.icon"></div>
+            <label class="intg-toggle" @click.stop>
+              <input type="checkbox" :checked="isEnabled(intg.key)" @change="toggleIntegration(intg.key)">
+              <span class="intg-toggle-slider"></span>
+            </label>
+          </div>
           <div class="intg-tile-name">{{ intg.name }}</div>
           <div class="intg-tile-row">
-            <span class="intg-status" :class="intg.statusClass">{{ intg.statusText }}</span>
+            <span v-if="!isEnabled(intg.key)" class="intg-status offline">Disabled</span>
+            <span v-else class="intg-status" :class="intg.statusClass">{{ intg.statusText }}</span>
             <span class="intg-tile-stat">{{ intg.stat }}</span>
           </div>
         </div>
@@ -95,6 +102,26 @@ const error = ref('')
 const activeModal = ref<string | null>(null)
 const showAddModal = ref(false)
 const sshTesting = ref('')
+const integrationsEnabled = ref<Record<string, boolean>>({})
+
+function isEnabled(key: string): boolean {
+  return integrationsEnabled.value[key] !== false
+}
+
+async function toggleIntegration(key: string) {
+  const prev = isEnabled(key)
+  integrationsEnabled.value = { ...integrationsEnabled.value, [key]: !prev }
+  try {
+    await api<Record<string, boolean>>('/api/integrations/config', {
+      method: 'PUT',
+      body: { [key]: !prev },
+    })
+    showToast(`${key} ${!prev ? 'enabled' : 'disabled'}`, 'success')
+  } catch {
+    integrationsEnabled.value = { ...integrationsEnabled.value, [key]: prev }
+    showToast(`Failed to update ${key}`, 'error')
+  }
+}
 
 const waData = computed(() => dashboard.value?.whatsapp || { connected: false, contactCount: 0 })
 const gmailData = computed(() => dashboard.value?.gmail || { total: 0, authenticated: 0 })
@@ -214,6 +241,7 @@ async function load() {
     ])
     dashboard.value = dash
     scheduled.value = sched
+    integrationsEnabled.value = dash.integrationsEnabled || {}
     error.value = ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Unknown error'
@@ -387,6 +415,61 @@ onMounted(async () => {
 }
 .add-item:hover .add-item-arrow {
   color: var(--accent);
+}
+
+.intg-tile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.intg-tile--disabled {
+  opacity: 0.45;
+  filter: saturate(0.3);
+}
+.intg-tile--disabled .intg-toggle {
+  opacity: 1;
+  filter: saturate(3);
+}
+
+.intg-toggle {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.intg-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.intg-toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 10px;
+  transition: background .2s;
+}
+.intg-toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 3px;
+  bottom: 3px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition: transform .2s, background .2s;
+}
+.intg-toggle input:checked + .intg-toggle-slider {
+  background: var(--accent);
+}
+.intg-toggle input:checked + .intg-toggle-slider::before {
+  transform: translateX(16px);
+  background: #fff;
 }
 
 @media (max-width: 768px) {

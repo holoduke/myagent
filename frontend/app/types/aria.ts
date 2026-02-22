@@ -138,6 +138,7 @@ export interface DashboardData {
   whitelistCount: number
   scheduledCount: number
   queueDepth: number
+  integrationsEnabled: Record<string, boolean>
   timestamp: number
 }
 
