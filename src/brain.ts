@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
 import { appendFileSync } from "fs";
 import { spawn, execSync } from "child_process";
-import { askClaude } from "./claude.js";
+import { askClaudeStreaming } from "./claude.js";
 import { getObservationsSince, pruneObservations, ensureBrainDir } from "./observer.js";
 import type { Observation } from "./observer.js";
 import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./brain-prompt.js";
@@ -29,6 +29,7 @@ import { getBrainConfig, getActivePreset } from "./brain-config.js";
 import {
   loadQueue,
   enqueue,
+  enqueueApproved,
   approveItem,
   dequeueApproved,
   completeItem,
@@ -132,6 +133,7 @@ function parseBrainResponse(raw: string): BrainResponse | null {
       reasoning: parsed.reasoning ?? "",
       workingMemory: parsed.workingMemory ?? undefined,
       goalOps: Array.isArray(parsed.goalOps) ? parsed.goalOps : undefined,
+      improvementProposals: Array.isArray(parsed.improvementProposals) ? parsed.improvementProposals : undefined,
     };
   } catch {
     log(`Failed to parse brain response: ${raw.slice(0, 200)}`);
@@ -819,14 +821,24 @@ async function thinkTick(
   });
 
   try {
+    let lastLogTime = Date.now();
+    let deltaChars = 0;
     const result = await queue.add(async () => {
-      return await askClaude(prompt, {
+      return await askClaudeStreaming(prompt, (delta) => {
+        deltaChars += delta.length;
+        const elapsed = Date.now() - lastLogTime;
+        if (elapsed > 30_000) {
+          log(`Think streaming: ${deltaChars} chars received so far...`);
+          lastLogTime = Date.now();
+        }
+      }, {
         timeout: 300_000,
         allowedTools: BRAIN_TOOLS,
         noSession: true,
       });
     });
 
+    log(`Think streaming complete: ${deltaChars} chars total`);
     const responseText = result.messages.join("\n");
     const response = parseBrainResponse(responseText);
 
@@ -925,14 +937,24 @@ async function consolidateTick(
   });
 
   try {
+    let lastLogTime = Date.now();
+    let deltaChars = 0;
     const result = await queue.add(async () => {
-      return await askClaude(prompt, {
+      return await askClaudeStreaming(prompt, (delta) => {
+        deltaChars += delta.length;
+        const elapsed = Date.now() - lastLogTime;
+        if (elapsed > 30_000) {
+          log(`Consolidate streaming: ${deltaChars} chars received so far...`);
+          lastLogTime = Date.now();
+        }
+      }, {
         timeout: 300_000,
         allowedTools: BRAIN_TOOLS,
         noSession: true,
       });
     });
 
+    log(`Consolidate streaming complete: ${deltaChars} chars total`);
     const responseText = result.messages.join("\n");
     const response = parseBrainResponse(responseText);
 
@@ -990,6 +1012,16 @@ async function reflectTick(
 
   const cfg = getBrainConfig();
 
+  // Gather self-improvement stats for the reflect prompt
+  const improveQueue = loadQueue();
+  const selfImproveStats = {
+    enabled: cfg.selfImproveEnabled,
+    maxPerWeek: cfg.selfImproveMaxPerWeek,
+    completedThisWeek: getWeeklyCompletedCount(),
+    pendingInQueue: improveQueue.items.filter(i => i.status === "pending" || i.status === "approved").length,
+    autoApprove: cfg.selfImproveAutoApprove,
+  };
+
   log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals`);
 
   const prompt = buildReflectPrompt({
@@ -1007,17 +1039,28 @@ async function reflectTick(
     goalsSection,
     initiativeSignals,
     responsivenessPreset: getActivePreset(cfg),
+    selfImproveStats,
   });
 
   try {
+    let lastLogTime = Date.now();
+    let deltaChars = 0;
     const result = await queue.add(async () => {
-      return await askClaude(prompt, {
+      return await askClaudeStreaming(prompt, (delta) => {
+        deltaChars += delta.length;
+        const elapsed = Date.now() - lastLogTime;
+        if (elapsed > 30_000) {
+          log(`Reflect streaming: ${deltaChars} chars received so far...`);
+          lastLogTime = Date.now();
+        }
+      }, {
         timeout: 600_000,
         allowedTools: BRAIN_TOOLS,
         noSession: true,
       });
     });
 
+    log(`Reflect streaming complete: ${deltaChars} chars total`);
     const responseText = result.messages.join("\n");
     const response = parseBrainResponse(responseText);
 
@@ -1038,6 +1081,37 @@ async function reflectTick(
     if (response.goalOps && response.goalOps.length > 0) {
       goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
       wm.activeGoals = goalTracker.getWorkingGoalRefs();
+    }
+
+    // Enqueue self-improvement proposals
+    if (response.improvementProposals && response.improvementProposals.length > 0 && cfg.selfImproveEnabled) {
+      const weeklyRemaining = cfg.selfImproveMaxPerWeek - getWeeklyCompletedCount();
+      const currentPending = loadQueue().items.filter(i => i.status === "pending" || i.status === "approved" || i.status === "running").length;
+      const canEnqueue = Math.max(0, weeklyRemaining - currentPending);
+
+      for (const proposal of response.improvementProposals.slice(0, canEnqueue)) {
+        if (!proposal.description || !proposal.rationale) {
+          log(`Skipping invalid improvement proposal: missing description or rationale`);
+          continue;
+        }
+        const task = {
+          type: "improvement" as const,
+          description: proposal.description,
+          rationale: proposal.rationale,
+          files: Array.isArray(proposal.files) ? proposal.files : [],
+          memoryContext: Array.isArray(proposal.memoryContext) ? proposal.memoryContext : [],
+          planNodeId: proposal.planNodeId || "",
+          createdAt: Date.now(),
+        };
+        // Brain-originated proposals are pre-approved — they've already been
+        // through the brain's deliberation. No need for selfImproveAutoApprove.
+        enqueueApproved(task);
+        log(`Enqueued improvement proposal (pre-approved): ${proposal.description.slice(0, 80)}`);
+      }
+
+      if (response.improvementProposals.length > canEnqueue) {
+        log(`Dropped ${response.improvementProposals.length - canEnqueue} proposals (weekly budget/queue limit)`);
+      }
     }
 
     if (response.workingMemory) {

@@ -74,14 +74,15 @@ export class ClaudeProvider implements AIProvider {
   ): Promise<AgentResult> {
     const timeout = options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 300_000);
     const allowedTools = options.allowedTools ?? this.config.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
+    const noSession = options.noSession ?? false;
 
     await ensureValidToken();
 
-    const result = await this.runClaudeStreaming(message, onDelta, { timeout, allowedTools });
+    const result = await this.runClaudeStreaming(message, onDelta, { timeout, allowedTools, noSession });
     if (result.isAuthError) {
       log("Auth error in streaming, refreshing token and retrying...");
       await ensureValidToken();
-      const retry = await this.runClaudeStreaming(message, onDelta, { timeout, allowedTools });
+      const retry = await this.runClaudeStreaming(message, onDelta, { timeout, allowedTools, noSession });
       if (retry.isAuthError) {
         throw new Error("Authentication failed after retry. OAuth tokens may need manual refresh.");
       }
@@ -210,12 +211,14 @@ export class ClaudeProvider implements AIProvider {
   private runClaudeStreaming(
     message: string,
     onDelta: (text: string) => void,
-    options: { timeout: number; allowedTools: string },
+    options: { timeout: number; allowedTools: string; noSession?: boolean },
   ): Promise<AgentResult & { isAuthError?: boolean }> {
-    const { timeout, allowedTools } = options;
+    const { timeout, allowedTools, noSession } = options;
 
     let prompt: string;
-    if (this.currentSessionId) {
+    if (noSession) {
+      prompt = message;
+    } else if (this.currentSessionId) {
       // Resumed session: inject working memory update only if changed
       const memCtx = getMessageMemoryContext();
       prompt = memCtx ? `${memCtx}${message}` : message;
@@ -232,7 +235,7 @@ export class ClaudeProvider implements AIProvider {
       "--allowedTools", allowedTools,
     ];
 
-    if (this.currentSessionId) {
+    if (!noSession && this.currentSessionId) {
       args.push("--resume", this.currentSessionId);
       log(`Resuming session (streaming): ${this.currentSessionId}`);
     }
@@ -258,7 +261,31 @@ export class ClaudeProvider implements AIProvider {
       let buffer = "";
       let stderr = "";
 
+      // Activity-based timeout: resets on each streaming event.
+      // Uses inactivity timeout (default: timeout value) — if no events arrive within
+      // the window, the process is killed. Active processes can run indefinitely.
+      let timedOut = false;
+      const inactivityLimit = timeout;
+      let activityTimer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+        log(`Streaming inactivity timeout (${inactivityLimit / 1000}s no activity, session ${this.currentSessionId || "none"} preserved)`);
+        reject(new Error(`Claude timed out after ${inactivityLimit / 1000}s of inactivity`));
+      }, inactivityLimit);
+
+      const resetActivityTimer = () => {
+        clearTimeout(activityTimer);
+        if (timedOut) return;
+        activityTimer = setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGTERM");
+          log(`Streaming inactivity timeout (${inactivityLimit / 1000}s no activity, session ${this.currentSessionId || "none"} preserved)`);
+          reject(new Error(`Claude timed out after ${inactivityLimit / 1000}s of inactivity`));
+        }, inactivityLimit);
+      };
+
       child.stdout.on("data", (data: Buffer) => {
+        resetActivityTimer();
         buffer += data.toString();
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
@@ -285,7 +312,7 @@ export class ClaudeProvider implements AIProvider {
               const resultText = event.result || "";
               if (event.is_error && resultText.includes("authentication_error")) {
                 isAuthError = true;
-              } else if (!event.is_error && sessionId) {
+              } else if (!noSession && !event.is_error && sessionId) {
                 this.currentSessionId = sessionId;
                 log(`Session ID (streaming): ${this.currentSessionId}`);
               }
@@ -318,20 +345,12 @@ export class ClaudeProvider implements AIProvider {
       });
 
       child.stderr.on("data", (data: Buffer) => {
+        resetActivityTimer();
         stderr += data.toString();
       });
 
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-        // Don't reset session on timeout — the server-side session may still be valid
-        log(`Streaming timeout: killed process (session ${this.currentSessionId || "none"} preserved)`);
-        reject(new Error(`Claude timed out after ${timeout / 1000}s`));
-      }, timeout);
-
       child.on("close", (code) => {
-        clearTimeout(timer);
+        clearTimeout(activityTimer);
         if (timedOut) return;
         log(`Streaming exit code: ${code}`);
         if (stderr) log(`Streaming stderr: ${stderr.slice(0, 500)}`);
@@ -361,7 +380,7 @@ export class ClaudeProvider implements AIProvider {
       });
 
       child.on("error", (err) => {
-        clearTimeout(timer);
+        clearTimeout(activityTimer);
         reject(err);
       });
 

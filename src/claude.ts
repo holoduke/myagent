@@ -28,6 +28,7 @@ export async function askClaudeStreaming(
   options: {
     timeout?: number;
     allowedTools?: string;
+    noSession?: boolean;
   } = {},
 ): Promise<ClaudeResult> {
   return getClaudeProvider().askStreaming(message, onDelta, options);
