@@ -84,7 +84,10 @@
 <script setup lang="ts">
 import type { DashboardData, ScheduledMessage, SSHStatus, CalendarStatus, HomeAssistantStatus, RSSStatus, OwnTracksStatus } from '~/types/aria'
 
+const route = useRoute()
+const router = useRouter()
 const { api } = useApi()
+const { showToast } = useToast()
 
 const dashboard = ref<DashboardData | null>(null)
 const scheduled = ref<ScheduledMessage[]>([])
@@ -258,7 +261,17 @@ async function sshRemove(id: string) {
 
 useVisibilityRefresh(load)
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+
+  if (route.query.gmail_connected) {
+    showToast(`Gmail account "${route.query.gmail_connected}" connected successfully`, 'success')
+    router.replace({ query: { ...route.query, gmail_connected: undefined } })
+  } else if (route.query.gmail_error) {
+    showToast(`Gmail auth failed: ${route.query.gmail_error}`, 'error')
+    router.replace({ query: { ...route.query, gmail_error: undefined } })
+  }
+})
 </script>
 
 <style scoped>

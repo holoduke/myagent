@@ -70,19 +70,14 @@ export function handleGmailRoutes(req: IncomingMessage, res: ServerResponse): bo
     const error = url.searchParams.get("error");
 
     if (error) {
-      sendHtml(res, 400, `
-        <h1>Gmail Auth Failed</h1>
-        <p>Error: ${escapeHtml(error)}</p>
-        <p>Try again or check your Google Cloud Console settings.</p>
-      `);
+      res.writeHead(302, { Location: '/integrations?gmail_error=' + encodeURIComponent(error) });
+      res.end();
       return true;
     }
 
     if (!code || !state) {
-      sendHtml(res, 400, `
-        <h1>Gmail Auth Failed</h1>
-        <p>Missing code or state parameter.</p>
-      `);
+      res.writeHead(302, { Location: '/integrations?gmail_error=' + encodeURIComponent('Missing code or state parameter') });
+      res.end();
       return true;
     }
 
@@ -90,26 +85,18 @@ export function handleGmailRoutes(req: IncomingMessage, res: ServerResponse): bo
     handleAuthCallback(code, state)
       .then((success) => {
         if (success) {
-          // Restart polling to include the new account
           restartGmailPolling();
-          sendHtml(res, 200, `
-            <h1>Gmail Connected!</h1>
-            <p>Account <strong>${escapeHtml(state)}</strong> is now linked to ARIA.</p>
-            <p>Email polling will start automatically. You can close this tab.</p>
-          `);
+          res.writeHead(302, { Location: '/integrations?gmail_connected=' + encodeURIComponent(state) });
+          res.end();
         } else {
-          sendHtml(res, 500, `
-            <h1>Gmail Auth Failed</h1>
-            <p>Token exchange failed for account "${escapeHtml(state)}". Check ARIA logs.</p>
-          `);
+          res.writeHead(302, { Location: '/integrations?gmail_error=' + encodeURIComponent(`Token exchange failed for account "${state}"`) });
+          res.end();
         }
       })
       .catch((err) => {
         log(`Auth callback error: ${err}`);
-        sendHtml(res, 500, `
-          <h1>Gmail Auth Failed</h1>
-          <p>Error: ${escapeHtml(String(err))}</p>
-        `);
+        res.writeHead(302, { Location: '/integrations?gmail_error=' + encodeURIComponent(String(err)) });
+        res.end();
       });
 
     return true;
