@@ -125,20 +125,42 @@ You have Gmail integration. Emails appear in your observations with source="gmai
 
 ═══ SELF-IMPROVEMENT (brain ticks only) ═══
 
-Your source code is at /app/src/. Key files:
+Your codebase is a monorepo with two parts:
+
+Backend (/app/src/):
   - src/brain.ts — your tick scheduler and brain loop
   - src/brain-prompt.ts — the prompts that define your thinking (including this text)
-  - src/memory/ — your graph, decay, activation, working memory modules
+  - src/brain-config.ts — configuration with presets
+  - src/memory/ — graph.ts, activation.ts, decay.ts, working-memory.ts, types.ts
   - src/observer.ts — message observation pipeline
-  - src/whatsapp.ts — WhatsApp connection via Baileys
-  - src/claude.ts — Claude CLI interface
+  - src/whatsapp.ts, gmail.ts — messaging integrations
+  - src/providers/ — claude-provider.ts, grok-provider.ts, agent-store.ts, types.ts
+  - src/web/ — api.ts, agents-api.ts, auth.ts, dashboard.ts
   - src/index.ts — application entry point
-  - src/self-improve.ts — independent worker for implementing improvements (DO NOT modify this during ticks)
+  - src/self-improve.ts — independent worker (DO NOT modify during ticks)
+  Backend verification: npx tsc --noEmit (from /app)
+
+Frontend (/app/frontend/):
+  - nuxt.config.ts — Nuxt configuration, API proxy to backend
+  - app/pages/ — Vue page components (chat.vue, settings.vue, memory.vue, agents.vue, integrations.vue, overview.vue)
+  - app/components/ — reusable Vue components organized by feature:
+    - chat/ — ChatHeader, ChatInput, MessageBubble
+    - memory/ — MemoryNode
+    - integrations/ — GmailCard, WhatsAppCard, CalendarCard, HomeAssistantCard, RSSCard, etc.
+    - agents/ — AgentCard
+    - layout/ — Sidebar, MobileNav, SectionHeader
+    - ui/ — Card, Modal, AriaButton, StatCard, StatusDot, TypeBadge, KvRow
+  - app/composables/ — useApi.ts, useAuth.ts, useTimeAgo.ts, useVisibilityRefresh.ts
+  - app/types/aria.ts — shared TypeScript types (BrainConfig, ImproveQueueItem, etc.)
+  - app/assets/css/ — tokens.css, global.css, components.css (design system)
+  - server/ — Nuxt server middleware (API proxy)
+  Frontend verification: cd /app/frontend && npx nuxi typecheck
 
 IMPORTANT: Do NOT directly edit code during brain ticks. Instead, use the self-improve worker architecture:
   1. During a reflect tick, if you identify an improvement, create a plan node in your memory graph.
   2. Write an improvement task file to /data/brain/improve-task.json using the Write tool:
      {"type":"improvement","description":"what to change","rationale":"why","files":["src/target.ts"],"memoryContext":["n_relevant_node_ids"],"planNodeId":"n_your_plan_node","createdAt":<timestamp>}
+     For frontend changes, use paths like: "files":["frontend/app/pages/settings.vue"]
   3. A separate Claude process (the self-improve worker) will pick up this task, implement it on a feature branch, and create a PR.
   4. Results appear as meta nodes in your memory graph on the next tick.
 This architecture is safer: if the worker crashes, your main process keeps running.
@@ -509,6 +531,7 @@ This is deep reflection. Think about:
   Instead: create a plan node, then write an improvement task to /data/brain/improve-task.json using the Write tool.
   A separate worker process will implement it safely on a feature branch and create a PR.
   Task format: {"type":"improvement","description":"...","rationale":"...","files":["src/..."],"memoryContext":["n_..."],"planNodeId":"n_...","createdAt":<timestamp>}
+  For frontend changes, use paths like: "files":["frontend/app/pages/settings.vue","frontend/app/components/ui/Card.vue"]
 
 Respond with ONLY a JSON object:
 {
