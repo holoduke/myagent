@@ -77,7 +77,7 @@
       <!-- Filtered results -->
       <UiCard v-if="searchQuery || typeFilter" title="Search Results" :icon="icons.search" style="margin-bottom:16px">
         <div v-if="filteredNodes.length" class="node-list">
-          <MemoryMemoryNode v-for="n in filteredNodes" :key="n.id" :node="n" :show-time="true" />
+          <MemoryNode v-for="n in filteredNodes" :key="n.id" :node="n" :show-time="true" />
         </div>
         <div v-else class="empty-hint">No memories match your search</div>
       </UiCard>
@@ -86,14 +86,14 @@
       <template v-if="!searchQuery && !typeFilter">
         <UiCard v-if="pinnedList.length" title="Core Directives" :icon="icons.pin" style="margin-bottom:16px">
           <div class="node-list">
-            <MemoryMemoryNode v-for="n in pinnedList" :key="n.id" :node="n" :pinned="true" />
+            <MemoryNode v-for="n in pinnedList" :key="n.id" :node="n" :pinned="true" />
           </div>
         </UiCard>
 
         <!-- Strongest Memories -->
         <UiCard v-if="strongList.length" title="Strongest Memories" :icon="icons.star" style="margin-bottom:16px">
           <div class="node-list">
-            <MemoryMemoryNode v-for="n in displayedStrongest" :key="n.id" :node="n" />
+            <MemoryNode v-for="n in displayedStrongest" :key="n.id" :node="n" />
           </div>
           <button v-if="strongList.length > 10 && !showAllStrongest" class="btn" style="margin-top:8px" @click="showAllStrongest = true">
             Show all {{ strongList.length }} memories
@@ -103,7 +103,7 @@
         <!-- Recent Memories -->
         <UiCard v-if="recentList.length" title="Recent Memories" :icon="icons.clock" style="margin-bottom:16px">
           <div class="node-list">
-            <MemoryMemoryNode v-for="n in recentList" :key="n.id" :node="n" :show-time="true" />
+            <MemoryNode v-for="n in recentList" :key="n.id" :node="n" :show-time="true" />
           </div>
         </UiCard>
 
@@ -111,7 +111,7 @@
         <UiCard v-if="weakList.length" title="Decaying Memories" :icon="icons.fade" style="margin-bottom:16px">
           <p class="card-hint">These memories are fading and may be pruned soon.</p>
           <div class="node-list">
-            <MemoryMemoryNode v-for="n in weakList" :key="n.id" :node="n" />
+            <MemoryNode v-for="n in weakList" :key="n.id" :node="n" />
           </div>
         </UiCard>
 
