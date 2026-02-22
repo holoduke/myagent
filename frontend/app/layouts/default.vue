@@ -5,6 +5,7 @@
       <slot />
     </div>
     <LayoutMobileNav />
+    <UiToast />
   </div>
 </template>
 
