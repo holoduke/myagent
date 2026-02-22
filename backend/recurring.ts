@@ -148,3 +148,48 @@ export function markExecuted(taskId: string): void {
 export function getAllRecurringTasks(): RecurringTask[] {
   return loadTasks();
 }
+
+export function addRecurringTask(
+  task: Omit<RecurringTask, "id" | "createdAt" | "lastRunAt">,
+): RecurringTask {
+  const tasks = loadTasks();
+  const newTask: RecurringTask = {
+    ...task,
+    id: `recurring_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: Date.now(),
+    lastRunAt: 0,
+  };
+  tasks.push(newTask);
+  saveTasks(tasks);
+  log(`Added recurring task: ${newTask.label} (${newTask.id})`);
+  return newTask;
+}
+
+export function updateRecurringTask(
+  id: string,
+  updates: Partial<Pick<RecurringTask, "label" | "pattern" | "action" | "enabled">>,
+): RecurringTask | null {
+  const tasks = loadTasks();
+  const task = tasks.find(t => t.id === id);
+  if (!task) return null;
+
+  if (updates.label !== undefined) task.label = updates.label;
+  if (updates.pattern !== undefined) task.pattern = updates.pattern;
+  if (updates.action !== undefined) task.action = updates.action;
+  if (updates.enabled !== undefined) task.enabled = updates.enabled;
+
+  saveTasks(tasks);
+  log(`Updated recurring task: ${task.label} (${id})`);
+  return task;
+}
+
+export function deleteRecurringTask(id: string): boolean {
+  const tasks = loadTasks();
+  const idx = tasks.findIndex(t => t.id === id);
+  if (idx === -1) return false;
+
+  const [removed] = tasks.splice(idx, 1);
+  saveTasks(tasks);
+  log(`Deleted recurring task: ${removed.label} (${id})`);
+  return true;
+}
