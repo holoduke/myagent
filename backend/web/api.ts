@@ -27,6 +27,12 @@ import {
   deleteItem,
   getWeeklyCompletedCount,
 } from "../self-improve-queue.js";
+import { getAllRecurringTasks, addRecurringTask, updateRecurringTask, deleteRecurringTask } from "../recurring.js";
+import { detectInitiativeSignals } from "../initiative.js";
+import { GoalTracker } from "../goals.js";
+import { MemoryGraph } from "../memory/graph.js";
+import { loadWorkingMemory } from "../memory/working-memory.js";
+import type { GoalData } from "../memory/types.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -286,6 +292,113 @@ export function handleApiRoutes(
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
       res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return true;
+  }
+
+  // ── Brain dashboard (composite) ──
+  if (pathname === "/api/brain/dashboard" && req.method === "GET" && isAuthenticated(req)) {
+    try {
+      const data = getBrainDashboard();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      log(`Brain dashboard error: ${err}`);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return true;
+  }
+
+  // ── Brain recurring tasks CRUD ──
+  if (pathname === "/api/brain/recurring" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(getAllRecurringTasks()));
+      return true;
+    }
+    if (req.method === "POST") {
+      handleBrainRecurringAdd(req, res);
+      return true;
+    }
+  }
+
+  if (pathname.match(/^\/api\/brain\/recurring\/[^/]+$/) && isAuthenticated(req)) {
+    const id = pathname.split("/")[4];
+    if (req.method === "PUT") {
+      handleBrainRecurringUpdate(req, res, id);
+      return true;
+    }
+    if (req.method === "DELETE") {
+      const deleted = deleteRecurringTask(id);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: deleted }));
+      return true;
+    }
+  }
+
+  // ── Brain goals CRUD ──
+  if (pathname === "/api/brain/goals" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      try {
+        const goals = getBrainGoals();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(goals));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return true;
+    }
+    if (req.method === "POST") {
+      handleBrainGoalCreate(req, res);
+      return true;
+    }
+  }
+
+  if (pathname.match(/^\/api\/brain\/goals\/[^/]+$/) && req.method === "PUT" && isAuthenticated(req)) {
+    const nodeId = pathname.split("/")[4];
+    handleBrainGoalUpdate(req, res, nodeId);
+    return true;
+  }
+
+  if (pathname.match(/^\/api\/brain\/goals\/[^/]+\/complete$/) && req.method === "POST" && isAuthenticated(req)) {
+    const nodeId = pathname.split("/")[4];
+    handleBrainGoalAction(res, nodeId, "complete");
+    return true;
+  }
+
+  if (pathname.match(/^\/api\/brain\/goals\/[^/]+\/abandon$/) && req.method === "POST" && isAuthenticated(req)) {
+    const nodeId = pathname.split("/")[4];
+    handleBrainGoalAction(res, nodeId, "abandon");
+    return true;
+  }
+
+  // ── Brain signals (read-only) ──
+  if (pathname === "/api/brain/signals" && req.method === "GET" && isAuthenticated(req)) {
+    try {
+      const graph = new MemoryGraph();
+      graph.load();
+      const wm = loadWorkingMemory();
+      const signals = detectInitiativeSignals(graph, wm);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(signals));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return true;
+  }
+
+  // ── Brain follow-ups (read-only) ──
+  if (pathname === "/api/brain/follow-ups" && req.method === "GET" && isAuthenticated(req)) {
+    try {
+      const wm = loadWorkingMemory();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(wm.pendingFollowUps));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: String(err) }));
     }
     return true;
@@ -774,6 +887,181 @@ const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
   "selfImproveEnabled", "selfImproveAutoApprove", "selfImproveMaxPerWeek",
   "characterType", "characterCustomPrompt",
 ];
+
+// ── Brain dashboard helpers ──
+
+function parseGoalData(content: string): GoalData | null {
+  try {
+    const match = content.match(/\[GOAL_DATA\]([\s\S]*)\[\/GOAL_DATA\]/);
+    if (!match) return null;
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function serializeGoalData(data: GoalData): string {
+  return `${data.title}\n[GOAL_DATA]${JSON.stringify(data)}[/GOAL_DATA]`;
+}
+
+function loadBrainGraph(): MemoryGraph {
+  const graph = new MemoryGraph();
+  graph.load();
+  return graph;
+}
+
+function getBrainGoals(filter?: string): { nodeId: string; data: GoalData }[] {
+  const graph = loadBrainGraph();
+  const goalNodes = graph.findByType("goal");
+  const goals: { nodeId: string; data: GoalData }[] = [];
+
+  for (const node of goalNodes) {
+    const data = parseGoalData(node.content);
+    if (data) {
+      if (!filter || data.status === filter) {
+        goals.push({ nodeId: node.id, data });
+      }
+    }
+  }
+
+  return goals.sort((a, b) => a.data.priority - b.data.priority);
+}
+
+function getBrainDashboard() {
+  const graph = loadBrainGraph();
+  const wm = loadWorkingMemory();
+  const tracker = new GoalTracker(graph);
+
+  const goalNodes = graph.findByType("goal");
+  const goals: { nodeId: string; data: GoalData }[] = [];
+  for (const node of goalNodes) {
+    const data = parseGoalData(node.content);
+    if (data) goals.push({ nodeId: node.id, data });
+  }
+  goals.sort((a, b) => a.data.priority - b.data.priority);
+
+  return {
+    goals,
+    recurringTasks: getAllRecurringTasks(),
+    signals: detectInitiativeSignals(graph, wm),
+    followUps: wm.pendingFollowUps,
+  };
+}
+
+async function handleBrainRecurringAdd(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+    if (!data.label || !data.type || !data.pattern || !data.action) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "label, type, pattern, and action are required" }));
+      return;
+    }
+    const task = addRecurringTask({
+      type: data.type,
+      label: data.label,
+      pattern: data.pattern,
+      action: data.action,
+      enabled: data.enabled !== false,
+      source: data.source || "owner",
+    });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(task));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+async function handleBrainRecurringUpdate(req: IncomingMessage, res: ServerResponse, id: string) {
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+    const task = updateRecurringTask(id, data);
+    if (!task) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Task not found" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(task));
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+async function handleBrainGoalCreate(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+    if (!data.title || !data.description) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "title and description are required" }));
+      return;
+    }
+    const graph = loadBrainGraph();
+    const tracker = new GoalTracker(graph);
+    tracker.applyGoalOps([{
+      op: "create_goal",
+      title: data.title,
+      description: data.description,
+      priority: data.priority || 2,
+      deadline: data.deadline,
+      checkpoints: data.checkpoints,
+      createdBy: "owner",
+    }]);
+    graph.save();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  } catch (err) {
+    log(`Goal create error: ${err}`);
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+async function handleBrainGoalUpdate(req: IncomingMessage, res: ServerResponse, nodeId: string) {
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+    const graph = loadBrainGraph();
+    const tracker = new GoalTracker(graph);
+    tracker.applyGoalOps([{
+      op: "update_goal",
+      nodeId,
+      progress: data.progress,
+      status: data.status,
+      checkpoints: data.checkpoints,
+    }]);
+    graph.save();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  } catch (err) {
+    log(`Goal update error: ${err}`);
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+function handleBrainGoalAction(res: ServerResponse, nodeId: string, action: "complete" | "abandon") {
+  try {
+    const graph = loadBrainGraph();
+    const tracker = new GoalTracker(graph);
+    if (action === "complete") {
+      tracker.applyGoalOps([{ op: "complete_goal", nodeId }]);
+    } else {
+      tracker.applyGoalOps([{ op: "abandon_goal", nodeId }]);
+    }
+    graph.save();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  } catch (err) {
+    log(`Goal ${action} error: ${err}`);
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
 
 async function handleBrainConfigUpdate(req: IncomingMessage, res: ServerResponse) {
   try {

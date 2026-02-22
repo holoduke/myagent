@@ -249,3 +249,63 @@ export interface ImproveQueueResponse {
   history: ImproveQueueItem[]
   weeklyCount: number
 }
+
+// ── Brain Dashboard Types ──
+
+export interface RecurringTask {
+  id: string
+  type: 'message' | 'think_trigger' | 'digest'
+  label: string
+  pattern: { hours: number[]; daysOfWeek?: number[] }
+  action: { type: string; targetJid?: string; template?: string; topic?: string; context?: string }
+  enabled: boolean
+  createdAt: number
+  lastRunAt: number
+  source: 'brain' | 'owner'
+}
+
+export interface InitiativeSignal {
+  type: 'follow_up_due' | 'person_absent' | 'goal_deadline' | 'conversation_stale'
+  priority: number
+  description: string
+  relatedNodeIds: string[]
+  suggestedAction?: string
+}
+
+export interface GoalCheckpoint {
+  label: string
+  done: boolean
+}
+
+export interface GoalData {
+  title: string
+  description: string
+  status: 'active' | 'completed' | 'abandoned' | 'paused'
+  priority: 1 | 2 | 3
+  deadline?: number
+  progress: number
+  checkpoints: GoalCheckpoint[]
+  createdBy: 'brain' | 'owner'
+  lastCheckedAt: number
+}
+
+export interface Goal {
+  nodeId: string
+  data: GoalData
+}
+
+export interface PendingFollowUp {
+  id: string
+  question: string
+  targetPerson?: string
+  context: string
+  createdAt: number
+  dueAt?: number
+}
+
+export interface BrainDashboardData {
+  goals: Goal[]
+  recurringTasks: RecurringTask[]
+  signals: InitiativeSignal[]
+  followUps: PendingFollowUp[]
+}
