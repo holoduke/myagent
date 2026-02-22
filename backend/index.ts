@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { appendFileSync, readFileSync, existsSync } from "fs";
 import { createServer } from "http";
-import { startWhatsApp, sendMessage, sendReaction, getLatestQr } from "./whatsapp.js";
+import { startWhatsApp, sendMessage, sendReaction, getLatestQr } from "./integrations/whatsapp.js";
 import { resetSession } from "./claude.js";
 import { getDefaultProvider, bootstrapDefaultAgent } from "./providers/index.js";
 import { MessageQueue } from "./queue.js";
@@ -10,12 +10,12 @@ import { addMessage, clearHistory, getUsageStats } from "./history.js";
 import { startTokenRefreshLoop } from "./auth-refresh.js";
 import { recordObservation } from "./observer.js";
 import { startBrainLoop, stopBrainLoop, getBrainHealth } from "./brain.js";
-import { startGmailPolling, stopGmailPolling, getAccountStatus } from "./gmail.js";
-import { handleGmailRoutes } from "./gmail-routes.js";
-import { startCalendarPolling, stopCalendarPolling } from "./calendar.js";
-import { startHAPolling, stopHAPolling } from "./homeassistant.js";
-import { startRSSPolling, stopRSSPolling } from "./rss.js";
-import { handleOwnTracksWebhook } from "./owntracks.js";
+import { startGmailPolling, stopGmailPolling, getAccountStatus } from "./integrations/gmail.js";
+import { handleGmailRoutes } from "./integrations/gmail-routes.js";
+import { startCalendarPolling, stopCalendarPolling } from "./integrations/calendar.js";
+import { startHAPolling, stopHAPolling } from "./integrations/homeassistant.js";
+import { startRSSPolling, stopRSSPolling } from "./integrations/rss.js";
+import { handleOwnTracksWebhook } from "./integrations/owntracks.js";
 
 const queue = new MessageQueue();
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";

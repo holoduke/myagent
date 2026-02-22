@@ -1,7 +1,7 @@
 import { google } from "googleapis";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { appendFileSync } from "fs";
-import { recordObservation } from "./observer.js";
+import { recordObservation } from "../observer.js";
 import { loadAccounts, createOAuth2Client } from "./gmail.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";

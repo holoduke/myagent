@@ -231,7 +231,7 @@ async function runRecover(): Promise<void> {
   if (lastGoodCommit) {
     log(`All recovery attempts failed, rolling back to ${lastGoodCommit}`);
     try {
-      execSync(`git checkout ${lastGoodCommit} -- src/ frontend/`, { cwd: "/app", timeout: 30_000, stdio: "pipe" });
+      execSync(`git checkout ${lastGoodCommit} -- backend/ frontend/`, { cwd: "/app", timeout: 30_000, stdio: "pipe" });
       writeResult({
         success: true,
         description: `Rolled back to ${lastGoodCommit} after ${MAX_RECOVERY_ATTEMPTS} failed fix attempts`,
