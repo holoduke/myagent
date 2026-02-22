@@ -63,7 +63,7 @@ async function add() {
     const id = (form.email.split('@')[0] ?? form.email).replace(/[^a-z0-9]/gi, '-').toLowerCase()
     await api('/api/gmail/accounts', {
       method: 'POST',
-      body: { id, email: form.email.trim(), clientId: form.clientId.trim(), clientSecret: form.clientSecret.trim() },
+      body: { id, email: form.email.trim(), clientId: form.clientId.trim(), clientSecret: form.clientSecret.trim(), redirectUri: `${window.location.origin}/gmail/auth/${id}/callback` },
     })
     form.email = ''
     form.clientId = ''
