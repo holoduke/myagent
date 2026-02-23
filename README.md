@@ -1,8 +1,8 @@
 # ARIA — Autonomous Reasoning & Insight Agent
 
-A self-improving autonomous AI that runs 24/7 on your own infrastructure. ARIA observes your WhatsApp messages and Gmail, builds an associative memory graph, thinks on her own schedule, reaches out with insights, and can modify her own source code through a safe self-improvement architecture. No API keys, no usage limits, no corporate restrictions — she runs on Claude Code CLI with a Max subscription.
+A self-improving autonomous AI that runs 24/7 on your own infrastructure. ARIA observes your WhatsApp messages, Gmail, Google Calendar, Home Assistant devices, RSS feeds, and location via OwnTracks — builds an associative memory graph, thinks on her own schedule, reaches out with insights, and can modify her own source code through a safe self-improvement architecture. No API keys, no usage limits, no corporate restrictions — she runs on Claude Code CLI with a Max subscription.
 
-Built with TypeScript, Claude Code CLI, and a Nuxt dashboard.
+Built entirely as a Claw tool — powered by TypeScript, Claude Code CLI, and a Nuxt dashboard.
 
 ## Architecture
 
@@ -11,16 +11,24 @@ Built with TypeScript, Claude Code CLI, and a Nuxt dashboard.
 │  Backend (Node.js / TypeScript)         :3000   │
 │  ├── WhatsApp via Baileys (observe + send)      │
 │  ├── Gmail via Google APIs (poll + send)        │
+│  ├── Google Calendar (event tracking)           │
+│  ├── Home Assistant (smart home monitoring)     │
+│  ├── RSS Feeds (content ingestion)              │
+│  ├── OwnTracks (location tracking)             │
+│  ├── SSH (remote server management)             │
 │  ├── Brain tick loop (observe/think/consolidate)│
-│  ├── Claude Code CLI (reasoning engine)         │
+│  ├── Multi-provider LLM (Claude/Codex/Grok)    │
 │  ├── Associative memory graph                   │
 │  └── HTTP API + WebSocket                       │
 ├─────────────────────────────────────────────────┤
 │  Frontend (Nuxt 4)                      :3001   │
-│  ├── Dashboard (system status, brain activity)  │
+│  ├── Overview (system status at a glance)       │
+│  ├── Dashboard (brain activity, stats)          │
 │  ├── Chat (interactive conversation)            │
+│  ├── Brain (goals, recurring tasks, signals)    │
 │  ├── Memory Explorer (graph visualization)      │
-│  ├── Integrations (WhatsApp, Gmail, SSH)        │
+│  ├── Integrations (8 services, toggle on/off)   │
+│  ├── Agents (multi-provider LLM profiles)       │
 │  └── Settings (whitelist, config)               │
 └─────────────────────────────────────────────────┘
 ```
@@ -128,6 +136,11 @@ All persistent data lives in `/data/` (mounted as a Docker volume):
 | `/data/brain/working-memory.json` | Current context, mood, tracking |
 | `/data/brain/observations.jsonl` | Raw message log (last 7 days) |
 | `/data/gmail/` | Gmail account config and state |
+| `/data/calendar/` | Calendar sync state |
+| `/data/homeassistant/` | Home Assistant config and entity state |
+| `/data/rss/` | RSS feed list and poll state |
+| `/data/owntracks/` | OwnTracks location state |
+| `/data/integrations-config.json` | Integration enable/disable toggles |
 
 ## Coolify Deployment
 
@@ -152,22 +165,46 @@ ARIA runs on a tick loop:
 | **Consolidate** | 4 hours | Exponential decay on all memories, weak nodes pruned, duplicate/orphan cleanup. |
 | **Reflect** | 12 hours | Deep self-reflection, personality evolution, long-term planning. |
 
-Memory is an associative graph of typed nodes (person, event, insight, fact, emotion, plan, goal, meta) connected by weighted edges. Old memories decay unless reinforced or pinned.
+Memory is an associative graph of typed nodes (person, event, insight, fact, emotion, plan, goal, meta, concept) connected by weighted edges. Old memories decay unless reinforced or pinned.
 
-## Gmail Integration
+## Integrations
+
+All integrations can be enabled or disabled via toggle switches on the Integrations page. When disabled, backend polling stops and the tile appears dimmed. State persists across restarts in `/data/integrations-config.json`.
+
+### Gmail
 
 1. Create OAuth credentials in [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
 2. Add an account via the Integrations page in the dashboard
 3. Authorize via the OAuth flow link
 4. Emails are automatically polled and flow into the brain as observations
 
-## SSH Integration
+### Google Calendar
+
+Uses the same Google OAuth credentials as Gmail. Polls upcoming events every 5 minutes and records them as observations so ARIA is aware of your schedule.
+
+### Home Assistant
+
+Supports both direct API and Nabu Casa cloud connections. Configure via the Integrations page with your HA URL and long-lived access token. Monitors entity state changes (lights, switches, sensors, etc.) and reports them as observations.
+
+### RSS Feeds
+
+Add any RSS/Atom feed URL. Feeds are polled every 15 minutes. New items are recorded as observations, keeping ARIA up to date on topics you care about.
+
+### OwnTracks
+
+Receives location updates from the OwnTracks mobile app. ARIA gains spatial awareness — she knows where you are and can factor that into her reasoning.
+
+### SSH
 
 ARIA can manage SSH connections to remote servers:
 
 1. A keypair is auto-generated on first use
 2. Add the public key to your target servers
 3. Manage targets via the Integrations page
+
+### WhatsApp
+
+The primary communication channel. ARIA observes incoming messages, processes them through the brain, and can respond proactively or reactively.
 
 ## Self-Improvement
 
@@ -231,38 +268,66 @@ If ARIA crashes 3+ times in a row (tracked by boot counter in `entrypoint.sh`):
 ## Project Structure
 
 ```
-src/
-├── index.ts              # Entry point, HTTP server, WhatsApp setup
-├── brain.ts              # Autonomous brain tick loop
-├── brain-prompt.ts       # Think/consolidate/reflect prompt builders
-├── aria-identity.ts      # Shared personality definition
-├── system-prompt.ts      # Interactive chat system prompt
-├── claude.ts             # Claude CLI wrapper
-├── whatsapp.ts           # Baileys WhatsApp connection
-├── gmail.ts              # Gmail API integration
-├── ssh.ts                # SSH key management and connections
-├── scheduler.ts          # Scheduled message delivery
-├── observer.ts           # Message observation pipeline
-├── self-improve.ts       # Self-modification worker
-├── self-improve-prompt.ts # Self-improve/recovery prompts
+backend/
+├── index.ts                # Entry point, HTTP server, WhatsApp setup
+├── brain.ts                # Autonomous brain tick loop
+├── brain-config.ts         # Brain configuration with presets
+├── brain-prompt.ts         # Think/consolidate/reflect prompt builders
+├── aria-identity.ts        # Shared personality definition
+├── system-prompt.ts        # Interactive chat system prompt
+├── claude.ts               # Claude CLI wrapper
+├── observer.ts             # Message observation pipeline
+├── scheduler.ts            # Scheduled message delivery
+├── history.ts              # Chat history management
+├── contact-whitelist.ts    # Contact whitelist management
+├── goals.ts                # Goal tracking system
+├── initiative.ts           # Proactive initiative signal detection
+├── recurring.ts            # Recurring task management
+├── urgency.ts              # Message urgency classification
+├── self-improve.ts         # Self-modification worker
+├── self-improve-queue.ts   # Self-improve task queue
+├── self-improve-prompt.ts  # Self-improve/recovery prompts
+├── queue.ts                # Message queue
+├── providers/
+│   ├── index.ts            # Provider registry
+│   ├── claude-provider.ts  # Claude Code CLI provider
+│   ├── codex-provider.ts   # OpenAI Codex provider
+│   ├── grok-provider.ts    # Grok/xAI provider
+│   ├── agent-store.ts      # Agent profile persistence
+│   └── types.ts            # Provider type definitions
+├── integrations/
+│   ├── integration-config.ts # Enable/disable toggle config
+│   ├── whatsapp.ts         # Baileys WhatsApp connection
+│   ├── gmail.ts            # Gmail API integration
+│   ├── gmail-routes.ts     # Gmail OAuth callback routes
+│   ├── calendar.ts         # Google Calendar polling
+│   ├── homeassistant.ts    # Home Assistant API integration
+│   ├── rss.ts              # RSS feed polling
+│   ├── owntracks.ts        # OwnTracks location tracking
+│   └── ssh.ts              # SSH key management and connections
 ├── memory/
-│   ├── graph.ts          # Associative memory graph
-│   ├── activation.ts     # Spreading activation algorithm
-│   ├── decay.ts          # Memory decay and consolidation
-│   ├── working-memory.ts # Short-term context management
-│   └── types.ts          # Type definitions
+│   ├── graph.ts            # Associative memory graph
+│   ├── activation.ts       # Spreading activation algorithm
+│   ├── decay.ts            # Memory decay and consolidation
+│   ├── working-memory.ts   # Short-term context management
+│   └── types.ts            # Type definitions
 └── web/
-    ├── api.ts            # REST API endpoints
-    └── auth.ts           # Session authentication
+    ├── api.ts              # REST API endpoints
+    ├── auth.ts             # Session authentication
+    ├── router.ts           # Route handler
+    ├── dashboard.ts        # Dashboard data aggregation
+    ├── agents-api.ts       # Agent profile CRUD API
+    └── styles.ts           # Embedded CSS
 
 frontend/
 ├── app/
-│   ├── pages/            # Dashboard, Chat, Memory, Integrations, Settings
-│   ├── components/       # UI components
-│   ├── composables/      # Shared logic (useApi, useAuth, useTimeAgo)
-│   └── types/            # TypeScript types
+│   ├── pages/              # Overview, Dashboard, Chat, Brain, Memory,
+│   │                       # Integrations, Agents, Settings, Login
+│   ├── components/         # UI components
+│   ├── composables/        # Shared logic (useApi, useAuth, useTimeAgo)
+│   └── types/              # TypeScript types
 └── server/
-    └── api/              # Nuxt server proxy routes
+    └── api/                # Nuxt server proxy routes
 ```
 
 ## License
