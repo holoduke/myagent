@@ -143,14 +143,16 @@ export class MemoryGraph {
     this.edges = this.edges.filter(e => e.from !== id && e.to !== id);
     this.edgesFromIdx.delete(id);
     this.edgesToIdx.delete(id);
-    // Clean references in other indexes
-    for (const [, arr] of this.edgesFromIdx) {
-      const idx = arr.findIndex(e => e.to === id);
-      if (idx !== -1) arr.splice(idx, 1);
+    // Clean ALL references in other indexes (filter removes all matches, not just the first)
+    for (const [key, arr] of this.edgesFromIdx) {
+      const filtered = arr.filter(e => e.to !== id);
+      if (filtered.length === 0) this.edgesFromIdx.delete(key);
+      else this.edgesFromIdx.set(key, filtered);
     }
-    for (const [, arr] of this.edgesToIdx) {
-      const idx = arr.findIndex(e => e.from === id);
-      if (idx !== -1) arr.splice(idx, 1);
+    for (const [key, arr] of this.edgesToIdx) {
+      const filtered = arr.filter(e => e.from !== id);
+      if (filtered.length === 0) this.edgesToIdx.delete(key);
+      else this.edgesToIdx.set(key, filtered);
     }
   }
 
@@ -201,13 +203,15 @@ export class MemoryGraph {
     this.edges = this.edges.filter(e => !(e.from === from && e.to === to));
     const fromArr = this.edgesFromIdx.get(from);
     if (fromArr) {
-      const idx = fromArr.findIndex(e => e.to === to);
-      if (idx !== -1) fromArr.splice(idx, 1);
+      const filtered = fromArr.filter(e => e.to !== to);
+      if (filtered.length === 0) this.edgesFromIdx.delete(from);
+      else this.edgesFromIdx.set(from, filtered);
     }
     const toArr = this.edgesToIdx.get(to);
     if (toArr) {
-      const idx = toArr.findIndex(e => e.from === from);
-      if (idx !== -1) toArr.splice(idx, 1);
+      const filtered = toArr.filter(e => e.from !== from);
+      if (filtered.length === 0) this.edgesToIdx.delete(to);
+      else this.edgesToIdx.set(to, filtered);
     }
   }
 
