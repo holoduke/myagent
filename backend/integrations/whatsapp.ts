@@ -11,6 +11,7 @@ import pino from "pino";
 // @ts-ignore - no types available
 import qrcode from "qrcode-terminal";
 import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
+import { createHash } from "crypto";
 
 export type MessageHandler = (
   jid: string,
@@ -40,6 +41,7 @@ let reconnectAttempt = 0;
 const MAX_RECONNECT_DELAY = 60_000; // 60s max
 const BASE_RECONNECT_DELAY = 5_000; // 5s base
 const processedMessages = new Set<string>();
+const sentMessages = new Set<string>();
 const groupNameCache = new Map<string, string>();
 
 // --- Contact store ---
@@ -362,6 +364,17 @@ export async function sendMessage(jid: string, text: string): Promise<void> {
     console.log(`[whatsapp] Cannot send message — not connected`);
     throw new Error("WhatsApp not connected");
   }
+
+  // Outgoing dedup: prevent duplicate sends within 5 minutes (mirrors incoming dedup pattern)
+  const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
+  const dedupKey = `${jid}|${hash}`;
+  if (sentMessages.has(dedupKey)) {
+    console.log(`[whatsapp] Outgoing dedup skip: already sent to ${jid} (hash=${hash})`);
+    return;
+  }
+  sentMessages.add(dedupKey);
+  setTimeout(() => sentMessages.delete(dedupKey), 5 * 60 * 1000);
+
   await sock.sendMessage(jid, { text });
 }
 
