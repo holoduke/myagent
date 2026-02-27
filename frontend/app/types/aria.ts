@@ -208,6 +208,7 @@ export interface BrainConfig {
   minMessageInterval: number
   quietStart: number
   quietEnd: number
+  ownerTimezone: string
   thinkCooldown: number
   consolidateInterval: number
   reflectInterval: number

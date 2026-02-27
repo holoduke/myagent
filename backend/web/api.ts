@@ -983,6 +983,7 @@ async function handleHATestConnection(req: IncomingMessage, res: ServerResponse)
 
 const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
   "enabled", "maxMessagesPerDay", "minMessageInterval", "quietStart", "quietEnd",
+  "ownerTimezone",
   "thinkCooldown", "consolidateInterval", "reflectInterval", "tickInterval", "preset",
   "selfImproveEnabled", "selfImproveAutoApprove", "selfImproveMaxPerWeek",
   "characterType", "characterCustomPrompt",

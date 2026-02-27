@@ -8,6 +8,7 @@ export interface BrainConfig {
   minMessageInterval: number;   // ms
   quietStart: number;           // hour 0-23
   quietEnd: number;             // hour 0-23
+  ownerTimezone: string;        // IANA timezone, e.g. "Europe/Amsterdam"
   thinkCooldown: number;        // ms
   consolidateInterval: number;  // ms
   reflectInterval: number;      // ms
@@ -154,6 +155,7 @@ function envDefaults(): BrainConfig {
     minMessageInterval: Number(process.env.BRAIN_MIN_MESSAGE_INTERVAL ?? 7200000),
     quietStart: Number(process.env.BRAIN_QUIET_START ?? 23),
     quietEnd: Number(process.env.BRAIN_QUIET_END ?? 7),
+    ownerTimezone: process.env.OWNER_TIMEZONE || "Europe/Amsterdam",
     thinkCooldown: Number(process.env.BRAIN_THINK_COOLDOWN ?? 300000),
     consolidateInterval: Number(process.env.BRAIN_CONSOLIDATE_INTERVAL ?? 14400000),
     reflectInterval: Number(process.env.BRAIN_REFLECT_INTERVAL ?? 43200000),
@@ -224,6 +226,27 @@ export function saveBrainConfig(partial: Partial<BrainConfig>): BrainConfig {
   cacheTime = Date.now();
 
   return updated;
+}
+
+/** Get current hour and day-of-week in the owner's configured timezone. */
+export function getOwnerLocalTime(timezone: string, now: Date = new Date()): { hour: number; dayOfWeek: number } {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "numeric",
+      hour12: false,
+      weekday: "short",
+    }).formatToParts(now);
+    const hourPart = parts.find(p => p.type === "hour");
+    const weekdayPart = parts.find(p => p.type === "weekday");
+    const hour = hourPart ? Number(hourPart.value) % 24 : now.getHours();
+    const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const dayOfWeek = weekdayPart ? (dayMap[weekdayPart.value] ?? now.getDay()) : now.getDay();
+    return { hour, dayOfWeek };
+  } catch {
+    // Invalid timezone — fall back to system time
+    return { hour: now.getHours(), dayOfWeek: now.getDay() };
+  }
 }
 
 export function getActivePreset(config: BrainConfig): string | null {
