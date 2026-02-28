@@ -13,6 +13,7 @@ function log(msg: string) {
 // ── Keyword Extraction ──
 
 const STOP_WORDS = new Set([
+  // English
   "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
   "have", "has", "had", "do", "does", "did", "will", "would", "could",
   "should", "may", "might", "shall", "can", "need", "dare", "ought",
@@ -34,16 +35,18 @@ const STOP_WORDS = new Set([
   "thing", "things", "one", "two", "don", "doesn", "didn", "won",
   "gonna", "wanna", "gotta", "kinda", "really", "actually", "maybe",
   // Dutch stop words
-  "het", "een", "van", "dat", "die", "voor", "niet", "zijn", "nog",
-  "maar", "met", "ook", "naar", "dan", "wat", "als", "bij", "uit",
+  "de", "het", "een", "van", "dat", "die", "voor", "niet", "zijn", "nog",
+  "maar", "met", "ook", "naar", "dan", "wat", "als", "bij", "uit", "aan",
   "kan", "wel", "zou", "ik", "je", "hij", "zij", "wij", "jij",
   "mij", "hem", "haar", "ons", "hun", "dit", "deze", "hoe", "waar",
   "wie", "waarom", "wanneer", "weer", "veel", "meer", "goed",
-  "heb", "heb", "heeft", "ben", "was", "nog", "moet", "wil",
+  "heb", "heeft", "ben", "was", "moet", "wil",
   "doe", "doet", "deed", "gaat", "ging", "kom", "komt", "kwam",
   "laat", "laten", "geeft", "geven", "zegt", "zei", "zien", "zag",
   "nee", "ja", "nou", "toch", "even", "echt", "best", "heel",
   "denk", "weet", "iets", "niets", "alles", "ander", "eigen",
+  "steeds", "graag", "gewoon", "helemaal", "eigenlijk", "geweldig",
+  "leuk", "prima", "mooi", "fijn", "lekker",
 ]);
 
 export function extractKeywords(observations: Observation[]): string[] {
@@ -52,7 +55,7 @@ export function extractKeywords(observations: Observation[]): string[] {
   for (const obs of observations) {
     const words = obs.text
       .toLowerCase()
-      .replace(/[^a-z0-9\s'-]/g, " ")
+      .replace(/[^\p{L}0-9\s'-]/gu, " ")
       .split(/\s+/)
       .filter(w => w.length > 2 && !STOP_WORDS.has(w));
 
