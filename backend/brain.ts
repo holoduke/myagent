@@ -59,8 +59,6 @@ const URGENCY_MIN_COOLDOWN = 60000; // 1 min minimum even for urgent
 
 // Recurring task budget
 const MAX_RECURRING_THINKS_PER_DAY = 5;
-let recurringThinksToday = 0;
-let recurringBudgetDate = "";
 
 const STATE_FILE = `${BRAIN_DIR}/state.json`;
 const NOTEBOOK_FILE = `${BRAIN_DIR}/notebook.md`;
@@ -85,6 +83,8 @@ function defaultState(): BrainState {
     totalCost: 0,
     nodeCount: 0,
     edgeCount: 0,
+    recurringThinksToday: 0,
+    recurringBudgetDate: "",
     consecutiveFailures: 0,
     lastSuccessfulTick: 0,
     pendingSelfMod: false,
@@ -522,9 +522,9 @@ async function tick(
   }
 
   // Reset recurring task budget
-  if (recurringBudgetDate !== today) {
-    recurringBudgetDate = today;
-    recurringThinksToday = 0;
+  if (state.recurringBudgetDate !== today) {
+    state.recurringBudgetDate = today;
+    state.recurringThinksToday = 0;
   }
 
   // Daily pruning of old observations
@@ -714,8 +714,8 @@ async function handleRecurringTasks(
         }
 
         case "think_trigger": {
-          if (recurringThinksToday >= MAX_RECURRING_THINKS_PER_DAY) {
-            log(`[recurring] Skipping think_trigger "${task.label}": daily budget exhausted (${recurringThinksToday}/${MAX_RECURRING_THINKS_PER_DAY})`);
+          if (state.recurringThinksToday >= MAX_RECURRING_THINKS_PER_DAY) {
+            log(`[recurring] Skipping think_trigger "${task.label}": daily budget exhausted (${state.recurringThinksToday}/${MAX_RECURRING_THINKS_PER_DAY})`);
             break;
           }
           const action = task.action as { type: "think_trigger"; topic: string; context?: string };
@@ -730,14 +730,14 @@ async function handleRecurringTasks(
             source: "whatsapp",
           };
           graph.addPendingObservation(syntheticObs);
-          recurringThinksToday++;
+          state.recurringThinksToday++;
           markExecuted(task.id);
-          log(`[recurring] Injected think trigger for "${task.label}" (${recurringThinksToday}/${MAX_RECURRING_THINKS_PER_DAY} today)`);
+          log(`[recurring] Injected think trigger for "${task.label}" (${state.recurringThinksToday}/${MAX_RECURRING_THINKS_PER_DAY} today)`);
           break;
         }
 
         case "digest": {
-          if (recurringThinksToday >= MAX_RECURRING_THINKS_PER_DAY) {
+          if (state.recurringThinksToday >= MAX_RECURRING_THINKS_PER_DAY) {
             log(`[recurring] Skipping digest "${task.label}": daily budget exhausted`);
             break;
           }
@@ -758,7 +758,7 @@ async function handleRecurringTasks(
             source: "whatsapp",
           };
           graph.addPendingObservation(digestObs);
-          recurringThinksToday++;
+          state.recurringThinksToday++;
           markExecuted(task.id);
           log(`[recurring] Injected digest trigger for "${task.label}"`);
           break;

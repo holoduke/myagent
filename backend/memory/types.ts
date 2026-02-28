@@ -115,6 +115,10 @@ export interface BrainState {
   nodeCount: number;
   edgeCount: number;
 
+  // recurring task budget
+  recurringThinksToday: number;
+  recurringBudgetDate: string;
+
   // self-improvement
   consecutiveFailures: number;
   lastSuccessfulTick: number;
