@@ -33,6 +33,17 @@ const STOP_WORDS = new Set([
   "know", "knew", "think", "thought", "see", "saw", "want", "let",
   "thing", "things", "one", "two", "don", "doesn", "didn", "won",
   "gonna", "wanna", "gotta", "kinda", "really", "actually", "maybe",
+  // Dutch stop words
+  "het", "een", "van", "dat", "die", "voor", "niet", "zijn", "nog",
+  "maar", "met", "ook", "naar", "dan", "wat", "als", "bij", "uit",
+  "kan", "wel", "zou", "ik", "je", "hij", "zij", "wij", "jij",
+  "mij", "hem", "haar", "ons", "hun", "dit", "deze", "hoe", "waar",
+  "wie", "waarom", "wanneer", "weer", "veel", "meer", "goed",
+  "heb", "heb", "heeft", "ben", "was", "nog", "moet", "wil",
+  "doe", "doet", "deed", "gaat", "ging", "kom", "komt", "kwam",
+  "laat", "laten", "geeft", "geven", "zegt", "zei", "zien", "zag",
+  "nee", "ja", "nou", "toch", "even", "echt", "best", "heel",
+  "denk", "weet", "iets", "niets", "alles", "ander", "eigen",
 ]);
 
 export function extractKeywords(observations: Observation[]): string[] {
