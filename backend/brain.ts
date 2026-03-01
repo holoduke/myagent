@@ -559,6 +559,21 @@ async function tick(
   // ── Determine which Claude tick to run ──
   // Priority: reflect > consolidate > think (only one per tick to save cost)
 
+  // ── Circuit breaker: back off on consecutive failures ──
+  if (state.consecutiveFailures >= 3) {
+    const backoffMs = Math.min(
+      Math.pow(2, state.consecutiveFailures) * cfg.tickInterval,
+      30 * 60 * 1000, // cap at 30 minutes
+    );
+    const timeSinceLastTick = now - Math.max(state.lastThinkTick, state.lastConsolidateTick, state.lastReflectTick);
+    if (timeSinceLastTick < backoffMs) {
+      log(`Circuit breaker: backing off (${state.consecutiveFailures} failures, next attempt in ${Math.round((backoffMs - timeSinceLastTick) / 1000)}s)`);
+      saveState(state);
+      return;
+    }
+    log(`Circuit breaker: ${state.consecutiveFailures} failures, but backoff elapsed — retrying`);
+  }
+
   const timeSinceReflect = now - state.lastReflectTick;
   const timeSinceConsolidate = now - state.lastConsolidateTick;
   const timeSinceThink = now - state.lastThinkTick;
