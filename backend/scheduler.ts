@@ -1,12 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
-import { appendFileSync } from "fs";
+import { createLogger } from "./logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [scheduler] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("scheduler");
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const SCHEDULE_FILE = `${BRAIN_DIR}/scheduled-messages.json`;
