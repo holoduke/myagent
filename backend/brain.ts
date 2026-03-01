@@ -51,14 +51,14 @@ const GITHUB_REPO = process.env.GITHUB_REPO || "";
 
 // Tool access for brain ticks (empty string = no tools, comma-separated list = those tools)
 const BRAIN_TOOLS = process.env.BRAIN_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch";
-const TIME_AWARENESS_INTERVAL = 30 * 60 * 1000; // 30 min — think even without observations
+const TIME_AWARENESS_INTERVAL = Number(process.env.BRAIN_TIME_AWARENESS_INTERVAL ?? 30 * 60 * 1000); // default 30 min
 
 // Urgency bypass
-const URGENCY_BYPASS_THRESHOLD = 0.6;
-const URGENCY_MIN_COOLDOWN = 60000; // 1 min minimum even for urgent
+const URGENCY_BYPASS_THRESHOLD = Number(process.env.BRAIN_URGENCY_BYPASS_THRESHOLD ?? 0.6);
+const URGENCY_MIN_COOLDOWN = Number(process.env.BRAIN_URGENCY_MIN_COOLDOWN ?? 60000); // default 1 min
 
 // Recurring task budget
-const MAX_RECURRING_THINKS_PER_DAY = 5;
+const MAX_RECURRING_THINKS_PER_DAY = Number(process.env.BRAIN_MAX_RECURRING_THINKS ?? 5);
 let recurringThinksToday = 0;
 let recurringBudgetDate = "";
 

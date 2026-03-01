@@ -90,7 +90,7 @@ export function getDueMessages(): ScheduledMessage[] {
   return due;
 }
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = Number(process.env.SCHEDULER_MAX_RETRIES ?? 3);
 
 /**
  * Remove successfully delivered messages from the schedule file.
