@@ -55,6 +55,14 @@ export interface Observation {
   urgency?: number;
 }
 
+export interface ObservationFilter {
+  sender?: string;
+  source?: Observation["source"];
+  isGroup?: boolean;
+  isFromMe?: boolean;
+  textContains?: string;
+}
+
 export function ensureBrainDir(): void {
   if (!existsSync(BRAIN_DIR)) {
     mkdirSync(BRAIN_DIR, { recursive: true });
@@ -71,7 +79,7 @@ export function recordObservation(obs: Observation): void {
   }
 }
 
-export function getObservationsSince(since: number): Observation[] {
+export function getObservationsSince(since: number, filter?: ObservationFilter): Observation[] {
   try {
     if (!existsSync(OBS_FILE)) return [];
     const lines = readFileSync(OBS_FILE, "utf-8").split("\n");
@@ -80,7 +88,15 @@ export function getObservationsSince(since: number): Observation[] {
       if (!line.trim()) continue;
       try {
         const obs = JSON.parse(line) as Observation;
-        if (obs.timestamp > since) results.push(obs);
+        if (obs.timestamp <= since) continue;
+        if (filter) {
+          if (filter.sender !== undefined && !obs.sender.toLowerCase().includes(filter.sender.toLowerCase())) continue;
+          if (filter.source !== undefined && obs.source !== filter.source) continue;
+          if (filter.isGroup !== undefined && obs.isGroup !== filter.isGroup) continue;
+          if (filter.isFromMe !== undefined && obs.isFromMe !== filter.isFromMe) continue;
+          if (filter.textContains !== undefined && !obs.text.toLowerCase().includes(filter.textContains.toLowerCase())) continue;
+        }
+        results.push(obs);
       } catch {
         // Skip corrupted lines
       }
