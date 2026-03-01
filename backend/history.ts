@@ -1,4 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("history");
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -37,7 +40,7 @@ function save(): void {
   try {
     writeFileSync(HISTORY_FILE, JSON.stringify(cache, null, 0));
   } catch (err) {
-    console.error("[history] Failed to save:", err);
+    log(`Failed to save: ${err}`);
   }
 }
 

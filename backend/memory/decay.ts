@@ -1,4 +1,3 @@
-import { appendFileSync } from "fs";
 import type { MemoryGraph } from "./graph.js";
 import {
   DECAY_LAMBDA,
@@ -7,13 +6,9 @@ import {
   ORPHAN_GRACE_HOURS,
   MAX_NODES_HARD,
 } from "./types.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [decay] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("decay");
 
 /**
  * Apply exponential decay to all unpinned nodes.

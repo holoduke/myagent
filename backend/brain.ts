@@ -1,5 +1,4 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
-import { appendFileSync } from "fs";
 import { spawn, execSync } from "child_process";
 import { askClaudeStreaming } from "./claude.js";
 import { getObservationsSince, pruneObservations, ensureBrainDir } from "./observer.js";
@@ -36,13 +35,9 @@ import {
   failItem,
   getWeeklyCompletedCount,
 } from "./self-improve-queue.js";
+import { createLogger } from "./logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [brain] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("brain");
 
 // Config from env (non-responsiveness constants)
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
