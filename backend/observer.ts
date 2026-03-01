@@ -1,5 +1,11 @@
 import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { appendFileSync as logAppend } from "fs";
+import { EventEmitter } from "events";
+
+// Shared event bus for brain reactivity.
+// Emits 'new-observation' when recordObservation() is called,
+// allowing the brain loop to wake up and process immediately.
+export const brainEvents = new EventEmitter();
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -66,6 +72,8 @@ export function recordObservation(obs: Observation): void {
   try {
     ensureBrainDir();
     appendFileSync(OBS_FILE, JSON.stringify(obs) + "\n");
+    // Notify brain loop that a new observation is available
+    brainEvents.emit("new-observation", obs);
   } catch (err) {
     log(`Failed to record observation: ${err}`);
   }

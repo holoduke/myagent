@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkS
 import { appendFileSync } from "fs";
 import { spawn, execSync } from "child_process";
 import { askClaudeStreaming } from "./claude.js";
-import { getObservationsSince, pruneObservations, ensureBrainDir } from "./observer.js";
+import { getObservationsSince, pruneObservations, ensureBrainDir, brainEvents } from "./observer.js";
 import type { Observation } from "./observer.js";
 import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./brain-prompt.js";
 import type { MessageQueue } from "./queue.js";
@@ -445,7 +445,11 @@ function bootstrapIdentity(g: MemoryGraph): void {
 let brainInterval: ReturnType<typeof setInterval> | null = null;
 let lastPruneDate = "";
 let firstSuccessfulTickDone = false;
+let tickRunning = false; // Mutex to prevent concurrent tick execution
 const graph = new MemoryGraph();
+
+// Event-driven tick: minimum cooldown before a reactive tick can fire (30s)
+const EVENT_DRIVEN_MIN_COOLDOWN = 30_000;
 
 export function startBrainLoop(
   queue: MessageQueue,
@@ -469,17 +473,41 @@ export function startBrainLoop(
 
   log(`Brain loop starting (tick every ${cfg.tickInterval / 1000}s, think cooldown ${cfg.thinkCooldown / 1000}s, consolidate every ${cfg.consolidateInterval / 3600000}h, reflect every ${cfg.reflectInterval / 3600000}h)`);
 
+  // Guarded tick runner — prevents concurrent tick execution
+  const runTick = async (source: string) => {
+    if (tickRunning) {
+      log(`Skipping ${source} tick: another tick is already running`);
+      return;
+    }
+    tickRunning = true;
+    try {
+      await tick(queue, sendMessage, ownerJid);
+    } catch (err) {
+      log(`Tick error (${source}): ${err}`);
+    } finally {
+      tickRunning = false;
+    }
+  };
+
   brainInterval = setInterval(() => {
-    tick(queue, sendMessage, ownerJid).catch((err) => {
-      log(`Tick error: ${err}`);
-    });
+    runTick("interval").catch(() => {});
   }, cfg.tickInterval);
+
+  // Event-driven tick: when a new observation arrives (e.g. WhatsApp message),
+  // trigger an immediate tick if the cooldown has elapsed. This makes ARIA
+  // reactive — processing new messages within 30s instead of waiting up to 5+ min.
+  brainEvents.on("new-observation", () => {
+    const state = loadState();
+    const timeSinceThink = Date.now() - state.lastThinkTick;
+    if (timeSinceThink >= EVENT_DRIVEN_MIN_COOLDOWN) {
+      log(`Event-driven tick triggered (${Math.round(timeSinceThink / 1000)}s since last think)`);
+      runTick("event-driven").catch(() => {});
+    }
+  });
 
   // Run initial tick after delay for WhatsApp to connect
   setTimeout(() => {
-    tick(queue, sendMessage, ownerJid).catch((err) => {
-      log(`Initial tick error: ${err}`);
-    });
+    runTick("initial").catch(() => {});
   }, 10000);
 }
 
@@ -487,8 +515,9 @@ export function stopBrainLoop(): void {
   if (brainInterval) {
     clearInterval(brainInterval);
     brainInterval = null;
-    log("Brain loop stopped");
   }
+  brainEvents.removeAllListeners("new-observation");
+  log("Brain loop stopped");
 }
 
 // ── Tick Scheduler ──
