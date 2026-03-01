@@ -186,6 +186,9 @@ export class MemoryGraph {
   // ── Edge Operations ──
 
   addEdge(edge: MemoryEdge): void {
+    // Prevent self-loops
+    if (edge.from === edge.to) return;
+
     // Avoid duplicates
     const exists = this.edges.some(e => e.from === edge.from && e.to === edge.to && e.type === edge.type);
     if (exists) return;
@@ -419,6 +422,7 @@ export class MemoryGraph {
           }
           case "add_edge": {
             if (!this.nodes.has(op.from) || !this.nodes.has(op.to)) { skipped++; break; }
+            if (op.from === op.to) { skipped++; break; }
             this.addEdge({
               from: op.from, to: op.to,
               type: op.type,
