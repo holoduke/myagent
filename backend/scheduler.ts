@@ -11,6 +11,8 @@ function log(msg: string) {
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const SCHEDULE_FILE = `${BRAIN_DIR}/scheduled-messages.json`;
 
+let scheduleCache: ScheduledMessage[] | null = null;
+
 export interface ScheduledMessage {
   id: string;
   targetJid: string;
@@ -22,14 +24,17 @@ export interface ScheduledMessage {
 }
 
 function loadSchedule(): ScheduledMessage[] {
+  if (scheduleCache !== null) return scheduleCache;
   try {
     if (existsSync(SCHEDULE_FILE)) {
-      return JSON.parse(readFileSync(SCHEDULE_FILE, "utf-8"));
+      scheduleCache = JSON.parse(readFileSync(SCHEDULE_FILE, "utf-8"));
+      return scheduleCache!;
     }
   } catch {
     log("Failed to read schedule, starting fresh");
   }
-  return [];
+  scheduleCache = [];
+  return scheduleCache;
 }
 
 function saveSchedule(messages: ScheduledMessage[]): void {
@@ -40,8 +45,10 @@ function saveSchedule(messages: ScheduledMessage[]): void {
     const tmp = SCHEDULE_FILE + ".tmp";
     writeFileSync(tmp, JSON.stringify(messages, null, 2));
     renameSync(tmp, SCHEDULE_FILE);
+    scheduleCache = messages;
   } catch (err) {
     log(`Failed to save schedule: ${err}`);
+    scheduleCache = null; // Invalidate cache on write failure
   }
 }
 
