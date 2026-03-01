@@ -11,8 +11,6 @@ function log(msg: string) {
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const SCHEDULE_FILE = `${BRAIN_DIR}/scheduled-messages.json`;
 
-let scheduleCache: ScheduledMessage[] | null = null;
-
 export interface ScheduledMessage {
   id: string;
   targetJid: string;
@@ -22,6 +20,9 @@ export interface ScheduledMessage {
   source: string;       // "brain" | "chat" | "web"
   retryCount?: number;  // incremented on delivery failure
 }
+
+// In-memory cache to avoid repeated disk reads every tick cycle
+let scheduleCache: ScheduledMessage[] | null = null;
 
 function loadSchedule(): ScheduledMessage[] {
   if (scheduleCache !== null) return scheduleCache;
@@ -47,8 +48,9 @@ function saveSchedule(messages: ScheduledMessage[]): void {
     renameSync(tmp, SCHEDULE_FILE);
     scheduleCache = messages;
   } catch (err) {
+    // Invalidate cache on write failure so next read goes to disk
+    scheduleCache = null;
     log(`Failed to save schedule: ${err}`);
-    scheduleCache = null; // Invalidate cache on write failure
   }
 }
 
