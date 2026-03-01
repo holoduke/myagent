@@ -486,6 +486,69 @@ export class MemoryGraph {
     return { applied, skipped };
   }
 
+  // ── Validation & Repair ──
+
+  validate(repair = false): { valid: boolean; issues: string[] } {
+    const issues: string[] = [];
+
+    // Check for dangling edges (edges referencing non-existent nodes)
+    const danglingEdges: { from: string; to: string }[] = [];
+    for (const edge of this.edges) {
+      if (!this.nodes.has(edge.from)) {
+        issues.push(`Dangling edge: 'from' node ${edge.from} does not exist`);
+        danglingEdges.push({ from: edge.from, to: edge.to });
+      }
+      if (!this.nodes.has(edge.to)) {
+        issues.push(`Dangling edge: 'to' node ${edge.to} does not exist`);
+        danglingEdges.push({ from: edge.from, to: edge.to });
+      }
+    }
+
+    // Check for self-loop edges
+    for (const edge of this.edges) {
+      if (edge.from === edge.to) {
+        issues.push(`Self-loop edge on node ${edge.from}`);
+        danglingEdges.push({ from: edge.from, to: edge.to });
+      }
+    }
+
+    // Check for out-of-range weights and strengths
+    for (const edge of this.edges) {
+      if (edge.weight < 0 || edge.weight > 1) {
+        issues.push(`Edge ${edge.from}→${edge.to} has out-of-range weight: ${edge.weight}`);
+        if (repair) edge.weight = Math.max(0, Math.min(1, edge.weight));
+      }
+    }
+    for (const [id, node] of this.nodes) {
+      if (node.strength < 0 || node.strength > 1) {
+        issues.push(`Node ${id} has out-of-range strength: ${node.strength}`);
+        if (repair) node.strength = Math.max(0, Math.min(1, node.strength));
+      }
+    }
+
+    // Check index consistency
+    for (const [id, node] of this.nodes) {
+      const typeSet = this.byType.get(node.type);
+      if (!typeSet || !typeSet.has(id)) {
+        issues.push(`Node ${id} missing from byType index for type ${node.type}`);
+      }
+    }
+
+    // Repair: remove dangling/self-loop edges
+    if (repair && danglingEdges.length > 0) {
+      for (const { from, to } of danglingEdges) {
+        this.removeEdge(from, to);
+      }
+      issues.push(`Repaired: removed ${danglingEdges.length} invalid edge(s)`);
+    }
+
+    if (issues.length > 0) {
+      log(`Graph validation: ${issues.length} issue(s) found${repair ? " (repaired)" : ""}`);
+    }
+
+    return { valid: issues.length === 0, issues };
+  }
+
   // ── Stats ──
 
   getStats(): { nodeCount: number; edgeCount: number; byType: Record<string, number>; avgStrength: number } {
