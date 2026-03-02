@@ -67,6 +67,7 @@ export class MemoryGraph {
     }
 
     this.rebuildIndexes();
+    this.validateGraph();
     log(`Loaded graph: ${this.nodes.size} nodes, ${this.edges.length} edges`);
   }
 
@@ -107,6 +108,42 @@ export class MemoryGraph {
       this.edgesFromIdx.get(edge.from)!.push(edge);
       if (!this.edgesToIdx.has(edge.to)) this.edgesToIdx.set(edge.to, []);
       this.edgesToIdx.get(edge.to)!.push(edge);
+    }
+  }
+
+  /** Validate graph integrity on load: remove phantom edges, detect duplicates */
+  private validateGraph(): void {
+    let repairsMade = false;
+
+    // (1) Remove edges referencing nonexistent nodes
+    const originalEdgeCount = this.edges.length;
+    this.edges = this.edges.filter(e => this.nodes.has(e.from) && this.nodes.has(e.to));
+    const phantomEdgesRemoved = originalEdgeCount - this.edges.length;
+    if (phantomEdgesRemoved > 0) {
+      log(`Graph validation: removed ${phantomEdgesRemoved} phantom edge(s) referencing nonexistent nodes`);
+      this.rebuildIndexes();
+      repairsMade = true;
+    }
+
+    // (2) Detect and warn about duplicate edges (same from/to/type)
+    const seen = new Set<string>();
+    let duplicateCount = 0;
+    for (const edge of this.edges) {
+      const key = `${edge.from}|${edge.to}|${edge.type}`;
+      if (seen.has(key)) {
+        duplicateCount++;
+      } else {
+        seen.add(key);
+      }
+    }
+    if (duplicateCount > 0) {
+      log(`Graph validation: WARNING — detected ${duplicateCount} duplicate edge(s) (same from/to/type)`);
+      repairsMade = true;
+    }
+
+    // (3) Summary
+    if (repairsMade) {
+      log(`Graph validation: repairs complete (${phantomEdgesRemoved} phantom edges removed, ${duplicateCount} duplicates detected)`);
     }
   }
 
