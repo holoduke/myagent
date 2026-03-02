@@ -122,6 +122,39 @@ export interface OwnTracksStatus {
   lastLocation: { lat: number; lon: number; timestamp: number; battery?: number } | null
 }
 
+export interface TwilioCallRecord {
+  callSid: string
+  to: string
+  from: string
+  mode: 'simple' | 'agent'
+  status: string
+  startedAt: number
+  endedAt?: number
+  duration?: number
+  summary?: string
+  model?: string
+}
+
+export interface TwilioStatus {
+  enabled: boolean
+  configured: boolean
+  phoneNumber: string
+  webhookBaseUrl: string
+  activeCalls: number
+  totalCalls: number
+  lastCallAt: number
+  recentCalls: TwilioCallRecord[]
+  config: {
+    accountSid: string
+    phoneNumber: string
+    webhookBaseUrl: string
+    defaultVoice: string
+    defaultLanguage: string
+    maxCallDurationSec: number
+    model: string
+  } | null
+}
+
 export interface DashboardData {
   brainState: BrainState
   workingMemory: WorkingMemory
@@ -135,6 +168,7 @@ export interface DashboardData {
   homeassistant: HomeAssistantStatus
   rss: RSSStatus
   owntracks: OwnTracksStatus
+  twilio: TwilioStatus
   whitelistCount: number
   scheduledCount: number
   queueDepth: number
