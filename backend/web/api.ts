@@ -46,7 +46,8 @@ import { detectInitiativeSignals } from "../initiative.js";
 import { GoalTracker } from "../goals.js";
 import { MemoryGraph } from "../memory/graph.js";
 import { loadWorkingMemory } from "../memory/working-memory.js";
-import type { GoalData } from "../memory/types.js";
+import type { GoalData, RetentionTier } from "../memory/types.js";
+import { classifyRetentionTier } from "../memory/decay.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -732,11 +733,21 @@ function getAriaStatus(): Record<string, unknown> {
         })
         .sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0));
 
+      // Compute retention tier distribution (load full graph for connection-based classification)
+      const tierGraph = new MemoryGraph();
+      tierGraph.load();
+      const tierDistribution: Record<RetentionTier, number> = { core: 0, important: 0, work: 0, standard: 0, ephemeral: 0 };
+      for (const node of nodeList) {
+        const tier = classifyRetentionTier(node, tierGraph);
+        tierDistribution[tier]++;
+      }
+
       status.graph = {
         nodeCount: nodeList.length,
         edgeCount: edges.length,
         byType,
         avgStrength: nodeList.length > 0 ? totalStrength / nodeList.length : 0,
+        retentionTiers: tierDistribution,
         pinnedNodes: pinned.map(n => ({ id: n.id, type: n.type, content: n.content || "", tags: n.tags || [], strength: n.strength ?? 0 })),
         strongestNodes: strongest.map(n => ({ id: n.id, type: n.type, content: n.content || "", tags: n.tags || [], strength: n.strength ?? 0, accessCount: n.accessCount ?? 0 })),
         weakestNodes: weakest.map(n => ({ id: n.id, type: n.type, content: n.content || "", strength: n.strength ?? 0 })),
