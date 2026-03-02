@@ -1,9 +1,10 @@
 import "dotenv/config";
 import { appendFileSync, readFileSync, existsSync } from "fs";
 import { createServer } from "http";
-import { startWhatsApp, sendMessage, sendReaction, getLatestQr } from "./integrations/whatsapp.js";
+import { startWhatsApp, sendMessage, sendReaction, sendTypingIndicator, stopTypingIndicator, getLatestQr } from "./integrations/whatsapp.js";
 import { resetSession } from "./claude.js";
 import { getDefaultProvider, bootstrapDefaultAgent } from "./providers/index.js";
+import { splitMessage } from "./providers/util.js";
 import { MessageQueue } from "./queue.js";
 import { handleWebRoutes } from "./web.js";
 import { addMessage, clearHistory, getUsageStats } from "./history.js";
@@ -207,20 +208,89 @@ async function main() {
 
           const provider = getDefaultProvider();
           log(`Calling ${provider.name} with: "${text.slice(0, 80)}"`);
-          const result = await provider.ask(text, {});
-          log(`${provider.name} returned ${result.messages.length} chunk(s), first 200 chars: ${result.messages[0]?.slice(0, 200)}`);
 
-          // Save assistant response to history
-          addMessage({ role: "assistant", content: result.messages.join("\n"), timestamp: Date.now(), source: "whatsapp" });
+          let fullResponse = "";
+          let result;
 
-          for (const chunk of result.messages) {
-            log(`Sending chunk (${chunk.length} chars) to ${jid}`);
-            await sendMessage(jid, chunk);
-            log("Chunk sent successfully");
+          if (provider.supportsStreaming) {
+            // Streaming mode with intermediate chunk delivery
+            let chunkBuffer = "";
+            let lastSendTime = Date.now();
+            const SEND_INTERVAL_MS = 15_000; // Send intermediate chunks every ~15s
+            const MIN_CHUNK_LENGTH = 50;
+
+            // Start typing indicator
+            await sendTypingIndicator(jid);
+            const typingInterval = setInterval(() => {
+              sendTypingIndicator(jid).catch(() => {});
+            }, 10_000);
+
+            result = await provider.askStreaming(text, (delta) => {
+              fullResponse += delta;
+              chunkBuffer += delta;
+
+              const now = Date.now();
+              if (now - lastSendTime >= SEND_INTERVAL_MS && chunkBuffer.length >= MIN_CHUNK_LENGTH) {
+                // Find a clean sentence boundary to split on
+                let splitIdx = -1;
+                // Look for last period followed by space/newline, or last newline
+                for (let i = chunkBuffer.length - 1; i >= MIN_CHUNK_LENGTH / 2; i--) {
+                  if (chunkBuffer[i] === "\n" || (chunkBuffer[i] === "." && (i === chunkBuffer.length - 1 || chunkBuffer[i + 1] === " " || chunkBuffer[i + 1] === "\n"))) {
+                    splitIdx = i + 1;
+                    break;
+                  }
+                }
+
+                if (splitIdx > 0) {
+                  const toSend = chunkBuffer.slice(0, splitIdx).trim();
+                  chunkBuffer = chunkBuffer.slice(splitIdx);
+                  lastSendTime = now;
+
+                  if (toSend.length > 0) {
+                    // Send intermediate chunks (fire-and-forget, don't abort stream on failure)
+                    const chunks = splitMessage(toSend);
+                    for (const c of chunks) {
+                      sendMessage(jid, c).catch((err) => {
+                        log(`Warning: failed to send intermediate chunk: ${err}`);
+                      });
+                    }
+                    log(`Sent intermediate chunk (${toSend.length} chars) to ${jid}`);
+                  }
+                }
+              }
+            }, {});
+
+            clearInterval(typingInterval);
+            await stopTypingIndicator(jid);
+
+            // Send remaining buffer as the final message
+            const remaining = chunkBuffer.trim();
+            if (remaining.length > 0) {
+              const chunks = splitMessage(remaining);
+              for (const c of chunks) {
+                log(`Sending final chunk (${c.length} chars) to ${jid}`);
+                await sendMessage(jid, c);
+                log("Final chunk sent successfully");
+              }
+            }
+          } else {
+            // Non-streaming fallback
+            result = await provider.ask(text, {});
+            fullResponse = result.messages.join("\n");
+            for (const chunk of result.messages) {
+              log(`Sending chunk (${chunk.length} chars) to ${jid}`);
+              await sendMessage(jid, chunk);
+              log("Chunk sent successfully");
+            }
           }
 
+          log(`${provider.name} returned, response ${fullResponse.length} chars, first 200: ${fullResponse.slice(0, 200)}`);
+
+          // Save FULL concatenated response to history (not individual chunks)
+          addMessage({ role: "assistant", content: fullResponse || result.messages.join("\n"), timestamp: Date.now(), source: "whatsapp" });
+
           await sendReaction(jid, message.key, "\u2705");
-          log(`Done - responded with ${result.messages.length} message(s)`);
+          log(`Done - responded to ${jid}`);
         } catch (err) {
           log(`ERROR: ${err}`);
           const errorMsg =
