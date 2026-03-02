@@ -25,7 +25,7 @@ import { getDueRecurringTasks, markExecuted } from "./recurring.js";
 import type { RecurringTask } from "./recurring.js";
 import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
 import { ensureSSHKey } from "./integrations/ssh.js";
-import { getBrainConfig, getActivePreset } from "./brain-config.js";
+import { getBrainConfig, getActivePreset, getOwnerLocalTime } from "./brain-config.js";
 import {
   loadQueue,
   enqueue,
@@ -741,8 +741,8 @@ async function handleRecurringTasks(
             log(`[recurring] Skipping digest "${task.label}": daily budget exhausted`);
             break;
           }
-          // Build context-aware digest prompt based on time of day
-          const hour = new Date().getHours();
+          // Build context-aware digest prompt based on owner's local time of day
+          const { hour } = getOwnerLocalTime(getBrainConfig().ownerTimezone);
           const isEvening = hour >= 17;
           const digestPrompt = isEvening
             ? `[DIGEST REQUEST: ${task.label}] Create a brief evening briefing for the owner. Summarize the day's key events: notable conversations, important messages, things that happened, any open items or pending decisions, and anything worth reflecting on. Keep it concise and personal.`
@@ -1220,7 +1220,7 @@ async function trySendMessage(
 ): Promise<void> {
   const cfg = getBrainConfig();
   const now = Date.now();
-  const currentHour = new Date().getHours();
+  const { hour: currentHour } = getOwnerLocalTime(cfg.ownerTimezone);
   const isQuiet = cfg.quietStart !== cfg.quietEnd && (currentHour >= cfg.quietStart || currentHour < cfg.quietEnd);
   const messageIntervalOk = (now - state.lastMessageTime) >= cfg.minMessageInterval;
   const underDailyLimit = state.messagesToday < cfg.maxMessagesPerDay;

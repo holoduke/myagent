@@ -108,6 +108,23 @@
               <option v-for="h in 25" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}:00</option>
             </select>
           </div>
+          <div class="br-field" style="grid-column: 1 / -1">
+            <label class="intg-label">Owner timezone</label>
+            <select class="intg-input" v-model="brainForm.ownerTimezone" @change="brainDirty = true">
+              <option value="Europe/Amsterdam">Europe/Amsterdam (CET/CEST)</option>
+              <option value="Europe/London">Europe/London (GMT/BST)</option>
+              <option value="Europe/Berlin">Europe/Berlin (CET/CEST)</option>
+              <option value="Europe/Paris">Europe/Paris (CET/CEST)</option>
+              <option value="America/New_York">America/New_York (EST/EDT)</option>
+              <option value="America/Chicago">America/Chicago (CST/CDT)</option>
+              <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT)</option>
+              <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
+              <option value="Asia/Shanghai">Asia/Shanghai (CST)</option>
+              <option value="Australia/Sydney">Australia/Sydney (AEST/AEDT)</option>
+              <option value="UTC">UTC</option>
+            </select>
+            <div style="font-size:11px;color:var(--text-ghost);margin-top:2px">Quiet hours and recurring tasks use this timezone</div>
+          </div>
           <div class="br-field">
             <label class="intg-label">Think cooldown</label>
             <select class="intg-input" v-model.number="brainForm.thinkCooldown" @change="onAdvancedChange">
@@ -252,6 +269,7 @@ const brainForm = reactive<BrainConfig>({
   minMessageInterval: 7200000,
   quietStart: 23,
   quietEnd: 7,
+  ownerTimezone: 'Europe/Amsterdam',
   thinkCooldown: 300000,
   consolidateInterval: 14400000,
   reflectInterval: 43200000,

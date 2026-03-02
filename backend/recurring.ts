@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { appendFileSync } from "fs";
+import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -111,8 +112,9 @@ export function isDue(task: RecurringTask, now: Date): boolean {
     return false;
   }
 
-  const currentHour = now.getHours();
-  const currentDay = now.getDay();
+  // Use owner's timezone so recurring tasks fire at local time (e.g. 8am CET, not 8 UTC)
+  const cfg = getBrainConfig();
+  const { hour: currentHour, dayOfWeek: currentDay } = getOwnerLocalTime(cfg.ownerTimezone, now);
 
   // Check hour match
   if (!task.pattern.hours.includes(currentHour)) return false;
