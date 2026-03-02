@@ -25,6 +25,16 @@ const URGENCY_KEYWORDS: Record<string, number> = {
   "911": 0.9,
 };
 
+// Pre-compiled regex patterns sorted by score descending.
+// Compiled once at module load time so scoreUrgency() can early-exit
+// on the first match — any remaining patterns have equal or lower scores.
+const COMPILED_URGENCY_PATTERNS: { pattern: RegExp; score: number }[] = Object.entries(URGENCY_KEYWORDS)
+  .sort(([, a], [, b]) => b - a)
+  .map(([keyword, score]) => ({
+    pattern: new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"),
+    score,
+  }));
+
 const OWNER_NAME = (process.env.OWNER_NAME || "Owner").toLowerCase();
 
 // ── Urgency Scoring (zero Claude cost) ──
@@ -34,22 +44,24 @@ export function scoreUrgency(obs: Observation): number {
 
   let score = 0;
   const text = obs.text;
-  const textLower = text.toLowerCase();
 
   // Direct message base score
   if (!obs.isGroup) {
     score += 0.3;
   }
 
-  // Keyword matching
-  for (const [keyword, weight] of Object.entries(URGENCY_KEYWORDS)) {
-    if (textLower.includes(keyword)) {
-      score = Math.max(score, weight);
+  // Keyword matching — patterns are sorted by score descending, so once
+  // we find a match we can break: no remaining pattern can beat it.
+  for (const { pattern, score: weight } of COMPILED_URGENCY_PATTERNS) {
+    if (weight <= score) break; // remaining patterns have equal or lower scores
+    if (pattern.test(text)) {
+      score = weight;
+      break;
     }
   }
 
   // Owner mentioned in group
-  if (obs.isGroup && textLower.includes(OWNER_NAME)) {
+  if (obs.isGroup && text.toLowerCase().includes(OWNER_NAME)) {
     score = Math.max(score, 0.5);
   }
 
