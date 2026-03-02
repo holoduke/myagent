@@ -1009,6 +1009,22 @@ async function thinkTick(
       wm.activeGoals = goalTracker.getWorkingGoalRefs();
     }
 
+    // Reinforce activated nodes — memories that were recalled get stronger
+    // Small boost (0.02) for being selected as context, mimics human recall reinforcement
+    let reinforced = 0;
+    for (const node of contextNodes) {
+      if (node.pinned) continue; // pinned nodes don't need reinforcement
+      const current = graph.getNode(node.id);
+      if (!current) continue;
+      current.lastAccessedAt = now;
+      current.accessCount++;
+      current.strength = Math.min(1, current.strength + 0.02);
+      reinforced++;
+    }
+    if (reinforced > 0) {
+      log(`Think: reinforced ${reinforced} activated context nodes`);
+    }
+
     // Update working memory
     if (response.workingMemory) {
       updateWorkingMemory(wm, response.workingMemory);
