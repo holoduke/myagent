@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -35,7 +35,9 @@ export function getHistory(): ChatMessage[] {
 
 function save(): void {
   try {
-    writeFileSync(HISTORY_FILE, JSON.stringify(cache, null, 0));
+    const tmp = HISTORY_FILE + ".tmp";
+    writeFileSync(tmp, JSON.stringify(cache, null, 0));
+    renameSync(tmp, HISTORY_FILE);
   } catch (err) {
     console.error("[history] Failed to save:", err);
   }
