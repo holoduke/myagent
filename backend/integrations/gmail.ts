@@ -193,7 +193,9 @@ function decodeBase64Url(data: string): string {
   return Buffer.from(base64, "base64").toString("utf-8");
 }
 
-function extractBody(payload: gmail_v1.Schema$MessagePart): string {
+function extractBody(payload: gmail_v1.Schema$MessagePart, maxDepth: number = 5): string {
+  if (maxDepth <= 0) return "";
+
   // Simple text body
   if (payload.mimeType === "text/plain" && payload.body?.data) {
     return decodeBase64Url(payload.body.data);
@@ -210,7 +212,7 @@ function extractBody(payload: gmail_v1.Schema$MessagePart): string {
     // Fallback: try nested multiparts
     for (const part of payload.parts) {
       if (part.parts) {
-        const result = extractBody(part);
+        const result = extractBody(part, maxDepth - 1);
         if (result) return result;
       }
     }
