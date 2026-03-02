@@ -119,7 +119,8 @@ export function getDueMessages(): ScheduledMessage[] {
   return due;
 }
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 5;
+const BACKOFF_DELAYS_MS = [2 * 60000, 10 * 60000, 30 * 60000, 60 * 60000, 120 * 60000]; // 2m, 10m, 30m, 1h, 2h
 
 /**
  * Remove successfully delivered messages from the schedule file.
@@ -147,7 +148,9 @@ export function markFailed(ids: string[]): string[] {
       if (msg.retryCount > MAX_RETRIES) {
         droppedIds.push(msg.id);
       } else {
-        log(`Message ${msg.id} retry ${msg.retryCount}/${MAX_RETRIES}`);
+        const backoffMs = BACKOFF_DELAYS_MS[msg.retryCount - 1] || BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1];
+        msg.deliverAt = Date.now() + backoffMs;
+        log(`Message ${msg.id} retry ${msg.retryCount}/${MAX_RETRIES}, next attempt in ${Math.round(backoffMs / 60000)}min`);
       }
     }
   }
