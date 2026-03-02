@@ -125,25 +125,40 @@ export class MemoryGraph {
       repairsMade = true;
     }
 
-    // (2) Detect and warn about duplicate edges (same from/to/type)
-    const seen = new Set<string>();
-    let duplicateCount = 0;
-    for (const edge of this.edges) {
-      const key = `${edge.from}|${edge.to}|${edge.type}`;
-      if (seen.has(key)) {
-        duplicateCount++;
-      } else {
-        seen.add(key);
-      }
-    }
-    if (duplicateCount > 0) {
-      log(`Graph validation: WARNING — detected ${duplicateCount} duplicate edge(s) (same from/to/type)`);
+    // (2) Remove self-loop edges (from === to)
+    const preLoopCount = this.edges.length;
+    this.edges = this.edges.filter(e => e.from !== e.to);
+    const selfLoopsRemoved = preLoopCount - this.edges.length;
+    if (selfLoopsRemoved > 0) {
+      log(`Graph validation: removed ${selfLoopsRemoved} self-loop edge(s)`);
       repairsMade = true;
     }
 
-    // (3) Summary
+    // (3) Deduplicate edges (same from/to/type) — keep highest weight
+    const bestByKey = new Map<string, MemoryEdge>();
+    for (const edge of this.edges) {
+      const key = `${edge.from}|${edge.to}|${edge.type}`;
+      const existing = bestByKey.get(key);
+      if (!existing || edge.weight > existing.weight) {
+        bestByKey.set(key, edge);
+      }
+    }
+    const duplicatesRemoved = this.edges.length - bestByKey.size;
+    if (duplicatesRemoved > 0) {
+      this.edges = Array.from(bestByKey.values());
+      log(`Graph validation: removed ${duplicatesRemoved} duplicate edge(s), kept highest weight for each`);
+      repairsMade = true;
+    }
+
+    // Rebuild indexes if any edge repairs were made in steps 2-3
+    if (selfLoopsRemoved > 0 || duplicatesRemoved > 0) {
+      this.rebuildIndexes();
+    }
+
+    // (4) Persist repairs and log summary
     if (repairsMade) {
-      log(`Graph validation: repairs complete (${phantomEdgesRemoved} phantom edges removed, ${duplicateCount} duplicates detected)`);
+      this.save();
+      log(`Graph validation: repairs complete (${phantomEdgesRemoved} phantom, ${selfLoopsRemoved} self-loops, ${duplicatesRemoved} duplicates removed)`);
     }
   }
 
