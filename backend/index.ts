@@ -207,13 +207,27 @@ async function main() {
 
           const provider = getDefaultProvider();
           log(`Calling ${provider.name} with: "${text.slice(0, 80)}"`);
-          const result = await provider.ask(text, {});
-          log(`${provider.name} returned ${result.messages.length} chunk(s), first 200 chars: ${result.messages[0]?.slice(0, 200)}`);
+
+          let fullResponse = "";
+          let result;
+
+          if (provider.supportsStreaming) {
+            result = await provider.askStreaming(text, (delta) => {
+              fullResponse += delta;
+            }, {});
+          } else {
+            result = await provider.ask(text, {});
+            fullResponse = result.messages.join("\n");
+          }
+
+          log(`${provider.name} returned, response ${fullResponse.length} chars, first 200: ${fullResponse.slice(0, 200)}`);
 
           // Save assistant response to history
-          addMessage({ role: "assistant", content: result.messages.join("\n"), timestamp: Date.now(), source: "whatsapp" });
+          addMessage({ role: "assistant", content: fullResponse || result.messages.join("\n"), timestamp: Date.now(), source: "whatsapp" });
 
-          for (const chunk of result.messages) {
+          // Send response as WhatsApp messages — use result.messages for chunking if available, otherwise send full response
+          const chunks = result.messages.length > 0 ? result.messages : [fullResponse];
+          for (const chunk of chunks) {
             log(`Sending chunk (${chunk.length} chars) to ${jid}`);
             await sendMessage(jid, chunk);
             log("Chunk sent successfully");
