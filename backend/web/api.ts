@@ -1,5 +1,6 @@
 import { IncomingMessage, ServerResponse } from "http";
-import { readFileSync, existsSync, appendFileSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, appendFileSync } from "fs";
+import { spawn } from "child_process";
 import { resetSession } from "../claude.js";
 import { getDefaultProvider } from "../providers/index.js";
 import { MessageQueue } from "../queue.js";
@@ -29,6 +30,18 @@ import {
   getWeeklyCompletedCount,
 } from "../self-improve-queue.js";
 import { getAllRecurringTasks, addRecurringTask, updateRecurringTask, deleteRecurringTask } from "../recurring.js";
+import {
+  loadSubAgents,
+  addSubAgent,
+  updateSubAgent,
+  deleteSubAgent,
+  getSubAgent,
+  loadSubAgentHistory,
+  loadAllHistory as loadAllSubAgentHistory,
+  loadSubAgentState,
+  markRunning,
+  taskFilePath,
+} from "../sub-agents.js";
 import { detectInitiativeSignals } from "../initiative.js";
 import { GoalTracker } from "../goals.js";
 import { MemoryGraph } from "../memory/graph.js";
@@ -471,7 +484,154 @@ export function handleApiRoutes(
     }
   }
 
+  // ── Sub-Agents CRUD ──
+  if (pathname === "/api/sub-agents" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      const agents = loadSubAgents();
+      const state = loadSubAgentState();
+      const allHistory = loadAllSubAgentHistory();
+      // Trim history to last 5 per agent for the list view
+      const recentRuns: Record<string, unknown[]> = {};
+      for (const [agentId, runs] of Object.entries(allHistory)) {
+        recentRuns[agentId] = runs.slice(0, 5);
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ agents, state, recentRuns }));
+      return true;
+    }
+    if (req.method === "POST") {
+      handleSubAgentCreate(req, res);
+      return true;
+    }
+  }
+
+  const subAgentMatch = pathname.match(/^\/api\/sub-agents\/([^/]+)$/);
+  if (subAgentMatch && isAuthenticated(req)) {
+    const id = decodeURIComponent(subAgentMatch[1]);
+    if (req.method === "GET") {
+      const agent = getSubAgent(id);
+      if (!agent) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Not found" }));
+      } else {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(agent));
+      }
+      return true;
+    }
+    if (req.method === "PUT") {
+      handleSubAgentUpdate(req, res, id);
+      return true;
+    }
+    if (req.method === "DELETE") {
+      const deleted = deleteSubAgent(id);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: deleted }));
+      return true;
+    }
+  }
+
+  if (pathname.match(/^\/api\/sub-agents\/[^/]+\/toggle$/) && req.method === "POST" && isAuthenticated(req)) {
+    const id = pathname.split("/")[3];
+    const agent = getSubAgent(id);
+    if (!agent) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Not found" }));
+    } else {
+      const updated = updateSubAgent(id, { enabled: !agent.enabled });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(updated));
+    }
+    return true;
+  }
+
+  if (pathname.match(/^\/api\/sub-agents\/[^/]+\/history$/) && req.method === "GET" && isAuthenticated(req)) {
+    const id = pathname.split("/")[3];
+    const history = loadSubAgentHistory(id);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(history));
+    return true;
+  }
+
+  if (pathname.match(/^\/api\/sub-agents\/[^/]+\/run$/) && req.method === "POST" && isAuthenticated(req)) {
+    const id = pathname.split("/")[3];
+    const agent = getSubAgent(id);
+    if (!agent) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Not found" }));
+    } else {
+      const state = loadSubAgentState();
+      if (state.runningAgents[id]) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Agent is already running" }));
+      } else {
+        // Write task file and spawn worker directly
+        const tFile = taskFilePath(id);
+        writeFileSync(tFile, JSON.stringify({
+          agentId: id,
+          name: agent.name,
+          prompt: agent.prompt,
+          tools: agent.tools,
+          timeout: agent.timeout,
+        }, null, 2));
+        markRunning(id, undefined);
+        const child = spawn("npx", ["tsx", "backend/sub-agent-worker.ts", id], {
+          detached: true, stdio: "ignore", cwd: "/app", env: { ...process.env },
+        });
+        child.unref();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, message: "Run triggered" }));
+      }
+    }
+    return true;
+  }
+
   return false;
+}
+
+// ── Sub-Agent handlers ──
+
+async function handleSubAgentCreate(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+    const agent = addSubAgent({
+      name: data.name || "Untitled Agent",
+      description: data.description || "",
+      prompt: data.prompt || "",
+      tools: data.tools || "Bash,WebFetch",
+      schedule: data.schedule || { hours: [9, 21] },
+      enabled: data.enabled !== false,
+      timeout: data.timeout || 300000,
+      maxHistoryRuns: data.maxHistoryRuns || 20,
+      source: "owner",
+    });
+    res.writeHead(201, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(agent));
+  } catch (err) {
+    log(`Sub-agent create error: ${err}`);
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+async function handleSubAgentUpdate(req: IncomingMessage, res: ServerResponse, id: string) {
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+    const updated = updateSubAgent(id, data);
+    if (!updated) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Not found" }));
+    } else {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(updated));
+    }
+  } catch (err) {
+    log(`Sub-agent update error: ${err}`);
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
 }
 
 // ── Dashboard composite data ──
