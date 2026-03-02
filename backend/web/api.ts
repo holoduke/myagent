@@ -16,6 +16,7 @@ import { getHAStatus, saveConfig, restartHAPolling, testHAConnection } from "../
 import type { HAConfig, HAConnectionMode } from "../integrations/homeassistant.js";
 import { getRSSStatus, addFeed, removeFeed } from "../integrations/rss.js";
 import { getOwnTracksStatus } from "../integrations/owntracks.js";
+import { getTwilioStatus, makeSimpleCall, makeAgentCall, saveConfig as saveTwilioConfig, loadCallHistory } from "../integrations/twilio.js";
 import { getIntegrationsConfig, saveIntegrationsConfig, isValidIntegrationKey } from "../integrations/integration-config.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
@@ -252,6 +253,36 @@ export function handleApiRoutes(
   if (pathname === "/api/owntracks/status" && req.method === "GET" && isAuthenticated(req)) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(getOwnTracksStatus()));
+    return true;
+  }
+
+  // ── Twilio voice calling ──
+  if (pathname === "/api/twilio/status" && req.method === "GET" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getTwilioStatus()));
+    return true;
+  }
+
+  if (pathname === "/api/twilio/config" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(getTwilioStatus()));
+      return true;
+    }
+    if (req.method === "PUT") {
+      handleTwilioSaveConfig(req, res);
+      return true;
+    }
+  }
+
+  if (pathname === "/api/twilio/call" && req.method === "POST" && isAuthenticated(req)) {
+    handleTwilioCall(req, res);
+    return true;
+  }
+
+  if (pathname === "/api/twilio/history" && req.method === "GET" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(loadCallHistory()));
     return true;
   }
 
@@ -663,6 +694,7 @@ function getDashboardData(queue: MessageQueue) {
     homeassistant: getHAStatus(),
     rss: getRSSStatus(),
     owntracks: getOwnTracksStatus(),
+    twilio: getTwilioStatus(),
     whitelistCount: whitelist.length,
     scheduledCount: scheduled.length,
     queueDepth: queue.size,
@@ -1388,5 +1420,79 @@ async function handleBrainConfigUpdate(req: IncomingMessage, res: ServerResponse
     log(`Brain config update error: ${err}`);
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+// ── Twilio handlers ──
+
+async function handleTwilioSaveConfig(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+
+    if (!data.accountSid || !data.authToken || !data.phoneNumber || !data.webhookBaseUrl) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "accountSid, authToken, phoneNumber, and webhookBaseUrl are required" }));
+      return;
+    }
+
+    const config = {
+      accountSid: String(data.accountSid),
+      authToken: String(data.authToken),
+      phoneNumber: String(data.phoneNumber),
+      webhookBaseUrl: String(data.webhookBaseUrl).replace(/\/+$/, ""),
+      defaultVoice: String(data.defaultVoice || "Polly.Lotte"),
+      defaultLanguage: String(data.defaultLanguage || "nl-NL"),
+      maxCallDurationSec: Number(data.maxCallDurationSec) || 600,
+      model: String(data.model || "claude-sonnet-4-20250514"),
+    };
+
+    saveTwilioConfig(config);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, status: getTwilioStatus() }));
+  } catch (err) {
+    log(`Twilio config save error: ${err}`);
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+async function handleTwilioCall(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+    const { to, mode, message, systemPrompt, greeting, voice, language, model } = data;
+
+    if (!to) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "to is required" }));
+      return;
+    }
+
+    if (mode === "agent") {
+      const record = await makeAgentCall(
+        to,
+        systemPrompt || "You are ARIA, a helpful AI assistant making a phone call. Be concise and natural.",
+        greeting || "Hello, this is ARIA calling.",
+        voice,
+        language,
+        model,
+      );
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(record));
+    } else {
+      if (!message) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "message is required for simple calls" }));
+        return;
+      }
+      const record = await makeSimpleCall(to, message, voice, language);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(record));
+    }
+  } catch (err) {
+    log(`Twilio call error: ${err}`);
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: String(err) }));
   }
 }

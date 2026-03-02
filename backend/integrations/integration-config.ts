@@ -11,6 +11,7 @@ const INTEGRATION_KEYS = [
   "homeassistant",
   "rss",
   "owntracks",
+  "twilio",
 ] as const;
 
 export type IntegrationKey = (typeof INTEGRATION_KEYS)[number];
@@ -26,6 +27,7 @@ const DEFAULTS: IntegrationsConfig = {
   homeassistant: true,
   rss: true,
   owntracks: true,
+  twilio: true,
 };
 
 function ensureDir(): void {

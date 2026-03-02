@@ -17,6 +17,7 @@ import { startCalendarPolling, stopCalendarPolling } from "./integrations/calend
 import { startHAPolling, stopHAPolling } from "./integrations/homeassistant.js";
 import { startRSSPolling, stopRSSPolling } from "./integrations/rss.js";
 import { handleOwnTracksWebhook } from "./integrations/owntracks.js";
+import { handleTwiml, handleTurn, handleStatus as handleTwilioStatus } from "./integrations/twilio.js";
 
 const queue = new MessageQueue();
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -65,6 +66,20 @@ async function main() {
 
     // Gmail OAuth routes
     if (handleGmailRoutes(req, res)) return;
+
+    // Twilio webhooks (public endpoints — Twilio needs access without auth)
+    if (req.url?.startsWith("/twilio/twiml") && req.method === "POST") {
+      handleTwiml(req, res);
+      return;
+    }
+    if (req.url?.startsWith("/twilio/turn") && req.method === "POST") {
+      handleTurn(req, res);
+      return;
+    }
+    if (req.url?.startsWith("/twilio/status") && req.method === "POST") {
+      handleTwilioStatus(req, res);
+      return;
+    }
 
     // OwnTracks webhook (public endpoint)
     if (req.url === "/owntracks" && req.method === "POST") {

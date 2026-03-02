@@ -82,6 +82,10 @@
       <UiModal :open="activeModal === 'owntracks'" title="OwnTracks" @close="activeModal = null">
         <IntegrationsOwnTracksCard :owntracks="otData" />
       </UiModal>
+
+      <UiModal :open="activeModal === 'twilio'" title="Twilio Voice" max-width="640px" @close="activeModal = null">
+        <IntegrationsTwilioCard :twilio="twilioData" @reload="load" />
+      </UiModal>
     </template>
 
     <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
@@ -89,7 +93,7 @@
 </template>
 
 <script setup lang="ts">
-import type { DashboardData, ScheduledMessage, SSHStatus, CalendarStatus, HomeAssistantStatus, RSSStatus, OwnTracksStatus } from '~/types/aria'
+import type { DashboardData, ScheduledMessage, SSHStatus, CalendarStatus, HomeAssistantStatus, RSSStatus, OwnTracksStatus, TwilioStatus } from '~/types/aria'
 
 const route = useRoute()
 const router = useRouter()
@@ -130,6 +134,7 @@ const calendarData = computed<CalendarStatus>(() => dashboard.value?.calendar ||
 const haData = computed<HomeAssistantStatus>(() => dashboard.value?.homeassistant || { enabled: false, connected: false, url: '', entityCount: 0, lastPoll: 0 })
 const rssData = computed<RSSStatus>(() => dashboard.value?.rss || { feeds: [] })
 const otData = computed<OwnTracksStatus>(() => dashboard.value?.owntracks || { enabled: false, lastLocation: null })
+const twilioData = computed<TwilioStatus>(() => dashboard.value?.twilio || { enabled: false, configured: false, phoneNumber: '', webhookBaseUrl: '', activeCalls: 0, totalCalls: 0, lastCallAt: 0, recentCalls: [], config: null })
 
 interface IntegrationDef {
   key: string
@@ -222,6 +227,16 @@ const integrations = computed<IntegrationDef[]>(() => [
     statusClass: otData.value.lastLocation ? 'online' : otData.value.enabled ? 'pending' : 'offline',
     statusText: otData.value.lastLocation ? 'Tracking' : otData.value.enabled ? 'Waiting' : 'Not configured',
     stat: otData.value.lastLocation ? 'Location known' : 'No data',
+  },
+  {
+    key: 'twilio',
+    name: 'Twilio Voice',
+    description: 'Make AI-powered voice calls',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg>',
+    isActive: () => twilioData.value.configured,
+    statusClass: twilioData.value.configured ? (twilioData.value.activeCalls > 0 ? 'pending' : 'online') : 'offline',
+    statusText: twilioData.value.configured ? (twilioData.value.activeCalls > 0 ? `${twilioData.value.activeCalls} active` : 'Ready') : 'Not configured',
+    stat: `${twilioData.value.totalCalls} calls`,
   },
 ])
 

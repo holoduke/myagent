@@ -1056,7 +1056,6 @@ async function thinkTick(
     log(`Think failed: ${err}`);
     state.lastThinkTick = now;
     state.lastObservationTime = now;
-    graph.clearPendingObservations();
     return false;
   }
 }

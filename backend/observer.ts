@@ -43,11 +43,20 @@ export interface Observation {
   text: string;
   chatJid?: string;
   chatName?: string;
-  source?: "whatsapp" | "gmail" | "calendar" | "homeassistant" | "rss" | "owntracks";
+  source?: "whatsapp" | "gmail" | "calendar" | "homeassistant" | "rss" | "owntracks" | "twilio";
   emailMeta?: EmailMeta;
   calendarMeta?: CalendarMeta;
   locationMeta?: LocationMeta;
+  callMeta?: CallMeta;
   urgency?: number;
+}
+
+export interface CallMeta {
+  callSid: string;
+  to: string;
+  from: string;
+  mode: "simple" | "agent";
+  duration?: number;
 }
 
 export interface ObservationFilter {
