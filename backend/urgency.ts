@@ -11,6 +11,7 @@ function log(msg: string) {
 // ── Keyword Urgency Scores ──
 
 const URGENCY_KEYWORDS: Record<string, number> = {
+  // English
   emergency: 0.9,
   critical: 0.8,
   urgent: 0.7,
@@ -23,6 +24,17 @@ const URGENCY_KEYWORDS: Record<string, number> = {
   soon: 0.2,
   sos: 0.9,
   "911": 0.9,
+  // Dutch
+  noodgeval: 0.9,
+  spoed: 0.8,
+  dringend: 0.7,
+  spoedig: 0.6,
+  "zo snel mogelijk": 0.6,
+  "nu meteen": 0.6,
+  hulp: 0.4,
+  belangrijk: 0.4,
+  snel: 0.3,
+  "112": 0.9,
 };
 
 // Pre-compiled regex patterns sorted by score descending.
