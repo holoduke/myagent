@@ -1,12 +1,7 @@
 import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
-import { appendFileSync as logAppend } from "fs";
+import { createLogger } from "./logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [observer] ${msg}`;
-  console.log(line);
-  logAppend(LOG_FILE, line + "\n");
-}
+const log = createLogger("observer");
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const OBS_FILE = `${BRAIN_DIR}/observations.jsonl`;
