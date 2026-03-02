@@ -42,7 +42,11 @@ const MAX_RECONNECT_DELAY = 60_000; // 60s max
 const BASE_RECONNECT_DELAY = 5_000; // 5s base
 const processedMessages = new Set<string>();
 const sentMessages = new Set<string>();
-const groupNameCache = new Map<string, string>();
+
+// Group name cache with TTL to prevent unbounded memory growth
+const GROUP_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const MAX_GROUP_CACHE_SIZE = 500;
+const groupNameCache = new Map<string, { name: string; cachedAt: number }>();
 
 // --- Contact store ---
 const CONTACTS_PATH = process.env.DATA_DIR
@@ -279,12 +283,27 @@ export async function startWhatsApp(
         // For group messages, resolve group name
         let groupName: string | undefined;
         if (isGroup) {
-          groupName = groupNameCache.get(jid);
-          if (!groupName) {
+          const cached = groupNameCache.get(jid);
+          if (cached && (Date.now() - cached.cachedAt) < GROUP_CACHE_TTL) {
+            groupName = cached.name;
+          } else {
+            if (cached) groupNameCache.delete(jid); // expired
             try {
               const meta = await sock.groupMetadata(jid);
               groupName = meta.subject;
-              groupNameCache.set(jid, groupName);
+              // Evict oldest entries if cache is full
+              if (groupNameCache.size >= MAX_GROUP_CACHE_SIZE) {
+                let oldestKey: string | undefined;
+                let oldestTime = Infinity;
+                for (const [key, val] of groupNameCache) {
+                  if (val.cachedAt < oldestTime) {
+                    oldestTime = val.cachedAt;
+                    oldestKey = key;
+                  }
+                }
+                if (oldestKey) groupNameCache.delete(oldestKey);
+              }
+              groupNameCache.set(jid, { name: groupName, cachedAt: Date.now() });
             } catch {
               groupName = jid.split("@")[0];
             }
