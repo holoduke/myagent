@@ -443,9 +443,12 @@ function bootstrapIdentity(g: MemoryGraph): void {
 // ── Main Loop ──
 
 let brainInterval: ReturnType<typeof setInterval> | null = null;
+let schedulerPollInterval: ReturnType<typeof setInterval> | null = null;
 let lastPruneDate = "";
 let firstSuccessfulTickDone = false;
 const graph = new MemoryGraph();
+
+const SCHEDULER_POLL_INTERVAL = 10_000; // 10 seconds — fast poll for scheduled messages
 
 export function startBrainLoop(
   queue: MessageQueue,
@@ -475,6 +478,15 @@ export function startBrainLoop(
     });
   }, cfg.tickInterval);
 
+  // Fast polling loop for scheduled message delivery (10s interval).
+  // This runs independently of brain ticks so scheduled WhatsApp messages
+  // deliver near-instantly instead of waiting for the next full tick.
+  schedulerPollInterval = setInterval(() => {
+    pollScheduledMessages(sendMessage, ownerJid).catch((err) => {
+      log(`Scheduler poll error: ${err}`);
+    });
+  }, SCHEDULER_POLL_INTERVAL);
+
   // Run initial tick after delay for WhatsApp to connect
   setTimeout(() => {
     tick(queue, sendMessage, ownerJid).catch((err) => {
@@ -487,8 +499,12 @@ export function stopBrainLoop(): void {
   if (brainInterval) {
     clearInterval(brainInterval);
     brainInterval = null;
-    log("Brain loop stopped");
   }
+  if (schedulerPollInterval) {
+    clearInterval(schedulerPollInterval);
+    schedulerPollInterval = null;
+  }
+  log("Brain loop stopped");
 }
 
 // ── Tick Scheduler ──
@@ -1134,6 +1150,27 @@ async function reflectTick(
     log(`Reflect failed: ${err}`);
     state.lastReflectTick = now;
     return false;
+  }
+}
+
+// ── Fast Scheduled Message Polling ──
+// Lightweight poller that runs every 10s independently of brain ticks.
+// Only checks getDueMessages() and delivers them — no full tick overhead.
+
+let schedulerPollRunning = false;
+
+async function pollScheduledMessages(
+  sendMessage: (jid: string, text: string) => Promise<void>,
+  ownerJid: string,
+): Promise<void> {
+  // Guard against overlapping polls
+  if (schedulerPollRunning) return;
+  schedulerPollRunning = true;
+  try {
+    const state = loadState();
+    await deliverScheduledMessages(state, sendMessage, ownerJid);
+  } finally {
+    schedulerPollRunning = false;
   }
 }
 
