@@ -397,6 +397,24 @@ export async function sendMessage(jid: string, text: string): Promise<void> {
   await sock.sendMessage(jid, { text });
 }
 
+export async function sendTypingIndicator(jid: string): Promise<void> {
+  if (!isConnected || !sock) return;
+  try {
+    await sock.sendPresenceUpdate("composing", jid);
+  } catch {
+    // Silently ignore presence errors
+  }
+}
+
+export async function stopTypingIndicator(jid: string): Promise<void> {
+  if (!isConnected || !sock) return;
+  try {
+    await sock.sendPresenceUpdate("paused", jid);
+  } catch {
+    // Silently ignore presence errors
+  }
+}
+
 export async function sendReaction(
   jid: string,
   messageKey: proto.IMessageKey,
