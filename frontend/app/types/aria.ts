@@ -327,3 +327,47 @@ export interface BrainDashboardData {
   signals: InitiativeSignal[]
   followUps: PendingFollowUp[]
 }
+
+// ── Sub-Agent Types ──
+
+export interface SubAgentSchedule {
+  hours: number[]
+  daysOfWeek?: number[]
+}
+
+export interface SubAgentConfig {
+  id: string
+  name: string
+  description: string
+  prompt: string
+  tools: string
+  schedule: SubAgentSchedule
+  enabled: boolean
+  timeout: number
+  maxHistoryRuns: number
+  createdAt: number
+  lastRunAt: number
+  source: 'brain' | 'owner'
+}
+
+export interface SubAgentRun {
+  id: string
+  agentId: string
+  startedAt: number
+  completedAt: number
+  success: boolean
+  summary: string
+  details: string
+  metrics?: Record<string, unknown>
+  error?: string
+}
+
+export interface SubAgentState {
+  runningAgents: Record<string, { pid?: number; startedAt: number }>
+}
+
+export interface SubAgentsResponse {
+  agents: SubAgentConfig[]
+  state: SubAgentState
+  recentRuns: Record<string, SubAgentRun[]>
+}

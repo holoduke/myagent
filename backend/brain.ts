@@ -36,6 +36,18 @@ import {
   failItem,
   getWeeklyCompletedCount,
 } from "./self-improve-queue.js";
+import {
+  getDueSubAgents,
+  loadSubAgentState,
+  markRunning,
+  clearRunning,
+  addRunToHistory,
+  loadSubAgents,
+  saveSubAgents,
+  taskFilePath,
+  resultFilePath,
+} from "./sub-agents.js";
+import type { SubAgentResult } from "./sub-agents.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
@@ -376,6 +388,110 @@ function checkAndSpawnImproveWorker(state: BrainState): void {
   }
 }
 
+// ── Sub-Agent Management ──
+
+const SUB_AGENT_STALE_TIMEOUT = 20 * 60 * 1000; // 20 minutes
+
+function pickUpSubAgentResults(): void {
+  const saState = loadSubAgentState();
+  const running = Object.entries(saState.runningAgents);
+  if (running.length === 0) return;
+
+  for (const [agentId, info] of running) {
+    const resFile = resultFilePath(agentId);
+
+    if (existsSync(resFile)) {
+      // Result available — pick it up
+      try {
+        const result: SubAgentResult = JSON.parse(readFileSync(resFile, "utf-8"));
+        addRunToHistory({
+          id: `run_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          agentId,
+          startedAt: info.startedAt,
+          completedAt: result.completedAt || Date.now(),
+          success: result.success,
+          summary: result.summary || "",
+          details: result.details || "",
+          metrics: result.metrics,
+          error: result.error,
+        });
+
+        // Update lastRunAt on the agent
+        const agents = loadSubAgents();
+        const agent = agents.find(a => a.id === agentId);
+        if (agent) {
+          agent.lastRunAt = Date.now();
+          saveSubAgents(agents);
+        }
+
+        clearRunning(agentId);
+        unlinkSync(resFile);
+        log(`Sub-agent result picked up: ${agentId} success=${result.success}`);
+      } catch (err) {
+        log(`Failed to read sub-agent result for ${agentId}: ${err}`);
+        clearRunning(agentId);
+        try { unlinkSync(resFile); } catch {}
+      }
+    } else {
+      // Check for stale workers
+      const elapsed = Date.now() - info.startedAt;
+      if (elapsed > SUB_AGENT_STALE_TIMEOUT) {
+        log(`Sub-agent worker stale for ${agentId} (${Math.round(elapsed / 60000)}m) — clearing`);
+        addRunToHistory({
+          id: `run_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          agentId,
+          startedAt: info.startedAt,
+          completedAt: Date.now(),
+          success: false,
+          summary: "Worker timed out",
+          details: `Worker did not produce results within ${Math.round(SUB_AGENT_STALE_TIMEOUT / 60000)} minutes`,
+          error: "timeout",
+        });
+        clearRunning(agentId);
+        // Clean up task file if still present
+        const taskFile = taskFilePath(agentId);
+        try { if (existsSync(taskFile)) unlinkSync(taskFile); } catch {}
+      }
+    }
+  }
+}
+
+function spawnSubAgentWorker(agentId: string): void {
+  const child = spawn("npx", ["tsx", "backend/sub-agent-worker.ts", agentId], {
+    detached: true,
+    stdio: "ignore",
+    cwd: "/app",
+    env: { ...process.env },
+  });
+  child.unref();
+  log(`Spawned sub-agent worker for ${agentId} (pid=${child.pid})`);
+}
+
+function checkAndSpawnSubAgentWorkers(): void {
+  const due = getDueSubAgents();
+  if (due.length === 0) return;
+
+  for (const agent of due) {
+    // Write task file
+    const taskFile = taskFilePath(agent.id);
+    try {
+      writeFileSync(taskFile, JSON.stringify({
+        agentId: agent.id,
+        name: agent.name,
+        prompt: agent.prompt,
+        tools: agent.tools,
+        timeout: agent.timeout,
+      }, null, 2));
+    } catch (err) {
+      log(`Failed to write task file for sub-agent ${agent.id}: ${err}`);
+      continue;
+    }
+
+    markRunning(agent.id, undefined);
+    spawnSubAgentWorker(agent.id);
+  }
+}
+
 function writeSelfModMarker(changes: string): void {
   try {
     writeFileSync(SELF_MOD_MARKER_FILE, JSON.stringify({
@@ -511,6 +627,10 @@ async function tick(
 
   // ── Check for pending self-improve task file (may be created during any tick type) ──
   checkAndSpawnImproveWorker(state);
+
+  // ── Sub-agent management: pick up results and spawn due workers ──
+  pickUpSubAgentResults();
+  checkAndSpawnSubAgentWorkers();
 
   // ── Deliver due scheduled messages ──
   await deliverScheduledMessages(state, sendMessage, ownerJid);
