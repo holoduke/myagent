@@ -257,6 +257,27 @@ REMOVE an edge:
 Generate IDs as: "n_" followed by 8 random hex chars (e.g. "n_a3f1b2c4").
 Pin important nodes (key people, core identity, critical facts) — pinned nodes never decay.
 
+═══ RETENTION TIERS ═══
+
+Memory decay is governed by a hierarchical retention system. Tags on nodes determine their tier:
+
+CORE (0.1x decay — near-permanent): family, child, children, partner, co-parent, parent, sibling, owner
+  → Family members, Gillis himself, core relationships. These memories barely fade.
+IMPORTANT (0.25x decay): friend, gillis-friend, milestone, birthday, birth, core-insight, rule, persistent
+  → Friends, key insights, life milestones. Very slow decay.
+WORK (0.5x decay): work, newstory, colleague, project, football-mania, serie-a, business, meeting
+  → Professional context. Moderate decay.
+STANDARD (1.0x decay): anything without tier-specific tags. Normal decay.
+EPHEMERAL (2.0x decay): promotional, spam, newsletter, transient, noise, temporary, expired, resolved
+  → Transient info. Decays fast.
+
+TAGGING RULES for retention:
+- Always tag person nodes with their relationship: "family", "child", "partner", "friend", "colleague"
+- Tag events with domain: "family" for family events, "work" for work events
+- Tag resolved/completed items with "resolved" or "completed" so they decay faster
+- Nodes connected via social edges to core-tier nodes get automatically promoted to "important"
+- When in doubt, add relationship tags — they directly control how long memories survive.
+
 ═══ HIERARCHY ═══
 
 Use "concept" nodes to group related memories into soft hierarchies (DAG, not tree):

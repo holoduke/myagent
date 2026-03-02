@@ -1,11 +1,15 @@
 import { appendFileSync } from "fs";
 import type { MemoryGraph } from "./graph.js";
+import type { MemoryNode, RetentionTier } from "./types.js";
 import {
   DECAY_LAMBDA,
   PRUNE_NODE_THRESHOLD,
   PRUNE_EDGE_THRESHOLD,
   ORPHAN_GRACE_HOURS,
   MAX_NODES_HARD,
+  RETENTION_MULTIPLIER,
+  TIER_TAG_SIGNALS,
+  TIER_CONTENT_SIGNALS,
 } from "./types.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -15,16 +19,67 @@ function log(msg: string) {
   appendFileSync(LOG_FILE, line + "\n");
 }
 
+// ── Retention Tier Classification ──
+
+const TIER_PRIORITY: RetentionTier[] = ["core", "important", "work", "ephemeral", "standard"];
+
+/**
+ * Classify a node into a retention tier based on its tags, content, and connections.
+ * Checks from highest priority (core) to lowest (ephemeral).
+ * Falls back to "standard" if no signals match.
+ */
+export function classifyRetentionTier(node: MemoryNode, graph: MemoryGraph): RetentionTier {
+  const tagsLower = new Set(node.tags.map(t => t.toLowerCase().replace(/^#/, "")));
+  const contentLower = node.content.toLowerCase();
+
+  // Check tag signals (highest tier wins)
+  for (const tier of TIER_PRIORITY) {
+    const tagSignals = TIER_TAG_SIGNALS[tier];
+    if (tagSignals.length === 0) continue;
+    for (const signal of tagSignals) {
+      if (tagsLower.has(signal.toLowerCase())) return tier;
+    }
+  }
+
+  // Check content signals
+  for (const tier of TIER_PRIORITY) {
+    const contentSignals = TIER_CONTENT_SIGNALS[tier];
+    if (contentSignals.length === 0) continue;
+    for (const signal of contentSignals) {
+      if (contentLower.includes(signal.toLowerCase())) return tier;
+    }
+  }
+
+  // Connection-based promotion: if a node has social edges to core/important nodes,
+  // promote it one tier up from standard
+  const edges = graph.edgesFor(node.id);
+  for (const edge of edges) {
+    if (edge.type !== "social") continue;
+    const otherId = edge.from === node.id ? edge.to : edge.from;
+    const other = graph.getNode(otherId);
+    if (!other) continue;
+    const otherTags = new Set(other.tags.map(t => t.toLowerCase().replace(/^#/, "")));
+    const coreSignals = TIER_TAG_SIGNALS.core;
+    for (const signal of coreSignals) {
+      if (otherTags.has(signal.toLowerCase())) return "important";
+    }
+  }
+
+  return "standard";
+}
+
 /**
  * Apply exponential decay to all unpinned nodes.
  * strength = strength * e^(-lambda * hours)
  * Nodes with high accessCount decay slower (logarithmic resistance).
+ * Retention tier applies a multiplier to the decay rate.
  */
 export function applyDecay(graph: MemoryGraph): { decayed: number; pruned: number } {
   const now = Date.now();
   let decayed = 0;
   let pruned = 0;
   const toPrune: string[] = [];
+  const tierCounts: Record<RetentionTier, number> = { core: 0, important: 0, work: 0, standard: 0, ephemeral: 0 };
 
   for (const node of graph.allNodes()) {
     if (node.pinned) continue;
@@ -32,10 +87,15 @@ export function applyDecay(graph: MemoryGraph): { decayed: number; pruned: numbe
     const hoursSinceAccess = (now - node.lastAccessedAt) / 3600000;
     if (hoursSinceAccess <= 0) continue;
 
+    // Classify retention tier
+    const tier = classifyRetentionTier(node, graph);
+    tierCounts[tier]++;
+    const tierMultiplier = RETENTION_MULTIPLIER[tier];
+
     const lambda = DECAY_LAMBDA[node.type] ?? 0.004;
     // Logarithmic resistance: more accesses = slower decay
     const resistance = 1 / (1 + Math.log2(1 + node.accessCount));
-    let effectiveLambda = lambda * resistance;
+    let effectiveLambda = lambda * resistance * tierMultiplier;
 
     // Concept nodes with children decay slower — they're structurally important
     if (node.type === "concept") {
@@ -62,7 +122,7 @@ export function applyDecay(graph: MemoryGraph): { decayed: number; pruned: numbe
     pruned++;
   }
 
-  log(`Decay pass: ${decayed} nodes decayed, ${pruned} pruned (below ${PRUNE_NODE_THRESHOLD})`);
+  log(`Decay pass: ${decayed} decayed, ${pruned} pruned | tiers: core=${tierCounts.core} important=${tierCounts.important} work=${tierCounts.work} standard=${tierCounts.standard} ephemeral=${tierCounts.ephemeral}`);
   return { decayed, pruned };
 }
 
@@ -130,9 +190,19 @@ export function pruneOrphans(graph: MemoryGraph): number {
   return pruned;
 }
 
+// Numeric priority for sorting: lower = more protected
+const TIER_SORT_PRIORITY: Record<RetentionTier, number> = {
+  core: 0,
+  important: 1,
+  work: 2,
+  standard: 3,
+  ephemeral: 4,
+};
+
 /**
  * Emergency pruning when node count exceeds hard limit.
- * Removes weakest non-pinned nodes until under soft limit.
+ * Removes weakest non-pinned nodes, but respects retention tiers:
+ * ephemeral nodes are pruned first, then standard, then work, etc.
  */
 export function emergencyPrune(graph: MemoryGraph, softLimit: number): number {
   const count = graph.nodeCount;
@@ -140,11 +210,17 @@ export function emergencyPrune(graph: MemoryGraph, softLimit: number): number {
 
   const nodes = graph.allNodes()
     .filter(n => !n.pinned)
-    .sort((a, b) => a.strength - b.strength);
+    .map(n => ({ node: n, tier: classifyRetentionTier(n, graph) }))
+    .sort((a, b) => {
+      // Sort by tier priority descending (ephemeral first), then by strength ascending
+      const tierDiff = TIER_SORT_PRIORITY[b.tier] - TIER_SORT_PRIORITY[a.tier];
+      if (tierDiff !== 0) return tierDiff;
+      return a.node.strength - b.node.strength;
+    });
 
   let pruned = 0;
   const target = softLimit;
-  for (const node of nodes) {
+  for (const { node } of nodes) {
     if (graph.nodeCount <= target) break;
     graph.removeNode(node.id);
     pruned++;

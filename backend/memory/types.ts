@@ -186,6 +186,63 @@ export interface BrainResponse {
   improvementProposals?: ImprovementProposal[];
 }
 
+// ── Retention Tiers ──
+// Hierarchical importance: family > friends > work > general > ephemeral
+// Tier determines decay speed multiplier — lower = slower decay = longer retention
+
+export type RetentionTier = "core" | "important" | "work" | "standard" | "ephemeral";
+
+export const RETENTION_MULTIPLIER: Record<RetentionTier, number> = {
+  core:      0.1,    // family, partner, children — near-permanent
+  important: 0.25,   // friends, milestones, key insights
+  work:      0.5,    // colleagues, projects, professional
+  standard:  1.0,    // general events, facts (current behavior)
+  ephemeral: 2.0,    // transient, promotional, one-offs
+};
+
+// Tags that signal each tier (checked against node tags, case-insensitive)
+export const TIER_TAG_SIGNALS: Record<RetentionTier, string[]> = {
+  core: [
+    "family", "child", "children", "partner", "co-parent", "parent", "sibling",
+    "gillis-child", "gillis-family", "blended-family", "father", "mother",
+    "ilse", "maaike", "lucas", "naomi", "julian", "haasnoot-family",
+    "core-relationship", "owner", "haas-family", "familie-haas",
+    "krijn", "gillis-brother", "gillis-sister",
+  ],
+  important: [
+    "friend", "gillis-friend", "milestone", "birthday", "birth", "pinned",
+    "core-insight", "rule", "lesson", "persistent", "arjan", "important",
+    "first-contact", "whitelisted", "aria-aware",
+  ],
+  work: [
+    "work", "newstory", "colleague", "professional-life", "project",
+    "football-mania", "serie-a", "business", "client", "sprint",
+    "jira", "meeting", "invoice", "gillis-employer", "marisa",
+    "anthony", "gabriele", "developer", "infrastructure",
+  ],
+  standard: [],  // default tier — no specific signals needed
+  ephemeral: [
+    "promotional", "spam", "newsletter", "transient", "noise",
+    "one-off", "temporary", "expired", "resolved", "closed",
+  ],
+};
+
+// Content keywords that boost tier (checked against node content, case-insensitive)
+export const TIER_CONTENT_SIGNALS: Record<RetentionTier, string[]> = {
+  core: [
+    "gillis's partner", "gillis's child", "gillis and ilse",
+    "gillis and maaike", "co-parent", "blended family",
+  ],
+  important: [
+    "gillis's friend", "confirmed jid", "birthday",
+  ],
+  work: [
+    "newstory", "football-mania", "serie a", "deploy",
+  ],
+  standard: [],
+  ephemeral: [],
+};
+
 // ── Decay Constants ──
 
 export const DECAY_LAMBDA: Record<NodeType, number> = {
