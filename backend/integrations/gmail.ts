@@ -15,6 +15,7 @@ function log(msg: string) {
 const GMAIL_DIR = process.env.GMAIL_DIR || "/data/gmail";
 const ACCOUNTS_FILE = `${GMAIL_DIR}/accounts.json`;
 const STATE_FILE = `${GMAIL_DIR}/state.json`;
+const SEEN_IDS_FILE = `${GMAIL_DIR}/seen-ids.json`;
 const POLL_INTERVAL = Number(process.env.GMAIL_POLL_INTERVAL ?? 60000);
 const MAX_BODY_LENGTH = Number(process.env.GMAIL_MAX_BODY_LENGTH ?? 500);
 const SCOPES = [
@@ -93,6 +94,31 @@ function saveState(state: GmailState): void {
   const tmp = STATE_FILE + ".tmp";
   writeFileSync(tmp, JSON.stringify(state, null, 2));
   renameSync(tmp, STATE_FILE);
+}
+
+function loadSeenIds(): void {
+  try {
+    if (existsSync(SEEN_IDS_FILE)) {
+      const ids: string[] = JSON.parse(readFileSync(SEEN_IDS_FILE, "utf-8"));
+      seenMessageIds.clear();
+      for (const id of ids) {
+        seenMessageIds.add(id);
+      }
+      log(`Loaded ${seenMessageIds.size} seen message IDs from disk`);
+    }
+  } catch (err) {
+    log(`Failed to load seen IDs: ${err}`);
+  }
+}
+
+function saveSeenIds(): void {
+  ensureGmailDir();
+  // Keep only the most recent MAX_SEEN_IDS entries (tail of the set = newest)
+  const allIds = Array.from(seenMessageIds);
+  const toSave = allIds.length > MAX_SEEN_IDS ? allIds.slice(allIds.length - MAX_SEEN_IDS) : allIds;
+  const tmp = SEEN_IDS_FILE + ".tmp";
+  writeFileSync(tmp, JSON.stringify(toSave));
+  renameSync(tmp, SEEN_IDS_FILE);
 }
 
 // ── OAuth2 Client Factory ──
@@ -391,6 +417,8 @@ export async function sendEmail(
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 export function startGmailPolling(): void {
+  loadSeenIds();
+
   const accounts = loadAccounts();
   const authenticated = accounts.filter(a => a.tokens?.refresh_token || a.tokens?.access_token);
 
@@ -435,6 +463,7 @@ async function pollAllAccounts(): Promise<void> {
   }
 
   saveState(state);
+  saveSeenIds();
 }
 
 // ── Account Management ──
