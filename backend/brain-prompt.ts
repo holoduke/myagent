@@ -194,6 +194,9 @@ function formatWorkingMemory(wm: WorkingMemory): string {
       const due = f.dueAt ? ` [due: ${new Date(f.dueAt).toLocaleDateString()}]` : "";
       return `  - ${f.question}${target}${due}`;
     });
+    if (wm.pendingFollowUps.length > 5) {
+      fuLines.push(`  ... and ${wm.pendingFollowUps.length - 5} more follow-ups`);
+    }
     parts.push(`Follow-ups:\n${fuLines.join("\n")}`);
   }
 
