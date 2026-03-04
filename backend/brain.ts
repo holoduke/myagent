@@ -645,8 +645,8 @@ async function tick(
   pickUpSubAgentResults();
   checkAndSpawnSubAgentWorkers();
 
-  // ── Deliver due scheduled messages ──
-  await deliverScheduledMessages(state, sendMessage, ownerJid);
+  // ── Scheduled message delivery is handled ONLY by pollScheduledMessages() (10s interval).
+  // Removed from brain tick to prevent race condition causing duplicate deliveries.
 
   // Reset daily counter
   if (state.messagesTodayDate !== today) {
