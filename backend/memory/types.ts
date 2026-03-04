@@ -119,6 +119,10 @@ export interface BrainState {
   recurringThinksToday: number;
   recurringBudgetDate: string;
 
+  // initiative think budget
+  initiativeThinksToday: number;
+  initiativeBudgetDate: string;
+
   // self-improvement
   consecutiveFailures: number;
   lastSuccessfulTick: number;

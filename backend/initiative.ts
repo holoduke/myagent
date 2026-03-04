@@ -1,6 +1,6 @@
 import { appendFileSync } from "fs";
 import type { MemoryGraph } from "./memory/graph.js";
-import type { WorkingMemory } from "./memory/types.js";
+import type { WorkingMemory, BrainState } from "./memory/types.js";
 import { GoalTracker } from "./goals.js";
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
@@ -102,22 +102,20 @@ export function detectInitiativeSignals(
 
 // ── Daily Budget Tracking ──
 
-let initiativeThinksToday = 0;
-let initiativeBudgetDate = "";
 const MAX_INITIATIVE_THINKS_PER_DAY = 3;
 
-export function canTriggerInitiativeThink(): boolean {
+export function canTriggerInitiativeThink(state: BrainState): boolean {
   const today = new Date().toISOString().slice(0, 10);
-  if (initiativeBudgetDate !== today) {
-    initiativeBudgetDate = today;
-    initiativeThinksToday = 0;
+  if (state.initiativeBudgetDate !== today) {
+    state.initiativeBudgetDate = today;
+    state.initiativeThinksToday = 0;
   }
-  return initiativeThinksToday < MAX_INITIATIVE_THINKS_PER_DAY;
+  return state.initiativeThinksToday < MAX_INITIATIVE_THINKS_PER_DAY;
 }
 
-export function recordInitiativeThink(): void {
-  initiativeThinksToday++;
-  log(`Initiative think #${initiativeThinksToday}/${MAX_INITIATIVE_THINKS_PER_DAY} today`);
+export function recordInitiativeThink(state: BrainState): void {
+  state.initiativeThinksToday++;
+  log(`Initiative think #${state.initiativeThinksToday}/${MAX_INITIATIVE_THINKS_PER_DAY} today`);
 }
 
 // ── Format for Prompt ──

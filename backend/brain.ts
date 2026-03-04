@@ -92,6 +92,8 @@ function defaultState(): BrainState {
     edgeCount: 0,
     recurringThinksToday: 0,
     recurringBudgetDate: "",
+    initiativeThinksToday: 0,
+    initiativeBudgetDate: "",
     consecutiveFailures: 0,
     lastSuccessfulTick: 0,
     pendingSelfMod: false,
@@ -721,7 +723,7 @@ async function tick(
   const initiativeTriggered = highPrioritySignals.length > 0
     && !hasNewObs
     && timeSinceThink >= cfg.thinkCooldown
-    && canTriggerInitiativeThink();
+    && canTriggerInitiativeThink(state);
 
   // Defer to owner messages — skip if queue is busy
   if (!queue.idle) {
@@ -743,7 +745,7 @@ async function tick(
     initiativeTriggered
   ) {
     if (initiativeTriggered && !hasNewObs) {
-      recordInitiativeThink();
+      recordInitiativeThink(state);
       log(`Initiative-triggered think (${highPrioritySignals.length} high-priority signals)`);
     }
     tickSucceeded = await thinkTick(state, newObs, queue, sendMessage, ownerJid, signals);
