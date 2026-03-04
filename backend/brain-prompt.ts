@@ -334,6 +334,12 @@ Feel free to share thoughts, observations, and reactions more freely. Be convers
   }
 }
 
+export interface RecentChatDelivery {
+  jid: string;
+  messageSnippet: string;
+  timestamp: number;
+}
+
 export interface ThinkContext {
   ownerName: string;
   githubRepo?: string;
@@ -350,6 +356,7 @@ export interface ThinkContext {
   goalsSection?: string;
   initiativeSignals?: InitiativeSignal[];
   responsivenessPreset?: string | null;
+  recentChatDeliveries?: RecentChatDelivery[];
 }
 
 export function buildThinkPrompt(ctx: ThinkContext): string {
@@ -369,6 +376,10 @@ export function buildThinkPrompt(ctx: ThinkContext): string {
       }).join("\n\n")}\n`
     : "";
 
+  const chatDeliveryBlock = ctx.recentChatDeliveries && ctx.recentChatDeliveries.length > 0
+    ? `\n═══ RECENTLY SENT (chat session) ═══\n\nThese messages were already sent by the interactive chat session. Do NOT schedule duplicate messages to the same contacts about the same topics.\n\n${ctx.recentChatDeliveries.map(d => `  [${formatTime(d.timestamp)}] → ${d.jid}: "${d.messageSnippet}"`).join("\n")}\n`
+    : "";
+
   return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo)}
 
 ═══ CURRENT STATE ═══
@@ -381,7 +392,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${goalsBlock}${initiativeBlock}
+${goalsBlock}${initiativeBlock}${chatDeliveryBlock}
 ═══ ACTIVATED MEMORIES ═══
 ${serializeNodesForPrompt(ctx.contextNodes, ctx.graph)}
 

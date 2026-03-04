@@ -5,6 +5,8 @@ const log = createLogger("scheduler");
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const SCHEDULE_FILE = `${BRAIN_DIR}/scheduled-messages.json`;
+const DELIVERY_LOG_FILE = `${BRAIN_DIR}/delivery-log.json`;
+const DELIVERY_LOG_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 export interface ScheduledMessage {
   id: string;
@@ -157,4 +159,51 @@ export function markFailed(ids: string[]): string[] {
     log(`Dropped ${droppedIds.length} message(s) after exceeding ${MAX_RETRIES} retries`);
   }
   return droppedIds;
+}
+
+// ── Delivery Log (for dedup between chat-sourced and brain-sourced messages) ──
+
+export interface DeliveryRecord {
+  jid: string;
+  source: string;
+  timestamp: number;
+  messageSnippet: string;
+}
+
+function loadDeliveryLog(): DeliveryRecord[] {
+  try {
+    if (existsSync(DELIVERY_LOG_FILE)) {
+      const raw = JSON.parse(readFileSync(DELIVERY_LOG_FILE, "utf-8"));
+      if (Array.isArray(raw)) return raw;
+    }
+  } catch {}
+  return [];
+}
+
+function saveDeliveryLog(entries: DeliveryRecord[]): void {
+  try {
+    if (!existsSync(BRAIN_DIR)) mkdirSync(BRAIN_DIR, { recursive: true });
+    const tmp = DELIVERY_LOG_FILE + ".tmp";
+    writeFileSync(tmp, JSON.stringify(entries, null, 2));
+    renameSync(tmp, DELIVERY_LOG_FILE);
+  } catch (err) {
+    log(`Failed to save delivery log: ${err}`);
+  }
+}
+
+/** Log a successful delivery for dedup tracking. */
+export function logDelivery(jid: string, source: string, message: string): void {
+  const entries = loadDeliveryLog();
+  const cutoff = Date.now() - DELIVERY_LOG_MAX_AGE_MS;
+  // Prune old entries while adding new one
+  const pruned = entries.filter(e => e.timestamp > cutoff);
+  pruned.push({ jid, source, timestamp: Date.now(), messageSnippet: message.slice(0, 120) });
+  saveDeliveryLog(pruned);
+}
+
+/** Get recent deliveries, optionally filtered by time window. */
+export function getRecentDeliveries(windowMs: number = DELIVERY_LOG_MAX_AGE_MS): DeliveryRecord[] {
+  const entries = loadDeliveryLog();
+  const cutoff = Date.now() - windowMs;
+  return entries.filter(e => e.timestamp > cutoff);
 }

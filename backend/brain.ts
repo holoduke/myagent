@@ -8,7 +8,7 @@ import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./
 import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState, GoalOperation } from "./memory/types.js";
-import { getDueMessages, markDelivered, markFailed } from "./scheduler.js";
+import { getDueMessages, markDelivered, markFailed, logDelivery, getRecentDeliveries } from "./scheduler.js";
 import { isWhatsAppConnected } from "./integrations/whatsapp.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { MAX_NODES_SOFT } from "./memory/types.js";
@@ -950,6 +950,12 @@ async function thinkTick(
 
   const cfg = getBrainConfig();
 
+  // Gather recent chat-sourced deliveries for dedup context
+  const DEDUP_WINDOW_MS = 30 * 60 * 1000;
+  const recentChatDeliveries = getRecentDeliveries(DEDUP_WINDOW_MS)
+    .filter(d => d.source === "chat")
+    .map(d => ({ jid: d.jid, messageSnippet: d.messageSnippet, timestamp: d.timestamp }));
+
   const prompt = buildThinkPrompt({
     ownerName: OWNER_NAME,
     githubRepo: GITHUB_REPO,
@@ -966,6 +972,7 @@ async function thinkTick(
     goalsSection,
     initiativeSignals,
     responsivenessPreset: getActivePreset(cfg),
+    recentChatDeliveries,
   });
 
   try {
@@ -1343,6 +1350,13 @@ async function deliverScheduledMessages(
   const deliveredIds: string[] = [];
   const failedIds: string[] = [];
 
+  // Build set of JIDs that have recent chat-sourced deliveries (for dedup)
+  const DEDUP_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+  const recentDeliveries = getRecentDeliveries(DEDUP_WINDOW_MS);
+  const recentChatJids = new Set(
+    recentDeliveries.filter(d => d.source === "chat").map(d => d.jid),
+  );
+
   for (const msg of dueMessages) {
     try {
       const jid = msg.targetJid || ownerJid;
@@ -1351,10 +1365,17 @@ async function deliverScheduledMessages(
         deliveredIds.push(msg.id); // Remove blocked messages (they'll never succeed)
         continue;
       }
+      // Dedup: skip brain-sourced messages to JIDs that already received a chat-sourced message recently
+      if (msg.source === "brain" && recentChatJids.has(jid)) {
+        log(`Dedup: skipping brain-sourced message ${msg.id} to ${jid} — chat-sourced message already delivered in last ${DEDUP_WINDOW_MS / 60000}m`);
+        deliveredIds.push(msg.id); // Remove to avoid retrying
+        continue;
+      }
       await sendMessage(jid, msg.message);
       state.lastMessageTime = Date.now();
       state.messagesToday++;
       deliveredIds.push(msg.id);
+      logDelivery(jid, msg.source, msg.message);
       log(`Delivered scheduled message ${msg.id} to ${jid} (${msg.message.length} chars, source: ${msg.source})`);
     } catch (err) {
       log(`Failed to deliver scheduled message ${msg.id}: ${err}`);
