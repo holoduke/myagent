@@ -645,8 +645,8 @@ async function tick(
   pickUpSubAgentResults();
   checkAndSpawnSubAgentWorkers();
 
-  // ── Deliver due scheduled messages ──
-  await deliverScheduledMessages(state, sendMessage, ownerJid);
+  // ── Scheduled message delivery is handled ONLY by pollScheduledMessages() (10s interval).
+  // Removed from brain tick to prevent race condition causing duplicate deliveries.
 
   // Reset daily counter
   if (state.messagesTodayDate !== today) {
@@ -1371,7 +1371,13 @@ async function deliverScheduledMessages(
         deliveredIds.push(msg.id); // Remove to avoid retrying
         continue;
       }
-      await sendMessage(jid, msg.message);
+      const SEND_TIMEOUT_MS = 30_000;
+      await Promise.race([
+        sendMessage(jid, msg.message),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`sendMessage timed out after ${SEND_TIMEOUT_MS / 1000}s`)), SEND_TIMEOUT_MS),
+        ),
+      ]);
       state.lastMessageTime = Date.now();
       state.messagesToday++;
       deliveredIds.push(msg.id);
@@ -1399,7 +1405,13 @@ async function deliverScheduledMessages(
     const raw = readFileSync(pendingPath, "utf-8");
     const pending = JSON.parse(raw) as { sendAt: number; message: string };
     if (Date.now() >= pending.sendAt) {
-      await sendMessage(ownerJid, pending.message);
+      const SEND_TIMEOUT_MS = 30_000;
+      await Promise.race([
+        sendMessage(ownerJid, pending.message),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`sendMessage timed out after ${SEND_TIMEOUT_MS / 1000}s`)), SEND_TIMEOUT_MS),
+        ),
+      ]);
       state.lastMessageTime = Date.now();
       state.messagesToday++;
       unlinkSync(pendingPath);
