@@ -991,9 +991,8 @@ async function thinkTick(
     const response = parseBrainResponse(responseText);
 
     if (!response) {
-      log("Could not parse think response, skipping");
+      log(`Could not parse think response (raw length: ${responseText.length}), skipping — observations preserved for retry`);
       state.lastThinkTick = now;
-      graph.clearPendingObservations();
       return false;
     }
 
