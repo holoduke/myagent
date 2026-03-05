@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { id: "chat", label: "Chat", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>` },
   { id: "memory", label: "Memory", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>` },
   { id: "integrations", label: "Integrations", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>` },
+  { id: "agents", label: "Agents", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>` },
   { id: "settings", label: "Settings", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>` },
 ];
 
@@ -121,6 +122,14 @@ export function getDashboardHTML(): string {
         </div>
       </div>
 
+      <!-- Agents Section -->
+      <div class="section" id="section-agents">
+        <div class="section-header">Agents &amp; Sub-Agents</div>
+        <div id="agents-content">
+          <div style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
+        </div>
+      </div>
+
       <!-- Settings Section -->
       <div class="section" id="section-settings">
         <div class="section-header">Settings</div>
@@ -214,7 +223,7 @@ export function getDashboardHTML(): string {
 
     // ── Navigation ──
     function navigate(section, skipHash) {
-      const valid = ['overview','chat','memory','integrations','settings'];
+      const valid = ['overview','chat','memory','integrations','agents','settings'];
       if (!valid.includes(section)) section = 'overview';
       currentSection = section;
       if (!skipHash) location.hash = section;
@@ -237,6 +246,7 @@ export function getDashboardHTML(): string {
       else if (section === 'chat' && !chatLoaded) { loadHistory(); chatLoaded = true; }
       else if (section === 'memory') loadMemory();
       else if (section === 'integrations') loadIntegrations();
+      else if (section === 'agents') loadAgents();
       else if (section === 'settings') loadSettings();
 
       // Auto-refresh for overview
@@ -305,8 +315,11 @@ export function getDashboardHTML(): string {
     function wmField(label, val) {
       return '<div class="wm-field"><div class="wm-label">' + label + '</div><div class="wm-val">' + esc(val) + '</div></div>';
     }
+    let _nodeCounter = 0;
     function renderNode(n, pinned, ts) {
-      let h = '<div class="node"><div class="node-hdr">';
+      const nid = 'node-' + (_nodeCounter++);
+      const isTruncated = n.content.length > 300;
+      let h = '<div class="node" id="' + nid + '"><div class="node-hdr">';
       h += '<span class="type-badge ' + n.type + '">' + n.type + '</span>';
       if (pinned) h += '<span class="pinned-icon">pinned</span>';
       h += '<span class="str">' + n.strength.toFixed(2);
@@ -315,7 +328,12 @@ export function getDashboardHTML(): string {
       if (n.accessCount) h += '<span class="str" style="margin-left:auto">' + n.accessCount + ' access</span>';
       if (ts) h += '<span class="str" style="margin-left:auto">' + timeAgo(ts) + '</span>';
       h += '</div>';
-      h += '<div class="content">' + esc(n.content.slice(0,300)) + (n.content.length > 300 ? '...' : '') + '</div>';
+      h += '<div class="content' + (isTruncated ? ' truncated' : '') + '" data-full="' + esc(n.content) + '">';
+      h += esc(n.content.slice(0,300)) + (isTruncated ? '...' : '');
+      h += '</div>';
+      if (isTruncated) {
+        h += '<span class="expand-hint" onclick="toggleNodeExpand(\'' + nid + '\')">show more</span>';
+      }
       if (n.tags && n.tags.length) {
         h += '<div class="tags">';
         for (const t of n.tags) h += '<span class="tag">' + esc(t) + '</span>';
@@ -323,6 +341,23 @@ export function getDashboardHTML(): string {
       }
       h += '</div>';
       return h;
+    }
+
+    function toggleNodeExpand(nid) {
+      const node = document.getElementById(nid);
+      if (!node) return;
+      const content = node.querySelector('.content');
+      const hint = node.querySelector('.expand-hint');
+      const full = content.dataset.full;
+      if (content.classList.contains('truncated')) {
+        content.textContent = full;
+        content.classList.remove('truncated');
+        hint.textContent = 'show less';
+      } else {
+        content.textContent = full.slice(0, 300) + '...';
+        content.classList.add('truncated');
+        hint.textContent = 'show more';
+      }
     }
 
     // ── Overview Section ──
@@ -981,6 +1016,125 @@ export function getDashboardHTML(): string {
       } finally {
         busy = false; sendBtn.disabled = false; msgInput.focus();
       }
+    }
+
+    // ── Agents Section ──
+    async function loadAgents() {
+      try {
+        const [agentsRes, subAgentsRes] = await Promise.all([
+          fetch('/api/agents', { headers: authHeaders() }),
+          fetch('/api/sub-agents', { headers: authHeaders() }),
+        ]);
+        if (agentsRes.status === 401) { resetAuth(); return; }
+        const agents = await agentsRes.json();
+        const subAgents = await subAgentsRes.json();
+        renderAgents(agents, subAgents);
+      } catch(e) {
+        document.getElementById('agents-content').innerHTML =
+          '<div class="card"><p style="color:var(--red)">Failed to load: ' + e.message + '</p></div>';
+      }
+    }
+
+    function renderAgents(agents, subAgents) {
+      let html = '';
+
+      // Provider agents
+      html += '<div class="card" style="margin-bottom:16px"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg>AI Providers</h2>';
+      if (agents.length) {
+        for (const a of agents) {
+          html += '<div class="intg-card" style="margin-bottom:8px">';
+          html += '<div class="intg-header">';
+          html += '<h3>' + esc(a.name) + '</h3>';
+          html += '<span class="type-badge ' + (a.provider === 'claude' ? 'plan' : a.provider === 'grok' ? 'emotion' : 'fact') + '">' + esc(a.provider) + '</span>';
+          if (a.isDefault) html += '<span class="type-badge insight">default</span>';
+          html += '</div>';
+          html += kv('ID', a.id);
+          if (a.config && a.config.model) html += kv('Model', a.config.model);
+          html += kv('Created', fmtDate(a.createdAt));
+          html += '<div class="btn-row">';
+          if (!a.isDefault) html += '<button class="btn" onclick="setAgentDefault(\'' + esc(a.id) + '\')">Set Default</button>';
+          html += '<button class="btn" onclick="testAgent(\'' + esc(a.id) + '\')">Test</button>';
+          html += '<button class="btn danger" onclick="deleteAgentById(\'' + esc(a.id) + '\')">Delete</button>';
+          html += '</div>';
+          html += '</div>';
+        }
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:10px 0">No agents configured</div>';
+      }
+      html += '</div>';
+
+      // Sub-agents
+      html += '<div class="card"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>Sub-Agents</h2>';
+      if (subAgents.length) {
+        for (const sa of subAgents) {
+          const isEnabled = sa.enabled !== false;
+          html += '<div class="intg-card" style="margin-bottom:8px;opacity:' + (isEnabled ? '1' : '0.5') + '">';
+          html += '<div class="intg-header">';
+          html += '<h3>' + esc(sa.name || sa.id) + '</h3>';
+          html += '<span class="intg-status ' + (isEnabled ? 'online' : 'offline') + '">' + (isEnabled ? 'Enabled' : 'Disabled') + '</span>';
+          html += '</div>';
+          if (sa.description) html += '<div style="color:var(--text-dim);font-size:13px;margin-bottom:8px">' + esc(sa.description) + '</div>';
+          if (sa.schedule) html += kv('Schedule', sa.schedule);
+          if (sa.lastRun) html += kv('Last Run', timeAgo(sa.lastRun));
+          if (sa.runCount) html += kv('Run Count', sa.runCount);
+          html += '<div class="btn-row">';
+          html += '<button class="btn" onclick="toggleSubAgent(\'' + esc(sa.id) + '\')">' + (isEnabled ? 'Disable' : 'Enable') + '</button>';
+          html += '<button class="btn primary" onclick="runSubAgent(\'' + esc(sa.id) + '\')">Run Now</button>';
+          html += '</div>';
+          html += '</div>';
+        }
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:10px 0">No sub-agents configured</div>';
+      }
+      html += '</div>';
+
+      document.getElementById('agents-content').innerHTML = html;
+    }
+
+    async function setAgentDefault(id) {
+      try {
+        await fetch('/api/agents/' + id + '/set-default', { method: 'POST', headers: authHeaders() });
+        loadAgents();
+      } catch {}
+    }
+
+    async function testAgent(id) {
+      const btn = event.target;
+      btn.textContent = 'Testing...'; btn.disabled = true;
+      try {
+        const res = await fetch('/api/agents/' + id + '/test', { method: 'POST', headers: authHeaders() });
+        const d = await res.json();
+        btn.textContent = d.success ? 'OK (' + (d.durationMs/1000).toFixed(1) + 's)' : 'Failed';
+        btn.style.color = d.success ? 'var(--green)' : 'var(--red)';
+        setTimeout(() => { btn.textContent = 'Test'; btn.disabled = false; btn.style.color = ''; }, 3000);
+      } catch { btn.textContent = 'Error'; btn.disabled = false; }
+    }
+
+    async function deleteAgentById(id) {
+      if (!confirm('Delete this agent?')) return;
+      try {
+        await fetch('/api/agents/' + id, { method: 'DELETE', headers: authHeaders() });
+        loadAgents();
+      } catch {}
+    }
+
+    async function toggleSubAgent(id) {
+      try {
+        await fetch('/api/sub-agents/' + id + '/toggle', { method: 'POST', headers: authHeaders() });
+        loadAgents();
+      } catch {}
+    }
+
+    async function runSubAgent(id) {
+      const btn = event.target;
+      btn.textContent = 'Running...'; btn.disabled = true;
+      try {
+        const res = await fetch('/api/sub-agents/' + id + '/run', { method: 'POST', headers: authHeaders() });
+        const d = await res.json();
+        btn.textContent = d.success ? 'Done' : 'Failed';
+        btn.style.color = d.success ? 'var(--green)' : 'var(--red)';
+        setTimeout(() => { btn.textContent = 'Run Now'; btn.disabled = false; btn.style.color = ''; }, 3000);
+      } catch { btn.textContent = 'Error'; btn.disabled = false; }
     }
 
     // ── QR & Reset ──
