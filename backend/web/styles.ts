@@ -875,7 +875,7 @@ export function getStyles(): string {
       display: none;
       background: var(--bg-card);
       border-top: 1px solid var(--border);
-      padding: 6px 0 max(6px, env(safe-area-inset-bottom));
+      padding: 4px 0 max(4px, env(safe-area-inset-bottom));
       flex-shrink: 0;
       z-index: 20;
     }
@@ -887,20 +887,36 @@ export function getStyles(): string {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 2px;
-      padding: 6px 8px;
+      gap: 1px;
+      padding: 8px 4px 6px;
+      min-width: 44px;
+      min-height: 44px;
       color: var(--text-muted);
       cursor: pointer;
       border: none;
       background: none;
-      font-size: 9px;
+      font-size: 8px;
       font-family: var(--mono);
-      letter-spacing: 0.5px;
+      letter-spacing: 0.3px;
       text-transform: uppercase;
       transition: all .15s;
+      -webkit-tap-highlight-color: transparent;
     }
     .mob-nav-item.active { color: var(--accent); }
-    .mob-nav-item svg { width: 18px; height: 18px; }
+    .mob-nav-item svg { width: 20px; height: 20px; }
+
+    /* ── Expandable memory nodes ── */
+    .node .content.truncated { cursor: pointer; }
+    .node .content.truncated:hover { color: var(--text); }
+    .node .expand-hint {
+      color: var(--accent);
+      font-size: 11px;
+      font-family: var(--mono);
+      cursor: pointer;
+      margin-top: 4px;
+      display: inline-block;
+    }
+    .node .expand-hint:hover { text-decoration: underline; }
 
     @media (max-width: 768px) {
       #app.visible { flex-direction: column; }
@@ -913,6 +929,7 @@ export function getStyles(): string {
       #messages { padding: 12px 8px; }
       .chat-btn span { display: none; }
       .wl-add-form { flex-direction: column; }
+      .mob-nav-item span { font-size: 7px; }
     }
   `;
 }
