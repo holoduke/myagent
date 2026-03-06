@@ -1,16 +1,11 @@
 import { google, gmail_v1 } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
-import { appendFileSync } from "fs";
 import { recordObservation } from "../observer.js";
 import { isIntegrationEnabled } from "./integration-config.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [gmail] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("gmail");
 
 const GMAIL_DIR = process.env.GMAIL_DIR || "/data/gmail";
 const ACCOUNTS_FILE = `${GMAIL_DIR}/accounts.json`;

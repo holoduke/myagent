@@ -1,14 +1,9 @@
 import { IncomingMessage, ServerResponse } from "http";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
-import { appendFileSync } from "fs";
 import { recordObservation } from "../observer.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [owntracks] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("owntracks");
 
 const OT_DIR = "/data/owntracks";
 const STATE_FILE = `${OT_DIR}/state.json`;

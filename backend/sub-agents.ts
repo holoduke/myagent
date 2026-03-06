@@ -1,12 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync } from "fs";
-import { appendFileSync } from "fs";
+import { createLogger } from "./logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [sub-agents] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("sub-agents");
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const REGISTRY_FILE = `${BRAIN_DIR}/sub-agents.json`;

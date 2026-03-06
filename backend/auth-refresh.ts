@@ -1,12 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
-import { appendFileSync } from "fs";
+import { createLogger } from "./logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [auth] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("auth");
 
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";

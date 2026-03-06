@@ -1,14 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
-import { appendFileSync } from "fs";
 import { recordObservation } from "../observer.js";
 import { isIntegrationEnabled } from "./integration-config.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [homeassistant] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("homeassistant");
 
 const HA_DIR = "/data/homeassistant";
 const CONFIG_FILE = `${HA_DIR}/config.json`;

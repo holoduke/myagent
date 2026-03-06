@@ -1,14 +1,9 @@
-import { appendFileSync } from "fs";
 import type { MemoryGraph } from "./memory/graph.js";
 import type { WorkingMemory, BrainState } from "./memory/types.js";
 import { GoalTracker } from "./goals.js";
+import { createLogger } from "./logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [initiative] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("initiative");
 
 // ── Types ──
 
