@@ -1,16 +1,11 @@
 import Parser from "rss-parser";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
-import { appendFileSync } from "fs";
 import { randomUUID } from "crypto";
 import { recordObservation } from "../observer.js";
 import { isIntegrationEnabled } from "./integration-config.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [rss] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("rss");
 
 const RSS_DIR = "/data/rss";
 const FEEDS_FILE = `${RSS_DIR}/feeds.json`;

@@ -1,13 +1,8 @@
-import { appendFileSync } from "fs";
 import type { MemoryGraph } from "./memory/graph.js";
 import type { GoalData, GoalOperation, WorkingGoalRef } from "./memory/types.js";
+import { createLogger } from "./logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [goals] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("goals");
 
 // ── Goal Data Helpers ──
 

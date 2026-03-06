@@ -1,16 +1,11 @@
 import { google } from "googleapis";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
-import { appendFileSync } from "fs";
 import { recordObservation } from "../observer.js";
 import { loadAccounts, createOAuth2Client } from "./gmail.js";
 import { isIntegrationEnabled } from "./integration-config.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [calendar] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("calendar");
 
 const CALENDAR_DIR = "/data/calendar";
 const STATE_FILE = `${CALENDAR_DIR}/state.json`;

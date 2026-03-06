@@ -1,13 +1,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
-import { appendFileSync } from "fs";
 import type { ImprovementTask } from "./self-improve-prompt.js";
+import { createLogger } from "./logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [improve-queue] ${msg}`;
-  console.log(line);
-  try { appendFileSync(LOG_FILE, line + "\n"); } catch {}
-}
+const log = createLogger("improve-queue");
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const QUEUE_FILE = `${BRAIN_DIR}/improve-queue.json`;

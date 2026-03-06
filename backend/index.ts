@@ -1,6 +1,7 @@
 import "dotenv/config";
-import { appendFileSync, readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { createServer } from "http";
+import { createLogger } from "./logger.js";
 import { startWhatsApp, sendMessage, sendReaction, sendTypingIndicator, stopTypingIndicator, getLatestQr } from "./integrations/whatsapp.js";
 import { resetSession } from "./claude.js";
 import { getDefaultProvider, bootstrapDefaultAgent } from "./providers/index.js";
@@ -20,14 +21,8 @@ import { handleOwnTracksWebhook } from "./integrations/owntracks.js";
 import { handleTwiml, handleTurn, handleStatus as handleTwilioStatus } from "./integrations/twilio.js";
 
 const queue = new MessageQueue();
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
+const log = createLogger("index");
 const startedAt = Date.now();
-
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
 
 async function main() {
   const ownerPhone = process.env.OWNER_PHONE;

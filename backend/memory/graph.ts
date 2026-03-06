@@ -1,14 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
-import { appendFileSync } from "fs";
 import { randomBytes } from "crypto";
 import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType } from "./types.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [graph] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("graph");
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const GRAPH_DIR = `${BRAIN_DIR}/graph`;
