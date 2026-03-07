@@ -84,6 +84,36 @@ export function updateWorkingMemory(
   return wm;
 }
 
+// ── Auto-Cleanup ──
+
+const MAX_TRACKING_ITEMS = 25;
+const MAX_FOLLOWUP_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+export function cleanupWorkingMemory(wm: WorkingMemory): { trackingTrimmed: number; followUpsPruned: number } {
+  let trackingTrimmed = 0;
+  let followUpsPruned = 0;
+  const now = Date.now();
+
+  // Cap shortTermTracking to most recent items
+  if (wm.shortTermTracking.length > MAX_TRACKING_ITEMS) {
+    trackingTrimmed = wm.shortTermTracking.length - MAX_TRACKING_ITEMS;
+    wm.shortTermTracking = wm.shortTermTracking.slice(-MAX_TRACKING_ITEMS);
+  }
+
+  // Remove expired follow-ups (older than 30 days with no dueAt, or past dueAt by 7 days)
+  if (wm.pendingFollowUps && wm.pendingFollowUps.length > 0) {
+    const before = wm.pendingFollowUps.length;
+    wm.pendingFollowUps = wm.pendingFollowUps.filter(fu => {
+      if (fu.dueAt && now > fu.dueAt + 7 * 24 * 60 * 60 * 1000) return false; // 7 days past due
+      if (!fu.dueAt && now - fu.createdAt > MAX_FOLLOWUP_AGE_MS) return false; // 30 days old, no deadline
+      return true;
+    });
+    followUpsPruned = before - wm.pendingFollowUps.length;
+  }
+
+  return { trackingTrimmed, followUpsPruned };
+}
+
 // ── Temporal Context ──
 
 export function populateTemporalContext(wm: WorkingMemory): void {

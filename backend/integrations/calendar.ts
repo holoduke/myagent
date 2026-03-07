@@ -157,6 +157,40 @@ async function pollAll(): Promise<void> {
   saveState(state);
 }
 
+export async function createEvent(
+  accountId: string,
+  summary: string,
+  startDateTime: string,
+  endDateTime: string,
+  location?: string,
+): Promise<{ success: boolean; eventId?: string; error?: string }> {
+  const accounts = loadAccounts();
+  const account = accounts.find(a => a.id === accountId);
+  if (!account || (!account.tokens?.refresh_token && !account.tokens?.access_token)) {
+    return { success: false, error: "Account not found or not authenticated" };
+  }
+
+  const auth = createOAuth2Client(account);
+  const calendar = google.calendar({ version: "v3", auth });
+
+  try {
+    const res = await calendar.events.insert({
+      calendarId: "primary",
+      requestBody: {
+        summary,
+        start: { dateTime: startDateTime },
+        end: { dateTime: endDateTime },
+        location,
+      },
+    });
+    log(`Created calendar event: ${summary} (${res.data.id})`);
+    return { success: true, eventId: res.data.id || undefined };
+  } catch (err: any) {
+    log(`Failed to create calendar event: ${err.message || err}`);
+    return { success: false, error: err.message || String(err) };
+  }
+}
+
 export function getCalendarStatus(): { enabled: boolean; accounts: Array<{ id: string; email: string; lastSync: number }>; nextEventCount: number } {
   const accounts = loadAccounts();
   const state = loadState();

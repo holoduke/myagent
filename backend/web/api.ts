@@ -11,7 +11,7 @@ import { getWhitelist, addToWhitelist, removeFromWhitelist } from "../contact-wh
 import { getAccountStatus, addAccount, removeAccount } from "../integrations/gmail.js";
 import { getLatestQr } from "../integrations/whatsapp.js";
 import { getSSHStatus, getPublicKey, addTarget, removeTarget, testConnection } from "../integrations/ssh.js";
-import { getCalendarStatus } from "../integrations/calendar.js";
+import { getCalendarStatus, createEvent } from "../integrations/calendar.js";
 import { getHAStatus, saveConfig, restartHAPolling, testHAConnection } from "../integrations/homeassistant.js";
 import type { HAConfig, HAConnectionMode } from "../integrations/homeassistant.js";
 import { getRSSStatus, addFeed, removeFeed } from "../integrations/rss.js";
@@ -205,6 +205,28 @@ export function handleApiRoutes(
   if (pathname === "/api/calendar/status" && req.method === "GET" && isAuthenticated(req)) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(getCalendarStatus()));
+    return true;
+  }
+
+  // ── Calendar event creation ──
+  if (pathname === "/api/calendar/events" && req.method === "POST" && isAuthenticated(req)) {
+    readBody(req).then(async (raw) => {
+      try {
+        const body = JSON.parse(raw);
+        const { accountId, summary, startDateTime, endDateTime, location } = body;
+        if (!accountId || !summary || !startDateTime || !endDateTime) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Missing required fields: accountId, summary, startDateTime, endDateTime" }));
+          return;
+        }
+        const result = await createEvent(accountId, summary, startDateTime, endDateTime, location);
+        res.writeHead(result.success ? 200 : 500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err: any) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message || "Invalid request" }));
+      }
+    });
     return true;
   }
 
