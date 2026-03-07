@@ -1,16 +1,10 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
-import { appendFileSync } from "fs";
 import { askClaude } from "./claude.js";
 import type { SubAgentTask, SubAgentResult } from "./sub-agents.js";
+import { createLogger } from "./logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
+const log = createLogger("sub-agent-worker");
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
-
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [sub-agent-worker] ${msg}`;
-  console.log(line);
-  try { appendFileSync(LOG_FILE, line + "\n"); } catch {}
-}
 
 function parseResult(raw: string, agentId: string): SubAgentResult {
   try {

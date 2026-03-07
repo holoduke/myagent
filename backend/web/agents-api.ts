@@ -1,5 +1,4 @@
 import { IncomingMessage, ServerResponse } from "http";
-import { appendFileSync } from "fs";
 import {
   listAgents,
   getAgent,
@@ -13,15 +12,9 @@ import {
 import { maskSecrets } from "../providers/agent-store.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { AgentProfile } from "../providers/types.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  try {
-    const line = `[${new Date().toISOString()}] [agents-api] ${msg}`;
-    console.log(line);
-    appendFileSync(LOG_FILE, line + "\n");
-  } catch { /* prevent disk errors from crashing */ }
-}
+const log = createLogger("agents-api");
 
 function json(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });

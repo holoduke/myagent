@@ -1,14 +1,10 @@
 import { randomBytes, timingSafeEqual } from "crypto";
 import { IncomingMessage, ServerResponse } from "http";
-import { appendFileSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [web] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("web");
 
 export const MAX_BODY_SIZE = 1024 * 1024; // 1MB
 const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours

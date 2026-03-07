@@ -1,16 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "fs";
 import { join, basename } from "path";
-import { appendFileSync } from "fs";
 import type { AgentProfile } from "./types.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  try {
-    const line = `[${new Date().toISOString()}] [agent-store] ${msg}`;
-    console.log(line);
-    appendFileSync(LOG_FILE, line + "\n");
-  } catch { /* prevent disk errors from crashing */ }
-}
+const log = createLogger("agent-store");
 
 const AGENTS_DIR = process.env.AGENTS_DIR || "/data/agents";
 

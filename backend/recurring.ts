@@ -1,13 +1,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
-import { appendFileSync } from "fs";
 import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
+import { createLogger } from "./logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [recurring] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("recurring");
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const RECURRING_FILE = `${BRAIN_DIR}/recurring-tasks.json`;

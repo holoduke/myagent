@@ -1,5 +1,5 @@
 import { IncomingMessage, ServerResponse } from "http";
-import { readFileSync, writeFileSync, existsSync, appendFileSync } from "fs";
+import { readFileSync, writeFileSync, existsSync } from "fs";
 import { spawn } from "child_process";
 import { resetSession } from "../claude.js";
 import { getDefaultProvider } from "../providers/index.js";
@@ -49,13 +49,9 @@ import { MemoryGraph } from "../memory/graph.js";
 import { loadWorkingMemory } from "../memory/working-memory.js";
 import type { GoalData, RetentionTier } from "../memory/types.js";
 import { classifyRetentionTier } from "../memory/decay.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [web] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("web");
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 

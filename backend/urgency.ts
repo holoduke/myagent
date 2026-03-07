@@ -1,12 +1,7 @@
-import { appendFileSync } from "fs";
 import type { Observation } from "./observer.js";
+import { createLogger } from "./logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [urgency] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("urgency");
 
 // ── Keyword Urgency Scores ──
 

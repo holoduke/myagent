@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from "http";
-import { appendFileSync } from "fs";
 import {
   loadAccounts,
   getAuthUrl,
@@ -8,13 +7,9 @@ import {
   getAccountStatus,
   restartGmailPolling,
 } from "./gmail.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [gmail-routes] ${msg}`;
-  console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
-}
+const log = createLogger("gmail-routes");
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });

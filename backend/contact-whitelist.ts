@@ -1,4 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("whitelist");
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const WHITELIST_FILE = `${BRAIN_DIR}/contact-whitelist.json`;
@@ -15,7 +18,7 @@ function loadWhitelist(): WhitelistedContact[] {
       return JSON.parse(readFileSync(WHITELIST_FILE, "utf-8"));
     }
   } catch {
-    console.error("[whitelist] Failed to read whitelist, starting fresh");
+    log("Failed to read whitelist, starting fresh");
   }
   return [];
 }

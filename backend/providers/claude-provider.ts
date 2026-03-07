@@ -1,18 +1,11 @@
 import { spawn } from "child_process";
-import { appendFileSync } from "fs";
 import { getSystemPrompt, getMessageMemoryContext, resetMemoryContextTracker } from "../system-prompt.js";
 import { ensureValidToken } from "../auth-refresh.js";
 import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, ClaudeConfig } from "./types.js";
 import { splitMessage } from "./util.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  try {
-    const line = `[${new Date().toISOString()}] [claude-provider] ${msg}`;
-    console.log(line);
-    appendFileSync(LOG_FILE, line + "\n");
-  } catch { /* prevent disk errors from crashing */ }
-}
+const log = createLogger("claude-provider");
 
 interface ClaudeResponse {
   result: string;

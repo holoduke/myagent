@@ -1,16 +1,9 @@
 import { spawn } from "child_process";
-import { appendFileSync } from "fs";
 import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, GrokConfig } from "./types.js";
 import { splitMessage } from "./util.js";
+import { createLogger } from "../logger.js";
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-function log(msg: string) {
-  try {
-    const line = `[${new Date().toISOString()}] [grok-provider] ${msg}`;
-    console.log(line);
-    appendFileSync(LOG_FILE, line + "\n");
-  } catch { /* prevent disk errors from crashing */ }
-}
+const log = createLogger("grok-provider");
 
 // Keep recent messages for context (Grok has no session support)
 interface HistoryEntry {
