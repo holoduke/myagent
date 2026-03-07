@@ -1,21 +1,21 @@
 import { ClaudeProvider } from "./claude-provider.js";
 import { CodexProvider } from "./codex-provider.js";
 import { GrokProvider } from "./grok-provider.js";
-import { getDefaultAgent, bootstrapDefaultAgent } from "./agent-store.js";
-import type { AIProvider, AgentProfile, ClaudeConfig, CodexConfig, GrokConfig } from "./types.js";
+import { getDefaultProvider as getDefaultProviderProfile, bootstrapDefaultProvider } from "./provider-store.js";
+import type { AIProvider, ProviderProfile, ClaudeConfig, CodexConfig, GrokConfig } from "./types.js";
 
-export type { AIProvider, AgentResult, AgentStats, AgentProfile, ProviderAskOptions } from "./types.js";
+export type { AIProvider, AgentResult, AgentStats, ProviderProfile, ProviderAskOptions } from "./types.js";
 export type { ClaudeConfig, CodexConfig, GrokConfig } from "./types.js";
 export { ClaudeProvider } from "./claude-provider.js";
 export { CodexProvider } from "./codex-provider.js";
 export { GrokProvider } from "./grok-provider.js";
-export { listAgents, getAgent, saveAgent, deleteAgent, getDefaultAgent, setDefault, bootstrapDefaultAgent } from "./agent-store.js";
+export { listProviders, getProvider, saveProvider, deleteProvider, getDefaultProvider as getDefaultProviderProfile, setDefault, bootstrapDefaultProvider } from "./provider-store.js";
 
 let cachedDefaultProvider: AIProvider | null = null;
 let cachedClaudeProvider: ClaudeProvider | null = null;
 let savedSessionId: string | null = null;
 
-export function createProvider(profile: AgentProfile): AIProvider {
+export function createProvider(profile: ProviderProfile): AIProvider {
   switch (profile.provider) {
     case "claude":
       return new ClaudeProvider(profile.config as ClaudeConfig);
@@ -31,10 +31,10 @@ export function createProvider(profile: AgentProfile): AIProvider {
 export function getDefaultProvider(): AIProvider {
   if (cachedDefaultProvider) return cachedDefaultProvider;
 
-  bootstrapDefaultAgent();
-  const profile = getDefaultAgent();
+  bootstrapDefaultProvider();
+  const profile = getDefaultProviderProfile();
   if (!profile) {
-    throw new Error("No agent profiles configured");
+    throw new Error("No provider profiles configured");
   }
   cachedDefaultProvider = createProvider(profile);
 

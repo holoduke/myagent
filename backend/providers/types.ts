@@ -17,7 +17,7 @@ export interface AgentStats {
   cacheCreationTokens?: number;
 }
 
-export interface AgentProfile {
+export interface ProviderProfile {
   id: string;
   name: string;
   provider: "claude" | "codex" | "grok";
