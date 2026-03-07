@@ -105,12 +105,18 @@ export function getScheduledMessages(): ScheduledMessage[] {
  * Does NOT remove messages from the schedule — caller must use markDelivered()
  * after successful delivery to avoid data loss on send failure.
  */
+// In-flight message IDs: prevents duplicate delivery when poll overlaps with markDelivered write-back
+const inFlightIds = new Set<string>();
+
 export function getDueMessages(): ScheduledMessage[] {
   const schedule = loadSchedule();
   const now = Date.now();
 
-  const due = schedule.filter(m => m.deliverAt <= now);
+  const due = schedule.filter(m => m.deliverAt <= now && !inFlightIds.has(m.id));
   if (due.length === 0) return [];
+
+  // Mark as in-flight immediately so no other poll picks them up
+  for (const m of due) inFlightIds.add(m.id);
 
   log(`${due.length} message(s) due for delivery`);
   return due;
@@ -127,6 +133,8 @@ export function markDelivered(ids: string[]): void {
   const schedule = loadSchedule();
   const remaining = schedule.filter(m => !ids.includes(m.id));
   saveSchedule(remaining);
+  // Clear in-flight tracking
+  for (const id of ids) inFlightIds.delete(id);
   log(`Marked ${ids.length} message(s) as delivered, ${remaining.length} remaining`);
 }
 
@@ -154,6 +162,8 @@ export function markFailed(ids: string[]): string[] {
 
   const remaining = schedule.filter(m => !droppedIds.includes(m.id));
   saveSchedule(remaining);
+  // Clear in-flight tracking for all failed messages (retried or dropped)
+  for (const id of ids) inFlightIds.delete(id);
 
   if (droppedIds.length > 0) {
     log(`Dropped ${droppedIds.length} message(s) after exceeding ${MAX_RETRIES} retries`);
