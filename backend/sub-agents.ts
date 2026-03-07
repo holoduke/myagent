@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync } from "fs";
 import { appendFileSync } from "fs";
 
+import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
+
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 function log(msg: string) {
   const line = `[${new Date().toISOString()}] [sub-agents] ${msg}`;
@@ -178,9 +180,9 @@ export function isDue(agent: SubAgentConfig, now: Date): boolean {
   if (isRunning(agent.id)) return false;
   if (agent.lastRunAt > 0 && (now.getTime() - agent.lastRunAt) < MIN_RUN_INTERVAL) return false;
 
-  const currentHour = now.getHours();
+  const { hour: currentHour, dayOfWeek: currentDay } = getOwnerLocalTime(getBrainConfig().ownerTimezone, now);
   if (!agent.schedule.hours.includes(currentHour)) return false;
-  if (agent.schedule.daysOfWeek && !agent.schedule.daysOfWeek.includes(now.getDay())) return false;
+  if (agent.schedule.daysOfWeek && !agent.schedule.daysOfWeek.includes(currentDay)) return false;
 
   return true;
 }
