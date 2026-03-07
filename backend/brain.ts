@@ -1083,6 +1083,14 @@ async function consolidateTick(
   // Prepare context for Claude consolidation
   const wm = loadWorkingMemory();
   populateTemporalContext(wm);
+
+  // Auto-cleanup working memory during consolidation
+  const { cleanupWorkingMemory } = await import("./memory/working-memory.js");
+  const cleanup = cleanupWorkingMemory(wm);
+  if (cleanup.trackingTrimmed > 0 || cleanup.followUpsPruned > 0) {
+    log(`Working memory cleanup: trimmed ${cleanup.trackingTrimmed} tracking items, pruned ${cleanup.followUpsPruned} follow-ups`);
+    saveWorkingMemory(wm);
+  }
   const { weakNodes, orphanNodes, duplicateCandidates, stats } = selectContextForConsolidate(graph);
 
   // Only call Claude if there's cleanup work to consider

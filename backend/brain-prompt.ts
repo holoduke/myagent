@@ -37,6 +37,60 @@ function timeAgo(ts: number): string {
   return `${days}d ago`;
 }
 
+function formatSingleObservation(obs: Observation): string {
+  const time = formatTime(obs.timestamp);
+  const who = obs.isFromMe ? `${obs.sender || "Me"} (you/outgoing)` : obs.sender || "Unknown";
+  let context: string;
+  if (obs.isGroup) {
+    context = ` in group "${obs.groupName || "?"}"`;
+  } else if (obs.isFromMe && obs.chatName) {
+    context = ` → ${obs.chatName}`;
+  } else if (!obs.isFromMe && obs.chatName) {
+    context = ` (DM)`;
+  } else {
+    context = "";
+  }
+  const urgencyPrefix = (obs.urgency && obs.urgency >= 0.6) ? "[!!! URGENT] " : "";
+  return `${urgencyPrefix}[${time}] ${who}${context}: ${obs.text}`;
+}
+
+function batchWhatsAppMessages(messages: Observation[]): string[] {
+  // Group by conversation thread (chatJid or groupName)
+  const threads = new Map<string, Observation[]>();
+  for (const obs of messages) {
+    const key = obs.isGroup
+      ? `group:${obs.groupName || obs.chatJid || obs.senderJid}`
+      : `dm:${obs.chatJid || obs.senderJid}`;
+    if (!threads.has(key)) threads.set(key, []);
+    threads.get(key)!.push(obs);
+  }
+
+  const lines: string[] = [];
+  for (const [, thread] of threads) {
+    // Sort by timestamp within thread
+    thread.sort((a, b) => a.timestamp - b.timestamp);
+
+    if (thread.length >= 5) {
+      // Batch: show header + messages compactly
+      const first = thread[0];
+      const context = first.isGroup ? `group "${first.groupName || "?"}"` : `DM with ${first.chatName || first.sender}`;
+      const participants = [...new Set(thread.map(o => o.sender))].join(", ");
+      lines.push(`── ${thread.length} messages in ${context} (${participants}) ──`);
+      for (const obs of thread) {
+        const time = formatTime(obs.timestamp);
+        const who = obs.isFromMe ? "(you)" : obs.sender;
+        const urgencyPrefix = (obs.urgency && obs.urgency >= 0.6) ? "[!!!] " : "";
+        lines.push(`  ${urgencyPrefix}[${time}] ${who}: ${obs.text}`);
+      }
+    } else {
+      for (const obs of thread) {
+        lines.push(formatSingleObservation(obs));
+      }
+    }
+  }
+  return lines;
+}
+
 function formatObservations(observations: Observation[]): string {
   if (observations.length === 0) return "(no new messages or emails)";
 
@@ -46,22 +100,8 @@ function formatObservations(observations: Observation[]): string {
   const parts: string[] = [];
 
   if (whatsapp.length > 0) {
-    parts.push("── WhatsApp Messages ──\n" + whatsapp.map((obs) => {
-      const time = formatTime(obs.timestamp);
-      const who = obs.isFromMe ? `${obs.sender || "Me"} (you/outgoing)` : obs.sender || "Unknown";
-      let context: string;
-      if (obs.isGroup) {
-        context = ` in group "${obs.groupName || "?"}"`;
-      } else if (obs.isFromMe && obs.chatName) {
-        context = ` → ${obs.chatName}`;
-      } else if (!obs.isFromMe && obs.chatName) {
-        context = ` (DM)`;
-      } else {
-        context = "";
-      }
-      const urgencyPrefix = (obs.urgency && obs.urgency >= 0.6) ? "[!!! URGENT] " : "";
-      return `${urgencyPrefix}[${time}] ${who}${context}: ${obs.text}`;
-    }).join("\n"));
+    const lines = batchWhatsAppMessages(whatsapp);
+    parts.push("── WhatsApp Messages ──\n" + lines.join("\n"));
   }
 
   if (gmail.length > 0) {

@@ -74,8 +74,32 @@ export function ensureBrainDir(): void {
   }
 }
 
+const recentObservationKeys = new Set<string>();
+const MAX_DEDUP_ENTRIES = 500;
+
+function getObservationKey(obs: Observation): string {
+  if (obs.emailMeta?.messageId) return `email:${obs.emailMeta.messageId}`;
+  if (obs.calendarMeta?.eventId) return `cal:${obs.calendarMeta.eventId}`;
+  // For WhatsApp/other: hash by sender + timestamp + first 80 chars
+  return `${obs.source || "wa"}:${obs.senderJid}:${obs.timestamp}:${obs.text.slice(0, 80)}`;
+}
+
 export function recordObservation(obs: Observation): void {
   try {
+    const key = getObservationKey(obs);
+    if (recentObservationKeys.has(key)) return; // deduplicated
+
+    recentObservationKeys.add(key);
+    // Prevent unbounded growth of dedup set
+    if (recentObservationKeys.size > MAX_DEDUP_ENTRIES) {
+      const it = recentObservationKeys.values();
+      for (let i = 0; i < 100; i++) it.next();
+      // Clear oldest ~100 entries by rebuilding
+      const entries = [...recentObservationKeys];
+      recentObservationKeys.clear();
+      for (const e of entries.slice(100)) recentObservationKeys.add(e);
+    }
+
     ensureBrainDir();
     appendFileSync(OBS_FILE, JSON.stringify(obs) + "\n");
   } catch (err) {
