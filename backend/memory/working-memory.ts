@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "
 import type { WorkingMemory, PendingFollowUp, ConversationThread, TemporalContext } from "./types.js";
 import type { Observation } from "../observer.js";
 import { createLogger } from "../logger.js";
+import { getBrainConfig, getOwnerLocalTime } from "../brain-config.js";
 
 const log = createLogger("working-memory");
 
@@ -83,8 +84,7 @@ export function updateWorkingMemory(
 export function populateTemporalContext(wm: WorkingMemory): void {
   const now = new Date();
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const hour = now.getHours();
-  const day = now.getDay();
+  const { hour, dayOfWeek: day } = getOwnerLocalTime(getBrainConfig().ownerTimezone, now);
 
   let timeOfDay: TemporalContext["timeOfDay"];
   if (hour >= 5 && hour < 12) timeOfDay = "morning";
