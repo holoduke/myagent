@@ -797,6 +797,19 @@ async function tick(
   // Update graph stats in state
   state.nodeCount = graph.nodeCount;
   state.edgeCount = graph.edgeCount;
+
+  // ── Merge scheduler-critical fields to prevent race condition ──
+  // pollScheduledMessages() runs every 10s and may have updated state.json
+  // while this tick was running (Claude calls take 1-5 min). Re-read disk
+  // state and take the maximum values so delivered messages aren't lost.
+  const freshState = loadState();
+  if (freshState.messagesToday > state.messagesToday) {
+    state.messagesToday = freshState.messagesToday;
+  }
+  if (freshState.lastMessageTime > state.lastMessageTime) {
+    state.lastMessageTime = freshState.lastMessageTime;
+  }
+
   saveState(state);
   graph.save();
 }
