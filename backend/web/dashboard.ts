@@ -5,7 +5,7 @@ const NAV_ITEMS = [
   { id: "chat", label: "Chat", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>` },
   { id: "memory", label: "Memory", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>` },
   { id: "integrations", label: "Integrations", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>` },
-  { id: "agents", label: "Agents", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>` },
+  { id: "ai-providers", label: "AI Providers", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 014 4v1a1 1 0 001 1h1a4 4 0 010 8h-1a1 1 0 00-1 1v1a4 4 0 01-8 0v-1a1 1 0 00-1-1H6a4 4 0 010-8h1a1 1 0 001-1V6a4 4 0 014-4z"/><circle cx="12" cy="12" r="2"/></svg>` },
   { id: "settings", label: "Settings", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>` },
 ];
 
@@ -123,9 +123,9 @@ export function getDashboardHTML(): string {
       </div>
 
       <!-- Agents Section -->
-      <div class="section" id="section-agents">
+      <div class="section" id="section-ai-providers">
         <div class="section-header">Agents &amp; Sub-Agents</div>
-        <div id="agents-content">
+        <div id="ai-providers-content">
           <div style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
         </div>
       </div>
@@ -223,7 +223,7 @@ export function getDashboardHTML(): string {
 
     // ── Navigation ──
     function navigate(section, skipHash) {
-      const valid = ['overview','chat','memory','integrations','agents','settings'];
+      const valid = ['overview','chat','memory','integrations','ai-providers','settings'];
       if (!valid.includes(section)) section = 'overview';
       currentSection = section;
       if (!skipHash) location.hash = section;
@@ -246,7 +246,7 @@ export function getDashboardHTML(): string {
       else if (section === 'chat' && !chatLoaded) { loadHistory(); chatLoaded = true; }
       else if (section === 'memory') loadMemory();
       else if (section === 'integrations') loadIntegrations();
-      else if (section === 'agents') loadAgents();
+      else if (section === 'ai-providers') loadProviders();
       else if (section === 'settings') loadSettings();
 
       // Auto-refresh for overview
@@ -1018,30 +1018,30 @@ export function getDashboardHTML(): string {
       }
     }
 
-    // ── Agents Section ──
-    async function loadAgents() {
+    // ── AI Providers Section ──
+    async function loadProviders() {
       try {
-        const [agentsRes, subAgentsRes] = await Promise.all([
-          fetch('/api/agents', { headers: authHeaders() }),
+        const [providersRes, subAgentsRes] = await Promise.all([
+          fetch('/api/providers', { headers: authHeaders() }),
           fetch('/api/sub-agents', { headers: authHeaders() }),
         ]);
-        if (agentsRes.status === 401) { resetAuth(); return; }
-        const agents = await agentsRes.json();
+        if (providersRes.status === 401) { resetAuth(); return; }
+        const providers = await providersRes.json();
         const subAgents = await subAgentsRes.json();
-        renderAgents(agents, subAgents);
+        renderProviders(providers, subAgents);
       } catch(e) {
-        document.getElementById('agents-content').innerHTML =
+        document.getElementById('ai-providers-content').innerHTML =
           '<div class="card"><p style="color:var(--red)">Failed to load: ' + e.message + '</p></div>';
       }
     }
 
-    function renderAgents(agents, subAgents) {
+    function renderProviders(providers, subAgents) {
       let html = '';
 
-      // Provider agents
+      // AI Providers
       html += '<div class="card" style="margin-bottom:16px"><h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg>AI Providers</h2>';
-      if (agents.length) {
-        for (const a of agents) {
+      if (providers.length) {
+        for (const a of providers) {
           html += '<div class="intg-card" style="margin-bottom:8px">';
           html += '<div class="intg-header">';
           html += '<h3>' + esc(a.name) + '</h3>';
@@ -1052,14 +1052,14 @@ export function getDashboardHTML(): string {
           if (a.config && a.config.model) html += kv('Model', a.config.model);
           html += kv('Created', fmtDate(a.createdAt));
           html += '<div class="btn-row">';
-          if (!a.isDefault) html += '<button class="btn" onclick="setAgentDefault(\'' + esc(a.id) + '\')">Set Default</button>';
-          html += '<button class="btn" onclick="testAgent(\'' + esc(a.id) + '\')">Test</button>';
-          html += '<button class="btn danger" onclick="deleteAgentById(\'' + esc(a.id) + '\')">Delete</button>';
+          if (!a.isDefault) html += '<button class="btn" onclick="setProviderDefault(\'' + esc(a.id) + '\')">Set Default</button>';
+          html += '<button class="btn" onclick="testProvider(\'' + esc(a.id) + '\')">Test</button>';
+          html += '<button class="btn danger" onclick="deleteProviderById(\'' + esc(a.id) + '\')">Delete</button>';
           html += '</div>';
           html += '</div>';
         }
       } else {
-        html += '<div style="color:var(--text-ghost);font-size:13px;padding:10px 0">No agents configured</div>';
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:10px 0">No providers configured</div>';
       }
       html += '</div>';
 
@@ -1088,21 +1088,21 @@ export function getDashboardHTML(): string {
       }
       html += '</div>';
 
-      document.getElementById('agents-content').innerHTML = html;
+      document.getElementById('ai-providers-content').innerHTML = html;
     }
 
-    async function setAgentDefault(id) {
+    async function setProviderDefault(id) {
       try {
-        await fetch('/api/agents/' + id + '/set-default', { method: 'POST', headers: authHeaders() });
-        loadAgents();
+        await fetch('/api/providers/' + id + '/set-default', { method: 'POST', headers: authHeaders() });
+        loadProviders();
       } catch {}
     }
 
-    async function testAgent(id) {
+    async function testProvider(id) {
       const btn = event.target;
       btn.textContent = 'Testing...'; btn.disabled = true;
       try {
-        const res = await fetch('/api/agents/' + id + '/test', { method: 'POST', headers: authHeaders() });
+        const res = await fetch('/api/providers/' + id + '/test', { method: 'POST', headers: authHeaders() });
         const d = await res.json();
         btn.textContent = d.success ? 'OK (' + (d.durationMs/1000).toFixed(1) + 's)' : 'Failed';
         btn.style.color = d.success ? 'var(--green)' : 'var(--red)';
@@ -1110,18 +1110,18 @@ export function getDashboardHTML(): string {
       } catch { btn.textContent = 'Error'; btn.disabled = false; }
     }
 
-    async function deleteAgentById(id) {
-      if (!confirm('Delete this agent?')) return;
+    async function deleteProviderById(id) {
+      if (!confirm('Delete this provider?')) return;
       try {
-        await fetch('/api/agents/' + id, { method: 'DELETE', headers: authHeaders() });
-        loadAgents();
+        await fetch('/api/providers/' + id, { method: 'DELETE', headers: authHeaders() });
+        loadProviders();
       } catch {}
     }
 
     async function toggleSubAgent(id) {
       try {
         await fetch('/api/sub-agents/' + id + '/toggle', { method: 'POST', headers: authHeaders() });
-        loadAgents();
+        loadProviders();
       } catch {}
     }
 

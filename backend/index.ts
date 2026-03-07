@@ -4,7 +4,7 @@ import { createServer } from "http";
 import { createLogger } from "./logger.js";
 import { startWhatsApp, sendMessage, sendReaction, sendTypingIndicator, stopTypingIndicator, getLatestQr } from "./integrations/whatsapp.js";
 import { resetSession } from "./claude.js";
-import { getDefaultProvider, bootstrapDefaultAgent } from "./providers/index.js";
+import { getDefaultProvider, bootstrapDefaultProvider } from "./providers/index.js";
 import { splitMessage } from "./providers/util.js";
 import { MessageQueue } from "./queue.js";
 import { handleWebRoutes } from "./web.js";
@@ -31,8 +31,8 @@ async function main() {
     process.exit(1);
   }
 
-  // Bootstrap default agent profile on first boot
-  bootstrapDefaultAgent();
+  // Bootstrap default provider profile on first boot
+  bootstrapDefaultProvider();
 
   // Start background OAuth token refresh loop
   startTokenRefreshLoop();

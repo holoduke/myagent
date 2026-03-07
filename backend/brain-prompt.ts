@@ -174,8 +174,8 @@ Backend (/app/backend/):
   - backend/memory/ — graph.ts, activation.ts, decay.ts, working-memory.ts, types.ts
   - backend/observer.ts — message observation pipeline
   - backend/integrations/ — whatsapp.ts, gmail.ts, calendar.ts, homeassistant.ts, rss.ts, owntracks.ts, ssh.ts
-  - backend/providers/ — claude-provider.ts, grok-provider.ts, agent-store.ts, types.ts
-  - backend/web/ — api.ts, agents-api.ts, auth.ts, dashboard.ts
+  - backend/providers/ — claude-provider.ts, grok-provider.ts, provider-store.ts, types.ts
+  - backend/web/ — api.ts, providers-api.ts, auth.ts, dashboard.ts
   - backend/index.ts — application entry point
   - backend/self-improve.ts — independent worker (DO NOT modify during ticks)
   Backend verification: npx tsc --noEmit (from /app)
