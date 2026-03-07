@@ -1,6 +1,7 @@
 import type { MemoryGraph } from "./memory/graph.js";
 import type { WorkingMemory, BrainState } from "./memory/types.js";
 import { GoalTracker } from "./goals.js";
+import { getBrainConfig, getOwnerLocalDate } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("initiative");
@@ -100,7 +101,8 @@ export function detectInitiativeSignals(
 const MAX_INITIATIVE_THINKS_PER_DAY = 3;
 
 export function canTriggerInitiativeThink(state: BrainState): boolean {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getOwnerLocalDate(getBrainConfig().ownerTimezone);
+
   if (state.initiativeBudgetDate !== today) {
     state.initiativeBudgetDate = today;
     state.initiativeThinksToday = 0;

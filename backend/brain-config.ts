@@ -249,6 +249,21 @@ export function getOwnerLocalTime(timezone: string, now: Date = new Date()): { h
   }
 }
 
+/** Get current date as 'YYYY-MM-DD' in the owner's configured timezone. */
+export function getOwnerLocalDate(timezone: string, now: Date = new Date()): string {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    return fmt.format(now); // en-CA locale produces YYYY-MM-DD
+  } catch {
+    return now.toISOString().slice(0, 10);
+  }
+}
+
 export function getActivePreset(config: BrainConfig): string | null {
   if (config.preset) return config.preset;
 

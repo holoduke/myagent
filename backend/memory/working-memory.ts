@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import type { WorkingMemory, PendingFollowUp, ConversationThread, TemporalContext } from "./types.js";
 import type { Observation } from "../observer.js";
-import { getBrainConfig, getOwnerLocalTime } from "../brain-config.js";
+import { getBrainConfig, getOwnerLocalTime, getOwnerLocalDate } from "../brain-config.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("working-memory");
@@ -126,7 +126,7 @@ export function populateTemporalContext(wm: WorkingMemory): void {
     dayOfWeek: dayNames[day],
     timeOfDay,
     hour,
-    date: now.toISOString().slice(0, 10),
+    date: getOwnerLocalDate(getBrainConfig().ownerTimezone, now),
     isWeekend: day === 0 || day === 6,
     upcomingEvents: wm.temporal?.upcomingEvents || [],
   };
