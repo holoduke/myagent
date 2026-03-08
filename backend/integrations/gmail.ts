@@ -315,7 +315,7 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
 
         // Record as observation
         const bodyPreview = body.length > MAX_BODY_LENGTH
-          ? body.slice(0, MAX_BODY_LENGTH) + "..."
+          ? body.slice(0, MAX_BODY_LENGTH) + "... [truncated — full email in Gmail]"
           : body;
 
         recordObservation({
