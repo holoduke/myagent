@@ -969,6 +969,16 @@ async function thinkTick(
     .filter(d => d.source === "chat" || d.source === "email")
     .map(d => ({ jid: d.jid, messageSnippet: d.messageSnippet, timestamp: d.timestamp }));
 
+  // Gather self-improvement stats for think tick proposals
+  const improveQueueThink = loadQueue();
+  const selfImproveStatsThink = cfg.selfImproveEnabled ? {
+    enabled: true,
+    maxPerWeek: cfg.selfImproveMaxPerWeek,
+    completedThisWeek: getWeeklyCompletedCount(),
+    pendingInQueue: improveQueueThink.items.filter(i => i.status === "pending" || i.status === "approved").length,
+    autoApprove: cfg.selfImproveAutoApprove,
+  } : undefined;
+
   const prompt = buildThinkPrompt({
     ownerName: OWNER_NAME,
     githubRepo: GITHUB_REPO,
@@ -986,6 +996,7 @@ async function thinkTick(
     initiativeSignals,
     responsivenessPreset: getActivePreset(cfg),
     recentChatDeliveries,
+    selfImproveStats: selfImproveStatsThink,
   });
 
   try {

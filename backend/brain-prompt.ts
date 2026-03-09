@@ -397,6 +397,13 @@ export interface ThinkContext {
   initiativeSignals?: InitiativeSignal[];
   responsivenessPreset?: string | null;
   recentChatDeliveries?: RecentChatDelivery[];
+  selfImproveStats?: {
+    enabled: boolean;
+    maxPerWeek: number;
+    completedThisWeek: number;
+    pendingInQueue: number;
+    autoApprove: boolean;
+  };
 }
 
 export function buildThinkPrompt(ctx: ThinkContext): string {
@@ -455,7 +462,8 @@ Respond with ONLY a JSON object:
     "pendingFollowUps": [{"id": "fu_8hex", "question": "what to follow up on", "targetPerson": "name or omit", "context": "why", "createdAt": ${Date.now()}, "dueAt": null}],
     "conversationThreads": []
   },
-  "goalOps": [/* optional goal operations */]
+  "goalOps": [/* optional goal operations */],
+  "improvementProposals": [/* optional — see self-improvement section below */]
 }
 
 THINKING GUIDELINES:
@@ -473,6 +481,10 @@ THINKING GUIDELINES:
 - Your message (if any) should sound like YOU — a thought from a friend who's been paying attention.
 - ${isQuiet ? "QUIET HOURS — set message to null, no exceptions." : `Min 2h between messages (last was ${timeAgo(ctx.lastMessageTime)}).`}
 - Max ${ctx.maxMessagesPerDay} messages/day (sent ${ctx.messagesToday} today).
+${ctx.selfImproveStats?.enabled ? `
+SELF-IMPROVEMENT (optional during think ticks):
+Budget: ${ctx.selfImproveStats.completedThisWeek}/${ctx.selfImproveStats.maxPerWeek} used this week. Pending: ${ctx.selfImproveStats.pendingInQueue}.
+If you notice a bug, edge case, or improvement opportunity while processing observations, you can propose it via "improvementProposals" in your response. Same format as reflect ticks: description, rationale, files, memoryContext. Keep your primary focus on observations — improvements are a bonus here.` : ""}
 
 Respond with ONLY the JSON object.`;
 }
