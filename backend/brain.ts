@@ -13,7 +13,7 @@ import { isWhatsAppConnected } from "./integrations/whatsapp.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { MAX_NODES_SOFT } from "./memory/types.js";
 import { runConsolidation } from "./memory/decay.js";
-import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory, populateTemporalContext, updateConversationThreads } from "./memory/working-memory.js";
+import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory, populateTemporalContext, updateConversationThreads, scanFollowUpsForResolution } from "./memory/working-memory.js";
 import {
   selectContextForThink,
   selectContextForConsolidate,
@@ -835,9 +835,13 @@ function observeTick(state: BrainState, observations: Observation[]): void {
     }
   }
 
-  // Update conversation threads in working memory
+  // Update conversation threads and scan follow-ups for auto-resolution
   const wm = loadWorkingMemory();
   updateConversationThreads(wm, observations);
+  const resolved = scanFollowUpsForResolution(wm, observations);
+  if (resolved > 0) {
+    log(`Observe: marked ${resolved} follow-up(s) as potentially resolved`);
+  }
   saveWorkingMemory(wm);
 
   state.lastObservationTime = Date.now();

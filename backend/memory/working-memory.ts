@@ -109,6 +109,69 @@ export function cleanupWorkingMemory(wm: WorkingMemory): { trackingTrimmed: numb
   return { trackingTrimmed, followUpsPruned };
 }
 
+// ── Follow-Up Auto-Resolution Detection ──
+
+/**
+ * Scan outgoing observations for keyword overlap with pending follow-ups.
+ * If a follow-up mentions a person name or topic keyword that appears in
+ * a new outgoing message from the owner, mark it as potentially resolved.
+ */
+export function scanFollowUpsForResolution(wm: WorkingMemory, observations: Observation[]): number {
+  if (!wm.pendingFollowUps || wm.pendingFollowUps.length === 0) return 0;
+
+  // Only consider outgoing messages (isFromMe) — these indicate the owner acted
+  const outgoing = observations.filter(obs => obs.isFromMe && obs.text.length > 0);
+  if (outgoing.length === 0) return 0;
+
+  const now = Date.now();
+  let marked = 0;
+
+  for (const fu of wm.pendingFollowUps) {
+    if (fu.potentiallyResolved) continue;
+
+    // Build keyword set from the follow-up question + context + targetPerson
+    const keywords = extractKeywords(fu.question + " " + fu.context + " " + (fu.targetPerson || ""));
+    if (keywords.length === 0) continue;
+
+    // Check if any outgoing message has keyword overlap
+    for (const obs of outgoing) {
+      const obsText = obs.text.toLowerCase();
+      const senderMatch = fu.targetPerson && obs.chatName
+        ? obs.chatName.toLowerCase().includes(fu.targetPerson.toLowerCase()) ||
+          (obs.sender && obs.sender.toLowerCase().includes(fu.targetPerson.toLowerCase()))
+        : false;
+
+      const keywordHits = keywords.filter(kw => obsText.includes(kw));
+      // Require either a person match + 1 keyword, or 2+ keyword hits
+      if ((senderMatch && keywordHits.length >= 1) || keywordHits.length >= 2) {
+        fu.potentiallyResolved = true;
+        fu.potentiallyResolvedAt = now;
+        marked++;
+        break;
+      }
+    }
+  }
+
+  return marked;
+}
+
+/** Extract meaningful lowercase keywords (3+ chars, no stop words) from text */
+function extractKeywords(text: string): string[] {
+  const stopWords = new Set([
+    "the", "and", "for", "are", "but", "not", "you", "all", "can", "had",
+    "her", "was", "one", "our", "out", "has", "have", "been", "will", "with",
+    "this", "that", "from", "they", "what", "about", "would", "there", "their",
+    "which", "could", "other", "into", "more", "some", "than", "them", "very",
+    "when", "come", "just", "know", "take", "does", "should", "follow",
+  ]);
+  return [...new Set(
+    text.toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter(w => w.length >= 3 && !stopWords.has(w))
+  )];
+}
+
 // ── Temporal Context ──
 
 export function populateTemporalContext(wm: WorkingMemory): void {

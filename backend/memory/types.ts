@@ -60,6 +60,8 @@ export interface PendingFollowUp {
   context: string;
   createdAt: number;
   dueAt?: number;
+  potentiallyResolved?: boolean;
+  potentiallyResolvedAt?: number;
 }
 
 export interface ConversationThread {
