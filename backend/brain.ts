@@ -966,7 +966,7 @@ async function thinkTick(
   // Gather recent chat-sourced deliveries for dedup context
   const DEDUP_WINDOW_MS = 30 * 60 * 1000;
   const recentChatDeliveries = getRecentDeliveries(DEDUP_WINDOW_MS)
-    .filter(d => d.source === "chat")
+    .filter(d => d.source === "chat" || d.source === "email")
     .map(d => ({ jid: d.jid, messageSnippet: d.messageSnippet, timestamp: d.timestamp }));
 
   const prompt = buildThinkPrompt({

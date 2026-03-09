@@ -3,6 +3,7 @@ import { OAuth2Client } from "google-auth-library";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { recordObservation } from "../observer.js";
 import { isIntegrationEnabled } from "./integration-config.js";
+import { logDelivery } from "../scheduler.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("gmail");
@@ -400,6 +401,7 @@ export async function sendEmail(
       requestBody: { raw },
     });
     log(`Email sent from ${account.id} to ${to}: "${subject}"`);
+    logDelivery(to, "email", `[EMAIL to ${to}] Subject: ${subject}`);
     return { success: true };
   } catch (err: any) {
     const errMsg = err.message || String(err);
