@@ -8,7 +8,7 @@ import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./
 import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState, GoalOperation } from "./memory/types.js";
-import { getDueMessages, markDelivered, markFailed, logDelivery, getRecentDeliveries } from "./scheduler.js";
+import { getDueMessages, getScheduledMessages, markDelivered, markFailed, logDelivery, getRecentDeliveries } from "./scheduler.js";
 import { isWhatsAppConnected } from "./integrations/whatsapp.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { MAX_NODES_SOFT } from "./memory/types.js";
@@ -1358,7 +1358,7 @@ async function deliverScheduledMessages(
   // Check WhatsApp connection before attempting any deliveries.
   // If not connected (e.g. during startup race), messages stay in schedule for next tick.
   if (!isWhatsAppConnected()) {
-    const dueCount = getDueMessages().length;
+    const dueCount = getScheduledMessages().filter(m => m.deliverAt <= Date.now()).length;
     if (dueCount > 0) {
       log(`Skipping ${dueCount} scheduled message(s): WhatsApp not connected (will retry next tick)`);
     }
