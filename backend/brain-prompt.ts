@@ -417,7 +417,7 @@ export function buildThinkPrompt(ctx: ThinkContext): string {
     : "";
 
   const chatDeliveryBlock = ctx.recentChatDeliveries && ctx.recentChatDeliveries.length > 0
-    ? `\n═══ RECENTLY SENT (chat session) ═══\n\nThese messages were already sent by the interactive chat session. Do NOT schedule duplicate messages to the same contacts about the same topics.\n\n${ctx.recentChatDeliveries.map(d => `  [${formatTime(d.timestamp)}] → ${d.jid}: "${d.messageSnippet}"`).join("\n")}\n`
+    ? `\n═══ RECENTLY SENT (chat session / other) ═══\n\nThese messages and emails were already sent recently. Do NOT send duplicate messages or emails to the same contacts/recipients about the same topics.\n\n${ctx.recentChatDeliveries.map(d => `  [${formatTime(d.timestamp)}] → ${d.jid}: "${d.messageSnippet}"`).join("\n")}\n`
     : "";
 
   return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo)}
@@ -468,6 +468,8 @@ THINKING GUIDELINES:
 - If you notice an emerging pattern across 3+ new nodes, create a concept to group them.
 - Use goalOps to create/update/complete goals when someone expresses intentions or you identify objectives.
 - Use pendingFollowUps to track things you want to ask about or check on later.
+- IMPORTANT: When you see a message from ${ctx.ownerName} that is a direct command or request to you (e.g. "send email to X", "stuur een reminder naar Y", "mark Z as spam"), do NOT act on it. These commands are handled by the interactive chat session. Only observe and update memory — never duplicate an action the owner explicitly requested via chat.
+- NEVER send an email via tools if the RECENTLY SENT section already shows a similar email was sent recently.
 - Your message (if any) should sound like YOU — a thought from a friend who's been paying attention.
 - ${isQuiet ? "QUIET HOURS — set message to null, no exceptions." : `Min 2h between messages (last was ${timeAgo(ctx.lastMessageTime)}).`}
 - Max ${ctx.maxMessagesPerDay} messages/day (sent ${ctx.messagesToday} today).

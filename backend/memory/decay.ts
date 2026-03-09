@@ -138,10 +138,21 @@ export function applyEdgeDecay(graph: MemoryGraph): { decayed: number; pruned: n
       continue;
     }
 
+    // Protect edges between pinned nodes from decay
+    const bothPinned = fromNode.pinned && toNode.pinned;
+    const onePinned = fromNode.pinned || toNode.pinned;
+
+    if (bothPinned) {
+      // Both endpoints pinned — skip decay entirely (core memory link)
+      continue;
+    }
+
     // Edge weight drifts toward the weaker endpoint
     const minStrength = Math.min(fromNode.strength, toNode.strength);
     if (edge.weight > minStrength) {
-      edge.weight = edge.weight * 0.95 + minStrength * 0.05;
+      // One pinned endpoint — decay at 50% rate to preserve important connections
+      const rate = onePinned ? 0.025 : 0.05;
+      edge.weight = edge.weight * (1 - rate) + minStrength * rate;
       decayed++;
     }
 
