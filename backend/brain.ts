@@ -25,7 +25,7 @@ import { getDueRecurringTasks, markExecuted } from "./recurring.js";
 import type { RecurringTask } from "./recurring.js";
 import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
 import { ensureSSHKey } from "./integrations/ssh.js";
-import { getBrainConfig, getActivePreset, getOwnerLocalTime } from "./brain-config.js";
+import { getBrainConfig, getActivePreset, getOwnerLocalTime, getOwnerLocalDate } from "./brain-config.js";
 import {
   loadQueue,
   enqueue,
@@ -124,9 +124,6 @@ function saveState(state: BrainState): void {
   }
 }
 
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function parseBrainResponse(raw: string): BrainResponse | null {
   try {
@@ -632,7 +629,7 @@ async function tick(
   const cfg = getBrainConfig();
   const state = loadState();
   const now = Date.now();
-  const today = todayStr();
+  const today = getOwnerLocalDate(cfg.ownerTimezone);
 
   // ── Pick up self-improve results from worker ──
   pickUpImproveResult(state);
