@@ -168,16 +168,22 @@ export function deleteSubAgent(id: string): boolean {
 
 // ── Scheduling ──
 
-const MIN_RUN_INTERVAL = 50 * 60 * 1000; // 50 minutes
-
 export function isDue(agent: SubAgentConfig, now: Date): boolean {
   if (!agent.enabled) return false;
   if (isRunning(agent.id)) return false;
-  if (agent.lastRunAt > 0 && (now.getTime() - agent.lastRunAt) < MIN_RUN_INTERVAL) return false;
 
-  const { hour: currentHour, dayOfWeek: currentDay } = getOwnerLocalTime(getBrainConfig().ownerTimezone, now);
+  const tz = getBrainConfig().ownerTimezone;
+  const { hour: currentHour, dayOfWeek: currentDay } = getOwnerLocalTime(tz, now);
   if (!agent.schedule.hours.includes(currentHour)) return false;
   if (agent.schedule.daysOfWeek && !agent.schedule.daysOfWeek.includes(currentDay)) return false;
+
+  // Already ran during this scheduled hour — don't run again
+  if (agent.lastRunAt > 0) {
+    const { hour: lastRunHour, dayOfWeek: lastRunDay } = getOwnerLocalTime(tz, new Date(agent.lastRunAt));
+    const lastRunDate = new Date(agent.lastRunAt).toLocaleDateString("en-CA", { timeZone: tz });
+    const nowDate = now.toLocaleDateString("en-CA", { timeZone: tz });
+    if (nowDate === lastRunDate && lastRunHour === currentHour) return false;
+  }
 
   return true;
 }
