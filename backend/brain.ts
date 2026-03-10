@@ -294,6 +294,8 @@ function pickUpImproveResult(state: BrainState): void {
     state.pendingSelfMod = false;
     saveState(state);
     unlinkSync(IMPROVE_RESULT_FILE);
+    // Belt-and-suspenders: also delete task file to prevent respawn race condition
+    try { if (existsSync(IMPROVE_TASK_FILE)) unlinkSync(IMPROVE_TASK_FILE); } catch {}
   } catch (err) {
     log(`Failed to process improve result: ${err}`);
   }
