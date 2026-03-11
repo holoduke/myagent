@@ -90,14 +90,11 @@ export function recordObservation(obs: Observation): void {
     if (recentObservationKeys.has(key)) return; // deduplicated
 
     recentObservationKeys.add(key);
-    // Prevent unbounded growth of dedup set
+    // Prevent unbounded growth of dedup set — keep newest entries
     if (recentObservationKeys.size > MAX_DEDUP_ENTRIES) {
-      const it = recentObservationKeys.values();
-      for (let i = 0; i < 100; i++) it.next();
-      // Clear oldest ~100 entries by rebuilding
-      const entries = [...recentObservationKeys];
+      const keep = [...recentObservationKeys].slice(-MAX_DEDUP_ENTRIES + 100);
       recentObservationKeys.clear();
-      for (const e of entries.slice(100)) recentObservationKeys.add(e);
+      for (const e of keep) recentObservationKeys.add(e);
     }
 
     ensureBrainDir();
