@@ -685,6 +685,62 @@ async function handleSubAgentUpdate(req: IncomingMessage, res: ServerResponse, i
 }
 
 // ── Dashboard composite data ──
+// ── Moltbook status (cached, refreshed in background) ──
+const MOLTBOOK_CREDS = "/data/moltbook/credentials.json";
+const MOLTBOOK_CACHE_MS = 5 * 60 * 1000; // 5 min
+let moltbookCache: {
+  enabled: boolean; name: string; profileUrl: string;
+  karma: number; followers: number; postCount: number; lastActive: string | null;
+} = { enabled: false, name: "", profileUrl: "", karma: 0, followers: 0, postCount: 0, lastActive: null };
+let moltbookLastFetch = 0;
+
+function getMoltbookStatus() {
+  if (!existsSync(MOLTBOOK_CREDS)) return { ...moltbookCache, enabled: false };
+
+  // Return cache if fresh
+  if (Date.now() - moltbookLastFetch < MOLTBOOK_CACHE_MS && moltbookCache.enabled) return moltbookCache;
+
+  // Refresh in background (non-blocking)
+  try {
+    const creds = JSON.parse(readFileSync(MOLTBOOK_CREDS, "utf-8"));
+    const apiKey = creds.api_key;
+    if (!apiKey) return { ...moltbookCache, enabled: false };
+
+    // Immediately return what we know from creds
+    moltbookCache = {
+      enabled: true,
+      name: creds.name || "aria-agent",
+      profileUrl: creds.profile_url || `https://www.moltbook.com/u/${creds.name}`,
+      karma: moltbookCache.karma,
+      followers: moltbookCache.followers,
+      postCount: moltbookCache.postCount,
+      lastActive: moltbookCache.lastActive,
+    };
+
+    // Background fetch from moltbook API
+    fetch("https://www.moltbook.com/api/v1/agents/status", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+      .then(r => r.json())
+      .then((data: Record<string, unknown>) => {
+        const agent = (data.agent || {}) as Record<string, unknown>;
+        moltbookCache = {
+          enabled: true,
+          name: (agent.name as string) || creds.name || "aria-agent",
+          profileUrl: creds.profile_url || `https://www.moltbook.com/u/${agent.name || creds.name}`,
+          karma: (agent.karma as number) || 0,
+          followers: (agent.followerCount as number) || 0,
+          postCount: (agent.postCount as number) || 0,
+          lastActive: (agent.lastActive as string) || null,
+        };
+        moltbookLastFetch = Date.now();
+      })
+      .catch(() => { /* silent */ });
+  } catch { /* silent */ }
+
+  return moltbookCache;
+}
+
 function getDashboardData(queue: MessageQueue) {
   const status = getAriaStatus();
   const waStatus = getWhatsAppStatus();
@@ -713,6 +769,7 @@ function getDashboardData(queue: MessageQueue) {
     rss: getRSSStatus(),
     owntracks: getOwnTracksStatus(),
     twilio: getTwilioStatus(),
+    moltbook: getMoltbookStatus(),
     whitelistCount: whitelist.length,
     scheduledCount: scheduled.length,
     queueDepth: queue.size,
