@@ -105,18 +105,27 @@ export function getScheduledMessages(): ScheduledMessage[] {
  * Does NOT remove messages from the schedule — caller must use markDelivered()
  * after successful delivery to avoid data loss on send failure.
  */
-// In-flight message IDs: prevents duplicate delivery when poll overlaps with markDelivered write-back
-const inFlightIds = new Set<string>();
+// In-flight message IDs with timestamps: prevents duplicate delivery and enables timeout cleanup
+const inFlightIds = new Map<string, number>();
+const IN_FLIGHT_TIMEOUT_MS = 6 * 60 * 1000; // 5min send timeout + 1min buffer
 
 export function getDueMessages(): ScheduledMessage[] {
   const schedule = loadSchedule();
   const now = Date.now();
 
+  // Sweep stale in-flight IDs so stuck messages can be retried
+  for (const [id, startedAt] of inFlightIds) {
+    if (now - startedAt > IN_FLIGHT_TIMEOUT_MS) {
+      log(`In-flight timeout: releasing stuck message ${id} (in-flight for ${Math.round((now - startedAt) / 1000)}s)`);
+      inFlightIds.delete(id);
+    }
+  }
+
   const due = schedule.filter(m => m.deliverAt <= now && !inFlightIds.has(m.id));
   if (due.length === 0) return [];
 
   // Mark as in-flight immediately so no other poll picks them up
-  for (const m of due) inFlightIds.add(m.id);
+  for (const m of due) inFlightIds.set(m.id, now);
 
   log(`${due.length} message(s) due for delivery`);
   return due;
