@@ -438,7 +438,7 @@ function pickUpSubAgentResults(): void {
       }
     } else {
       // Check for stale workers
-      const elapsed = Date.now() - info.startedAt;
+      const elapsed = Math.max(0, Date.now() - info.startedAt);
       if (elapsed > SUB_AGENT_STALE_TIMEOUT) {
         log(`Sub-agent worker stale for ${agentId} (${Math.round(elapsed / 60000)}m) — clearing`);
         addRunToHistory({
