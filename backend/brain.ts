@@ -192,7 +192,9 @@ export function getBrainHealth(): { healthy: boolean; consecutiveFailures: numbe
 function resetBootCounter(): void {
   try {
     writeFileSync(BOOT_COUNTER_FILE, "0");
-  } catch {}
+  } catch (err) {
+    log(`Failed to reset boot counter: ${err}`);
+  }
 }
 
 function saveLastGoodCommit(): void {
@@ -202,14 +204,18 @@ function saveLastGoodCommit(): void {
       writeFileSync(LAST_GOOD_COMMIT_FILE, hash);
       log(`Saved last good commit: ${hash}`);
     }
-  } catch {}
+  } catch (err) {
+    log(`Failed to save last good commit: ${err}`);
+  }
 }
 
 function checkSelfMod(): string | null {
   try {
     const status = execSync("git -C /app status --porcelain backend/", { timeout: 5000, stdio: "pipe" }).toString().trim();
     if (status) return status;
-  } catch {}
+  } catch (err) {
+    log(`Failed to check self-mod git status: ${err}`);
+  }
   return null;
 }
 
@@ -243,7 +249,9 @@ function pickUpImproveResult(state: BrainState): void {
       if (existsSync(QUEUED_MARKER_FILE)) {
         queueItemId = readFileSync(QUEUED_MARKER_FILE, "utf-8").trim();
       }
-    } catch {}
+    } catch (err) {
+      log(`Failed to read queued marker file: ${err}`);
+    }
 
     if (!queueItemId) {
       // Fallback: find the single running item
@@ -268,7 +276,7 @@ function pickUpImproveResult(state: BrainState): void {
     }
 
     // Clean up marker file
-    try { if (existsSync(QUEUED_MARKER_FILE)) unlinkSync(QUEUED_MARKER_FILE); } catch {}
+    try { if (existsSync(QUEUED_MARKER_FILE)) unlinkSync(QUEUED_MARKER_FILE); } catch (err) { log(`Failed to clean up queued marker file: ${err}`); }
 
     // Create meta node from result
     if (result.metaNodeContent) {
@@ -292,7 +300,7 @@ function pickUpImproveResult(state: BrainState): void {
     saveState(state);
     unlinkSync(IMPROVE_RESULT_FILE);
     // Belt-and-suspenders: also delete task file to prevent respawn race condition
-    try { if (existsSync(IMPROVE_TASK_FILE)) unlinkSync(IMPROVE_TASK_FILE); } catch {}
+    try { if (existsSync(IMPROVE_TASK_FILE)) unlinkSync(IMPROVE_TASK_FILE); } catch (err) { log(`Failed to clean up improve task file: ${err}`); }
   } catch (err) {
     log(`Failed to process improve result: ${err}`);
   }
@@ -365,7 +373,7 @@ function checkAndSpawnImproveWorker(state: BrainState): void {
       const queue = loadQueue();
       for (const item of queue.items) {
         if (item.status === "pending") {
-          try { approveItem(item.id); } catch {}
+          try { approveItem(item.id); } catch (err) { log(`Failed to auto-approve queue item ${item.id}: ${err}`); }
         }
       }
     }
@@ -426,7 +434,7 @@ function pickUpSubAgentResults(): void {
       } catch (err) {
         log(`Failed to read sub-agent result for ${agentId}: ${err}`);
         clearRunning(agentId);
-        try { unlinkSync(resFile); } catch {}
+        try { unlinkSync(resFile); } catch (cleanupErr) { log(`Failed to clean up sub-agent result file ${resFile}: ${cleanupErr}`); }
       }
     } else {
       // Check for stale workers
@@ -446,7 +454,7 @@ function pickUpSubAgentResults(): void {
         clearRunning(agentId);
         // Clean up task file if still present
         const taskFile = taskFilePath(agentId);
-        try { if (existsSync(taskFile)) unlinkSync(taskFile); } catch {}
+        try { if (existsSync(taskFile)) unlinkSync(taskFile); } catch (err) { log(`Failed to clean up stale task file ${taskFile}: ${err}`); }
       }
     }
   }
@@ -494,7 +502,9 @@ function writeSelfModMarker(changes: string): void {
       detectedAt: Date.now(),
       changes,
     }));
-  } catch {}
+  } catch (err) {
+    log(`Failed to write self-mod detection marker: ${err}`);
+  }
 }
 
 // ── Identity Bootstrap ──
@@ -1454,7 +1464,7 @@ async function deliverScheduledMessages(
     }
   } catch (err) {
     log(`Error processing legacy pending message: ${err}`);
-    try { unlinkSync(pendingPath); } catch {}
+    try { unlinkSync(pendingPath); } catch (cleanupErr) { log(`Failed to clean up legacy pending message file: ${cleanupErr}`); }
   }
 
   if (dueMessages.length > 0) saveState(state);
