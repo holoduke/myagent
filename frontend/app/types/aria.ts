@@ -155,6 +155,16 @@ export interface TwilioStatus {
   } | null
 }
 
+export interface MoltbookStatus {
+  enabled: boolean
+  name: string
+  profileUrl: string
+  karma: number
+  followers: number
+  postCount: number
+  lastActive: string | null
+}
+
 export interface DashboardData {
   brainState: BrainState
   workingMemory: WorkingMemory
@@ -169,6 +179,7 @@ export interface DashboardData {
   rss: RSSStatus
   owntracks: OwnTracksStatus
   twilio: TwilioStatus
+  moltbook: MoltbookStatus
   whitelistCount: number
   scheduledCount: number
   queueDepth: number

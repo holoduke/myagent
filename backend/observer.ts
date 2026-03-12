@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, openSync, fstatSync, readSync, closeSync } from "fs";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("observer");
@@ -90,14 +90,11 @@ export function recordObservation(obs: Observation): void {
     if (recentObservationKeys.has(key)) return; // deduplicated
 
     recentObservationKeys.add(key);
-    // Prevent unbounded growth of dedup set
+    // Prevent unbounded growth of dedup set — keep newest entries
     if (recentObservationKeys.size > MAX_DEDUP_ENTRIES) {
-      const it = recentObservationKeys.values();
-      for (let i = 0; i < 100; i++) it.next();
-      // Clear oldest ~100 entries by rebuilding
-      const entries = [...recentObservationKeys];
+      const keep = [...recentObservationKeys].slice(-MAX_DEDUP_ENTRIES + 100);
       recentObservationKeys.clear();
-      for (const e of entries.slice(100)) recentObservationKeys.add(e);
+      for (const e of keep) recentObservationKeys.add(e);
     }
 
     ensureBrainDir();
@@ -107,9 +104,65 @@ export function recordObservation(obs: Observation): void {
   }
 }
 
-export function getObservationsSince(since: number, filter?: ObservationFilter): Observation[] {
+/** Size of chunks read from the tail of the file (256 KB). */
+const TAIL_CHUNK_SIZE = 256 * 1024;
+/** Threshold: if 'since' is within this window, use tail-read optimisation. */
+const TAIL_READ_WINDOW_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+function matchesFilter(obs: Observation, filter: ObservationFilter): boolean {
+  if (filter.sender !== undefined && !obs.sender.toLowerCase().includes(filter.sender.toLowerCase())) return false;
+  if (filter.source !== undefined && obs.source !== filter.source) return false;
+  if (filter.isGroup !== undefined && obs.isGroup !== filter.isGroup) return false;
+  if (filter.isFromMe !== undefined && obs.isFromMe !== filter.isFromMe) return false;
+  if (filter.textContains !== undefined && !obs.text.toLowerCase().includes(filter.textContains.toLowerCase())) return false;
+  return true;
+}
+
+/**
+ * Read lines from the tail of a file in reverse-chronological chunks.
+ * Yields arrays of lines (oldest-first within each chunk) starting from the end.
+ */
+function* readTailChunks(filePath: string): Generator<string[]> {
+  const fd = openSync(filePath, "r");
+  try {
+    const stat = fstatSync(fd);
+    let remaining = stat.size;
+    let leftover = ""; // partial line carried from previous chunk
+
+    while (remaining > 0) {
+      const chunkSize = Math.min(TAIL_CHUNK_SIZE, remaining);
+      const offset = remaining - chunkSize;
+      const buf = Buffer.alloc(chunkSize);
+      readSync(fd, buf, 0, chunkSize, offset);
+      remaining = offset;
+
+      const text = buf.toString("utf-8") + leftover;
+      const lines = text.split("\n");
+
+      // First element may be a partial line if we didn't start at offset 0
+      leftover = remaining > 0 ? (lines.shift() ?? "") : "";
+
+      yield lines;
+    }
+
+    // If there's a leftover partial line from the very beginning of the file
+    if (leftover) yield [leftover];
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export function getObservationsSince(since: number, filter?: ObservationFilter, limit?: number): Observation[] {
   try {
     if (!existsSync(OBS_FILE)) return [];
+
+    const isRecent = (Date.now() - since) < TAIL_READ_WINDOW_MS;
+
+    if (isRecent) {
+      return getObservationsSinceTail(since, filter, limit);
+    }
+
+    // Full-file scan for older queries
     const lines = readFileSync(OBS_FILE, "utf-8").split("\n");
     const results: Observation[] = [];
     for (const line of lines) {
@@ -117,14 +170,9 @@ export function getObservationsSince(since: number, filter?: ObservationFilter):
       try {
         const obs = JSON.parse(line) as Observation;
         if (obs.timestamp <= since) continue;
-        if (filter) {
-          if (filter.sender !== undefined && !obs.sender.toLowerCase().includes(filter.sender.toLowerCase())) continue;
-          if (filter.source !== undefined && obs.source !== filter.source) continue;
-          if (filter.isGroup !== undefined && obs.isGroup !== filter.isGroup) continue;
-          if (filter.isFromMe !== undefined && obs.isFromMe !== filter.isFromMe) continue;
-          if (filter.textContains !== undefined && !obs.text.toLowerCase().includes(filter.textContains.toLowerCase())) continue;
-        }
+        if (filter && !matchesFilter(obs, filter)) continue;
         results.push(obs);
+        if (limit !== undefined && results.length >= limit) break;
       } catch {
         // Skip corrupted lines
       }
@@ -136,24 +184,51 @@ export function getObservationsSince(since: number, filter?: ObservationFilter):
   }
 }
 
-export function getObservationCount(since: number): number {
-  try {
-    if (!existsSync(OBS_FILE)) return 0;
-    const lines = readFileSync(OBS_FILE, "utf-8").split("\n");
-    let count = 0;
-    for (const line of lines) {
+/**
+ * Tail-optimised reader: reads chunks from the end of the file, collects
+ * matching observations, and stops as soon as it encounters a line older
+ * than `since` (since the file is chronologically ordered).
+ */
+function getObservationsSinceTail(since: number, filter?: ObservationFilter, limit?: number): Observation[] {
+  const results: Observation[] = [];
+  let done = false;
+
+  for (const chunkLines of readTailChunks(OBS_FILE)) {
+    const chunkResults: Observation[] = [];
+    let foundOlder = false;
+    for (const line of chunkLines) {
       if (!line.trim()) continue;
       try {
         const obs = JSON.parse(line) as Observation;
-        if (obs.timestamp > since) count++;
+        if (obs.timestamp <= since) {
+          foundOlder = true;
+          continue;
+        }
+        if (filter && !matchesFilter(obs, filter)) continue;
+        chunkResults.push(obs);
       } catch {
         // Skip corrupted lines
       }
     }
-    return count;
-  } catch {
-    return 0;
+
+    // Prepend chunk results (since we're reading from the end)
+    if (chunkResults.length > 0) {
+      results.unshift(...chunkResults);
+    }
+
+    // If this chunk contained any line older than `since`, we've read far enough
+    if (foundOlder) break;
   }
+
+  // Apply limit (return the most recent N if limit is set)
+  if (limit !== undefined && results.length > limit) {
+    return results.slice(results.length - limit);
+  }
+  return results;
+}
+
+export function getObservationCount(since: number): number {
+  return getObservationsSince(since).length;
 }
 
 export function pruneObservations(days?: number): void {

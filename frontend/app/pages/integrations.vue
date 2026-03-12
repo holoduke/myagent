@@ -86,6 +86,10 @@
       <UiModal :open="activeModal === 'twilio'" title="Twilio Voice" max-width="640px" @close="activeModal = null">
         <IntegrationsTwilioCard :twilio="twilioData" @reload="load" />
       </UiModal>
+
+      <UiModal :open="activeModal === 'moltbook'" title="Moltbook" @close="activeModal = null">
+        <IntegrationsMoltbookCard :moltbook="moltbookData" />
+      </UiModal>
     </template>
 
     <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
@@ -93,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import type { DashboardData, ScheduledMessage, SSHStatus, CalendarStatus, HomeAssistantStatus, RSSStatus, OwnTracksStatus, TwilioStatus } from '~/types/aria'
+import type { DashboardData, ScheduledMessage, SSHStatus, CalendarStatus, HomeAssistantStatus, RSSStatus, OwnTracksStatus, TwilioStatus, MoltbookStatus } from '~/types/aria'
 
 const route = useRoute()
 const router = useRouter()
@@ -135,6 +139,7 @@ const haData = computed<HomeAssistantStatus>(() => dashboard.value?.homeassistan
 const rssData = computed<RSSStatus>(() => dashboard.value?.rss || { feeds: [] })
 const otData = computed<OwnTracksStatus>(() => dashboard.value?.owntracks || { enabled: false, lastLocation: null })
 const twilioData = computed<TwilioStatus>(() => dashboard.value?.twilio || { enabled: false, configured: false, phoneNumber: '', webhookBaseUrl: '', activeCalls: 0, totalCalls: 0, lastCallAt: 0, recentCalls: [], config: null })
+const moltbookData = computed<MoltbookStatus>(() => dashboard.value?.moltbook || { enabled: false, name: '', profileUrl: '', karma: 0, followers: 0, postCount: 0, lastActive: null })
 
 interface IntegrationDef {
   key: string
@@ -237,6 +242,16 @@ const integrations = computed<IntegrationDef[]>(() => [
     statusClass: twilioData.value.configured ? (twilioData.value.activeCalls > 0 ? 'pending' : 'online') : 'offline',
     statusText: twilioData.value.configured ? (twilioData.value.activeCalls > 0 ? `${twilioData.value.activeCalls} active` : 'Ready') : 'Not configured',
     stat: `${twilioData.value.totalCalls} calls`,
+  },
+  {
+    key: 'moltbook',
+    name: 'Moltbook',
+    description: 'AI social network — post, comment, and interact with other agents',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="#F97316" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>',
+    isActive: () => moltbookData.value.enabled,
+    statusClass: moltbookData.value.enabled ? 'online' : 'offline',
+    statusText: moltbookData.value.enabled ? 'Active' : 'Not configured',
+    stat: moltbookData.value.enabled ? `${moltbookData.value.karma} karma` : '',
   },
 ])
 

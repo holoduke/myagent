@@ -79,8 +79,8 @@ export function applyDecay(graph: MemoryGraph): { decayed: number; pruned: numbe
   for (const node of graph.allNodes()) {
     if (node.pinned) continue;
 
-    const hoursSinceAccess = (now - node.lastAccessedAt) / 3600000;
-    if (hoursSinceAccess <= 0) continue;
+    const hoursSinceAccess = Math.max(0, (now - node.lastAccessedAt) / 3600000);
+    if (hoursSinceAccess === 0) continue;
 
     // Classify retention tier
     const tier = classifyRetentionTier(node, graph);
