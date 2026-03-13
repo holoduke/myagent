@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { randomUUID } from "node:crypto";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("scheduler");
@@ -77,7 +78,7 @@ export function scheduleMessage(
   deliverAt: number,
   source: string = "chat",
 ): string {
-  const id = `sched_${Math.random().toString(16).slice(2, 10)}`;
+  const id = `sched_${randomUUID()}`;
   const entry: ScheduledMessage = {
     id,
     targetJid,
@@ -162,7 +163,8 @@ export function markFailed(ids: string[]): string[] {
       if (msg.retryCount > MAX_RETRIES) {
         droppedIds.push(msg.id);
       } else {
-        const backoffMs = BACKOFF_DELAYS_MS[msg.retryCount - 1] || BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1];
+        const baseMs = BACKOFF_DELAYS_MS[msg.retryCount - 1] || BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1];
+        const backoffMs = Math.round(baseMs * (0.75 + Math.random() * 0.5));
         msg.deliverAt = Date.now() + backoffMs;
         log(`Message ${msg.id} retry ${msg.retryCount}/${MAX_RETRIES}, next attempt in ${Math.round(backoffMs / 60000)}min`);
       }
