@@ -69,7 +69,7 @@ export function classifyRetentionTier(node: MemoryNode, graph: MemoryGraph): Ret
  * Nodes with high accessCount decay slower (logarithmic resistance).
  * Retention tier applies a multiplier to the decay rate.
  */
-export function applyDecay(graph: MemoryGraph): { decayed: number; pruned: number } {
+export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, RetentionTier>): { decayed: number; pruned: number } {
   const now = Date.now();
   let decayed = 0;
   let pruned = 0;
@@ -82,8 +82,9 @@ export function applyDecay(graph: MemoryGraph): { decayed: number; pruned: numbe
     const hoursSinceAccess = Math.max(0, (now - node.lastAccessedAt) / 3600000);
     if (hoursSinceAccess === 0) continue;
 
-    // Classify retention tier
-    const tier = classifyRetentionTier(node, graph);
+    // Classify retention tier (populate cache if provided)
+    const tier = tierCache?.get(node.id) ?? classifyRetentionTier(node, graph);
+    if (tierCache) tierCache.set(node.id, tier);
     tierCounts[tier]++;
     const tierMultiplier = RETENTION_MULTIPLIER[tier];
 
@@ -210,13 +211,13 @@ const TIER_SORT_PRIORITY: Record<RetentionTier, number> = {
  * Removes weakest non-pinned nodes, but respects retention tiers:
  * ephemeral nodes are pruned first, then standard, then work, etc.
  */
-export function emergencyPrune(graph: MemoryGraph, softLimit: number): number {
+export function emergencyPrune(graph: MemoryGraph, softLimit: number, tierCache?: Map<string, RetentionTier>): number {
   const count = graph.nodeCount;
   if (count <= MAX_NODES_HARD) return 0;
 
   const nodes = graph.allNodes()
     .filter(n => !n.pinned)
-    .map(n => ({ node: n, tier: classifyRetentionTier(n, graph) }))
+    .map(n => ({ node: n, tier: tierCache?.get(n.id) ?? classifyRetentionTier(n, graph) }))
     .sort((a, b) => {
       // Sort by tier priority descending (ephemeral first), then by strength ascending
       const tierDiff = TIER_SORT_PRIORITY[b.tier] - TIER_SORT_PRIORITY[a.tier];
@@ -247,10 +248,11 @@ export function runConsolidation(graph: MemoryGraph): {
   orphansPruned: number;
   emergencyPruned: number;
 } {
-  const nodeResult = applyDecay(graph);
+  const tierCache = new Map<string, RetentionTier>();
+  const nodeResult = applyDecay(graph, tierCache);
   const edgeResult = applyEdgeDecay(graph);
   const orphansPruned = pruneOrphans(graph);
-  const emergencyPruned = emergencyPrune(graph, 500);
+  const emergencyPruned = emergencyPrune(graph, 500, tierCache);
 
   return {
     nodesDecayed: nodeResult.decayed,
