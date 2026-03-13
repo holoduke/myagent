@@ -832,10 +832,10 @@ function observeTick(state: BrainState, observations: Observation[]): void {
   }
 
   // Reinforce existing person nodes that match senders
+  const personNodes = graph.findByType("person");
   for (const obs of observations) {
     if (!obs.sender) continue;
     const senderLower = obs.sender.toLowerCase();
-    const personNodes = graph.findByType("person");
     for (const node of personNodes) {
       if (node.content.toLowerCase().includes(senderLower) ||
           node.tags.some(t => t.toLowerCase() === senderLower)) {

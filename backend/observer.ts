@@ -74,8 +74,59 @@ export function ensureBrainDir(): void {
   }
 }
 
+const DEDUP_FILE = `${BRAIN_DIR}/observer-dedup.json`;
+const DEDUP_SAVE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
 const recentObservationKeys = new Set<string>();
 const MAX_DEDUP_ENTRIES = 500;
+
+// --- Dedup persistence ---
+
+export function saveDedupSet(): void {
+  try {
+    ensureBrainDir();
+    const data = JSON.stringify([...recentObservationKeys]);
+    const tmp = DEDUP_FILE + ".tmp";
+    writeFileSync(tmp, data, "utf-8");
+    renameSync(tmp, DEDUP_FILE);
+    log(`Saved dedup set (${recentObservationKeys.size} entries)`);
+  } catch (err) {
+    log(`Failed to save dedup set: ${err}`);
+  }
+}
+
+function loadDedupSet(): void {
+  try {
+    if (!existsSync(DEDUP_FILE)) return;
+    const raw = readFileSync(DEDUP_FILE, "utf-8");
+    const keys: unknown = JSON.parse(raw);
+    if (!Array.isArray(keys)) return;
+    recentObservationKeys.clear();
+    // Load only the most recent entries if file has more than max
+    const start = Math.max(0, keys.length - MAX_DEDUP_ENTRIES);
+    for (let i = start; i < keys.length; i++) {
+      if (typeof keys[i] === "string") recentObservationKeys.add(keys[i] as string);
+    }
+    log(`Loaded dedup set (${recentObservationKeys.size} entries from disk)`);
+  } catch (err) {
+    log(`Failed to load dedup set, starting fresh: ${err}`);
+  }
+}
+
+// Load on module init
+loadDedupSet();
+
+// Periodic save
+const _dedupSaveTimer = setInterval(saveDedupSet, DEDUP_SAVE_INTERVAL_MS);
+_dedupSaveTimer.unref(); // Don't block process exit
+
+// Save on shutdown signals
+for (const sig of ["SIGTERM", "SIGINT"] as const) {
+  process.on(sig, () => {
+    log(`Received ${sig}, saving dedup set before exit`);
+    saveDedupSet();
+  });
+}
 
 function getObservationKey(obs: Observation): string {
   if (obs.emailMeta?.messageId) return `email:${obs.emailMeta.messageId}`;

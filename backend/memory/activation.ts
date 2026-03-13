@@ -44,6 +44,16 @@ const STOP_WORDS = new Set([
   "leuk", "prima", "mooi", "fijn", "lekker",
 ]);
 
+/** Extract unique lowercase keywords (3+ chars, no stop words) from plain text */
+export function extractKeywordsFromText(text: string): string[] {
+  return [...new Set(
+    text.toLowerCase()
+      .replace(/[^\p{L}0-9\s'-]/gu, " ")
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !STOP_WORDS.has(w))
+  )];
+}
+
 export function extractKeywords(observations: Observation[]): string[] {
   const freqs = new Map<string, number>();
 

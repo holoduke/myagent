@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "
 import type { WorkingMemory, PendingFollowUp, ConversationThread, TemporalContext } from "./types.js";
 import type { Observation } from "../observer.js";
 import { getBrainConfig, getOwnerLocalTime, getOwnerLocalDate } from "../brain-config.js";
+import { extractKeywordsFromText } from "./activation.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("working-memory");
@@ -155,21 +156,9 @@ export function scanFollowUpsForResolution(wm: WorkingMemory, observations: Obse
   return marked;
 }
 
-/** Extract meaningful lowercase keywords (3+ chars, no stop words) from text */
+/** Extract meaningful lowercase keywords from text — delegates to activation.ts for consistent stop word filtering */
 function extractKeywords(text: string): string[] {
-  const stopWords = new Set([
-    "the", "and", "for", "are", "but", "not", "you", "all", "can", "had",
-    "her", "was", "one", "our", "out", "has", "have", "been", "will", "with",
-    "this", "that", "from", "they", "what", "about", "would", "there", "their",
-    "which", "could", "other", "into", "more", "some", "than", "them", "very",
-    "when", "come", "just", "know", "take", "does", "should", "follow",
-  ]);
-  return [...new Set(
-    text.toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .split(/\s+/)
-      .filter(w => w.length >= 3 && !stopWords.has(w))
-  )];
+  return extractKeywordsFromText(text);
 }
 
 // ── Temporal Context ──

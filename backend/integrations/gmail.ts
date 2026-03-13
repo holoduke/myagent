@@ -270,7 +270,7 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
   // On first run, only get last hour to avoid flooding
   const sinceMs = accountState.lastMessageTimestamp || (Date.now() - 3600000);
   const sinceSeconds = Math.floor(sinceMs / 1000);
-  const query = `after:${sinceSeconds} in:inbox`;
+  const query = `after:${sinceSeconds} in:inbox -in:sent`;
 
   try {
     const listRes = await gmail.users.messages.list({
@@ -287,63 +287,73 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
 
     let newestTimestamp = accountState.lastMessageTimestamp;
 
-    for (const msgRef of messages) {
-      if (!msgRef.id) continue;
+    // Filter to valid message refs
+    const validRefs = messages.filter(m => m.id);
 
-      try {
-        const msgRes = await gmail.users.messages.get({
-          userId: "me",
-          id: msgRef.id,
-          format: "full",
-        });
+    // Process a single message: fetch full content and record observation
+    const processMessage = async (msgRef: gmail_v1.Schema$Message): Promise<void> => {
+      const msgRes = await gmail.users.messages.get({
+        userId: "me",
+        id: msgRef.id!,
+        format: "full",
+      });
 
-        const msg = msgRes.data;
-        const internalDate = Number(msg.internalDate || 0);
+      const msg = msgRes.data;
+      const internalDate = Number(msg.internalDate || 0);
 
-        // Skip messages we've already seen (by timestamp and message ID)
-        if (internalDate <= accountState.lastMessageTimestamp) continue;
-        if (!trackMessageId(msgRef.id)) continue;
+      // Skip messages we've already seen (by timestamp and message ID)
+      if (internalDate < accountState.lastMessageTimestamp) return;
+      if (!trackMessageId(msgRef.id!)) return;
 
-        const headers = msg.payload?.headers;
-        const from = getHeader(headers, "From");
-        const to = getHeader(headers, "To");
-        const subject = getHeader(headers, "Subject");
-        const body = msg.payload ? extractBody(msg.payload) : "";
-        const snippet = msg.snippet || "";
+      const headers = msg.payload?.headers;
+      const from = getHeader(headers, "From");
+      const to = getHeader(headers, "To");
+      const subject = getHeader(headers, "Subject");
+      const body = msg.payload ? extractBody(msg.payload) : "";
+      const snippet = msg.snippet || "";
 
-        // Determine if this is an outgoing email
-        const isFromMe = msg.labelIds?.includes("SENT") || false;
+      // Determine if this is an outgoing email
+      const isFromMe = msg.labelIds?.includes("SENT") || false;
 
-        // Record as observation
-        const bodyPreview = body.length > MAX_BODY_LENGTH
-          ? body.slice(0, MAX_BODY_LENGTH) + "... [truncated — full email in Gmail]"
-          : body;
+      // Record as observation
+      const bodyPreview = body.length > MAX_BODY_LENGTH
+        ? body.slice(0, MAX_BODY_LENGTH) + "... [truncated — full email in Gmail]"
+        : body;
 
-        recordObservation({
-          timestamp: internalDate,
-          sender: from,
-          senderJid: `gmail:${account.id}`,
-          isGroup: false,
-          isFromMe,
-          text: `[EMAIL] Subject: ${subject}\n\n${bodyPreview || snippet}`,
-          source: "gmail",
-          emailMeta: {
-            from,
-            to,
-            subject,
-            accountId: account.id,
-            accountEmail: account.email,
-            messageId: msgRef.id,
-          },
-        });
+      recordObservation({
+        timestamp: internalDate,
+        sender: from,
+        senderJid: `gmail:${account.id}`,
+        isGroup: false,
+        isFromMe,
+        text: `[EMAIL] Subject: ${subject}\n\n${bodyPreview || snippet}`,
+        source: "gmail",
+        emailMeta: {
+          from,
+          to,
+          subject,
+          accountId: account.id,
+          accountEmail: account.email,
+          messageId: msgRef.id!,
+        },
+      });
 
-        if (internalDate > newestTimestamp) {
-          newestTimestamp = internalDate;
+      if (internalDate > newestTimestamp) {
+        newestTimestamp = internalDate;
+      }
+
+      log(`New email in ${account.id}: "${subject}" from ${from}`);
+    };
+
+    // Fetch messages in parallel with concurrency limit of 5
+    const CONCURRENCY = 5;
+    for (let i = 0; i < validRefs.length; i += CONCURRENCY) {
+      const chunk = validRefs.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(chunk.map(ref => processMessage(ref)));
+      for (let j = 0; j < results.length; j++) {
+        if (results[j].status === "rejected") {
+          log(`Failed to fetch message ${chunk[j].id} from ${account.id}: ${(results[j] as PromiseRejectedResult).reason}`);
         }
-
-        log(`New email in ${account.id}: "${subject}" from ${from}`);
-      } catch (err) {
-        log(`Failed to fetch message ${msgRef.id} from ${account.id}: ${err}`);
       }
     }
 
