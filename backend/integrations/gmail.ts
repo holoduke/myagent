@@ -270,7 +270,7 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
   // On first run, only get last hour to avoid flooding
   const sinceMs = accountState.lastMessageTimestamp || (Date.now() - 3600000);
   const sinceSeconds = Math.floor(sinceMs / 1000);
-  const query = `after:${sinceSeconds} in:inbox`;
+  const query = `after:${sinceSeconds} in:inbox -in:sent`;
 
   try {
     const listRes = await gmail.users.messages.list({
@@ -301,7 +301,7 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
         const internalDate = Number(msg.internalDate || 0);
 
         // Skip messages we've already seen (by timestamp and message ID)
-        if (internalDate <= accountState.lastMessageTimestamp) continue;
+        if (internalDate < accountState.lastMessageTimestamp) continue;
         if (!trackMessageId(msgRef.id)) continue;
 
         const headers = msg.payload?.headers;
