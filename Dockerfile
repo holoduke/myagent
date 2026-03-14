@@ -19,12 +19,15 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
+# Install Playwright Chromium + system dependencies
+RUN npx playwright install --with-deps chromium
+
 # Copy source
 COPY tsconfig.json ./
 COPY backend/ ./backend/
 
 # Create directories for persistent data (will be mounted as volumes)
-RUN mkdir -p /data/auth_state /data/claude /data/brain /data/agents
+RUN mkdir -p /data/auth_state /data/claude /data/brain /data/agents /data/browser
 
 # Symlink auth_state so the app finds it at ./auth_state
 RUN ln -s /data/auth_state /app/auth_state
