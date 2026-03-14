@@ -19,6 +19,7 @@ import { getOwnTracksStatus } from "../integrations/owntracks.js";
 import { getTwilioStatus, makeSimpleCall, makeAgentCall, saveConfig as saveTwilioConfig, loadCallHistory } from "../integrations/twilio.js";
 import { getBrowserStatus, clearBrowserHistory, runWorkflow, runSession, navigateTo, takeScreenshot, extractText } from "../integrations/browser.js";
 import { getIntegrationsConfig, saveIntegrationsConfig, isValidIntegrationKey } from "../integrations/integration-config.js";
+import { checkBrowserRateLimit, acquireBrowserSlot, releaseBrowserSlot } from "./browser-rate-limit.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
 import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS, CHARACTER_PRESETS } from "../brain-config.js";
@@ -1210,6 +1211,8 @@ async function handleRSSRemoveFeed(req: IncomingMessage, res: ServerResponse) {
 // ── Browser handlers ──
 
 async function handleBrowserRun(req: IncomingMessage, res: ServerResponse) {
+  if (checkBrowserRateLimit(res)) return;
+  acquireBrowserSlot();
   try {
     const body = await readBody(req);
     const { tasks } = JSON.parse(body);
@@ -1229,10 +1232,14 @@ async function handleBrowserRun(req: IncomingMessage, res: ServerResponse) {
   } catch (err) {
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: String(err) }));
+  } finally {
+    releaseBrowserSlot();
   }
 }
 
 async function handleBrowserSession(req: IncomingMessage, res: ServerResponse) {
+  if (checkBrowserRateLimit(res)) return;
+  acquireBrowserSlot();
   try {
     const body = await readBody(req);
     const { tasks, sessionTimeoutMs } = JSON.parse(body);
@@ -1252,10 +1259,14 @@ async function handleBrowserSession(req: IncomingMessage, res: ServerResponse) {
   } catch (err) {
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: String(err) }));
+  } finally {
+    releaseBrowserSlot();
   }
 }
 
 async function handleBrowserNavigate(req: IncomingMessage, res: ServerResponse) {
+  if (checkBrowserRateLimit(res)) return;
+  acquireBrowserSlot();
   try {
     const body = await readBody(req);
     const { url } = JSON.parse(body);
@@ -1270,10 +1281,14 @@ async function handleBrowserNavigate(req: IncomingMessage, res: ServerResponse) 
   } catch (err) {
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: String(err) }));
+  } finally {
+    releaseBrowserSlot();
   }
 }
 
 async function handleBrowserScreenshot(req: IncomingMessage, res: ServerResponse) {
+  if (checkBrowserRateLimit(res)) return;
+  acquireBrowserSlot();
   try {
     const body = await readBody(req);
     const { url } = JSON.parse(body);
@@ -1288,10 +1303,14 @@ async function handleBrowserScreenshot(req: IncomingMessage, res: ServerResponse
   } catch (err) {
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: String(err) }));
+  } finally {
+    releaseBrowserSlot();
   }
 }
 
 async function handleBrowserExtract(req: IncomingMessage, res: ServerResponse) {
+  if (checkBrowserRateLimit(res)) return;
+  acquireBrowserSlot();
   try {
     const body = await readBody(req);
     const { url, selector } = JSON.parse(body);
@@ -1306,6 +1325,8 @@ async function handleBrowserExtract(req: IncomingMessage, res: ServerResponse) {
   } catch (err) {
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: String(err) }));
+  } finally {
+    releaseBrowserSlot();
   }
 }
 
