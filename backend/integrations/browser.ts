@@ -445,16 +445,17 @@ export async function runSession(
     viewport: { width: 1280, height: 720 },
   });
 
-  activeSessions++;
-  const page = await context.newPage();
-  page.setDefaultTimeout(30000);
-
   const results: BrowserTaskResult[] = [];
   const history = loadHistory();
   const state = loadState();
   let timedOut = false;
+  let sessionStarted = false;
 
   try {
+    const page = await context.newPage();
+    page.setDefaultTimeout(30000);
+    activeSessions++;
+    sessionStarted = true;
     const taskLoop = async () => {
       for (const task of tasks) {
         if (timedOut) break;
@@ -491,7 +492,7 @@ export async function runSession(
       log(`Session error: ${errorMsg}`);
     }
   } finally {
-    activeSessions--;
+    if (sessionStarted) activeSessions--;
     await context.close().catch(() => {});
     state.activeSessions = activeSessions;
     saveState(state);
