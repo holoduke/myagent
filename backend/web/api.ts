@@ -17,7 +17,7 @@ import type { HAConfig, HAConnectionMode } from "../integrations/homeassistant.j
 import { getRSSStatus, addFeed, removeFeed } from "../integrations/rss.js";
 import { getOwnTracksStatus } from "../integrations/owntracks.js";
 import { getTwilioStatus, makeSimpleCall, makeAgentCall, saveConfig as saveTwilioConfig, loadCallHistory } from "../integrations/twilio.js";
-import { getBrowserStatus, clearBrowserHistory, runWorkflow, navigateTo, takeScreenshot, extractText } from "../integrations/browser.js";
+import { getBrowserStatus, clearBrowserHistory, runWorkflow, runSession, navigateTo, takeScreenshot, extractText } from "../integrations/browser.js";
 import { getIntegrationsConfig, saveIntegrationsConfig, isValidIntegrationKey } from "../integrations/integration-config.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
@@ -314,6 +314,11 @@ export function handleApiRoutes(
 
   if (pathname === "/api/browser/run" && req.method === "POST" && isAuthenticated(req)) {
     handleBrowserRun(req, res);
+    return true;
+  }
+
+  if (pathname === "/api/browser/session" && req.method === "POST" && isAuthenticated(req)) {
+    handleBrowserSession(req, res);
     return true;
   }
 
@@ -1219,6 +1224,29 @@ async function handleBrowserRun(req: IncomingMessage, res: ServerResponse) {
       return;
     }
     const results = await runWorkflow(tasks);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, results }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: String(err) }));
+  }
+}
+
+async function handleBrowserSession(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { tasks, sessionTimeoutMs } = JSON.parse(body);
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "tasks array is required" }));
+      return;
+    }
+    if (tasks.length > 20) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "max 20 tasks per session" }));
+      return;
+    }
+    const results = await runSession(tasks, sessionTimeoutMs);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ success: true, results }));
   } catch (err) {
