@@ -17,6 +17,7 @@ import type { HAConfig, HAConnectionMode } from "../integrations/homeassistant.j
 import { getRSSStatus, addFeed, removeFeed } from "../integrations/rss.js";
 import { getOwnTracksStatus } from "../integrations/owntracks.js";
 import { getTwilioStatus, makeSimpleCall, makeAgentCall, saveConfig as saveTwilioConfig, loadCallHistory } from "../integrations/twilio.js";
+import { getBrowserStatus, clearBrowserHistory, runWorkflow, navigateTo, takeScreenshot, extractText } from "../integrations/browser.js";
 import { getIntegrationsConfig, saveIntegrationsConfig, isValidIntegrationKey } from "../integrations/integration-config.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
@@ -301,6 +302,46 @@ export function handleApiRoutes(
   if (pathname === "/api/twilio/history" && req.method === "GET" && isAuthenticated(req)) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(loadCallHistory()));
+    return true;
+  }
+
+  // ── Browser automation ──
+  if (pathname === "/api/browser/status" && req.method === "GET" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getBrowserStatus()));
+    return true;
+  }
+
+  if (pathname === "/api/browser/run" && req.method === "POST" && isAuthenticated(req)) {
+    handleBrowserRun(req, res);
+    return true;
+  }
+
+  if (pathname === "/api/browser/navigate" && req.method === "POST" && isAuthenticated(req)) {
+    handleBrowserNavigate(req, res);
+    return true;
+  }
+
+  if (pathname === "/api/browser/screenshot" && req.method === "POST" && isAuthenticated(req)) {
+    handleBrowserScreenshot(req, res);
+    return true;
+  }
+
+  if (pathname === "/api/browser/extract" && req.method === "POST" && isAuthenticated(req)) {
+    handleBrowserExtract(req, res);
+    return true;
+  }
+
+  if (pathname === "/api/browser/history" && req.method === "GET" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getBrowserStatus().recentTasks));
+    return true;
+  }
+
+  if (pathname === "/api/browser/history" && req.method === "DELETE" && isAuthenticated(req)) {
+    clearBrowserHistory();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
     return true;
   }
 
@@ -769,6 +810,7 @@ function getDashboardData(queue: MessageQueue) {
     rss: getRSSStatus(),
     owntracks: getOwnTracksStatus(),
     twilio: getTwilioStatus(),
+    browser: getBrowserStatus(),
     moltbook: getMoltbookStatus(),
     whitelistCount: whitelist.length,
     scheduledCount: scheduled.length,
@@ -1157,6 +1199,85 @@ async function handleRSSRemoveFeed(req: IncomingMessage, res: ServerResponse) {
   } catch {
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Invalid request" }));
+  }
+}
+
+// ── Browser handlers ──
+
+async function handleBrowserRun(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { tasks } = JSON.parse(body);
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "tasks array is required" }));
+      return;
+    }
+    if (tasks.length > 10) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "max 10 tasks per workflow" }));
+      return;
+    }
+    const results = await runWorkflow(tasks);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, results }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: String(err) }));
+  }
+}
+
+async function handleBrowserNavigate(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { url } = JSON.parse(body);
+    if (!url) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "url is required" }));
+      return;
+    }
+    const result = await navigateTo(url);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: String(err) }));
+  }
+}
+
+async function handleBrowserScreenshot(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { url } = JSON.parse(body);
+    if (!url) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "url is required" }));
+      return;
+    }
+    const result = await takeScreenshot(url);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: String(err) }));
+  }
+}
+
+async function handleBrowserExtract(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { url, selector } = JSON.parse(body);
+    if (!url || !selector) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "url and selector are required" }));
+      return;
+    }
+    const result = await extractText(url, selector);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: String(err) }));
   }
 }
 

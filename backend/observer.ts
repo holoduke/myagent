@@ -43,7 +43,7 @@ export interface Observation {
   text: string;
   chatJid?: string;
   chatName?: string;
-  source?: "whatsapp" | "gmail" | "calendar" | "homeassistant" | "rss" | "owntracks" | "twilio";
+  source?: "whatsapp" | "gmail" | "calendar" | "homeassistant" | "rss" | "owntracks" | "twilio" | "browser";
   emailMeta?: EmailMeta;
   calendarMeta?: CalendarMeta;
   locationMeta?: LocationMeta;

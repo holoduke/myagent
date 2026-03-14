@@ -12,6 +12,7 @@ const INTEGRATION_KEYS = [
   "rss",
   "owntracks",
   "twilio",
+  "browser",
 ] as const;
 
 export type IntegrationKey = (typeof INTEGRATION_KEYS)[number];
@@ -28,6 +29,7 @@ const DEFAULTS: IntegrationsConfig = {
   rss: true,
   owntracks: true,
   twilio: true,
+  browser: true,
 };
 
 function ensureDir(): void {
