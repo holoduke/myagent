@@ -30,6 +30,16 @@ const URGENCY_KEYWORDS: Record<string, number> = {
   belangrijk: 0.4,
   snel: 0.3,
   "112": 0.9,
+  // Dutch contextual emergency vocabulary
+  kapot: 0.4, // broken
+  gestolen: 0.7, // stolen
+  ziek: 0.3, // sick
+  ongeluk: 0.8, // accident
+  brand: 0.9, // fire
+  overstroming: 0.8, // flood
+  inbraak: 0.8, // break-in
+  ambulance: 0.9, // ambulance
+  politie: 0.7, // police
 };
 
 // Pre-compiled regex patterns sorted by score descending.

@@ -155,6 +155,28 @@ export interface TwilioStatus {
   } | null
 }
 
+export interface BrowserTaskResult {
+  id: string
+  taskId: string
+  success: boolean
+  type: 'navigate' | 'screenshot' | 'extract' | 'fill' | 'click' | 'script'
+  url?: string
+  title?: string
+  content?: string
+  screenshotPath?: string
+  error?: string
+  durationMs: number
+  completedAt: number
+}
+
+export interface BrowserStatus {
+  ready: boolean
+  activeSessions: number
+  totalTasks: number
+  lastTaskAt: number
+  recentTasks: BrowserTaskResult[]
+}
+
 export interface MoltbookStatus {
   enabled: boolean
   name: string
@@ -179,6 +201,7 @@ export interface DashboardData {
   rss: RSSStatus
   owntracks: OwnTracksStatus
   twilio: TwilioStatus
+  browser: BrowserStatus
   moltbook: MoltbookStatus
   whitelistCount: number
   scheduledCount: number

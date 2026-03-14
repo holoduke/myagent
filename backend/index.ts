@@ -18,6 +18,7 @@ import { startCalendarPolling, stopCalendarPolling } from "./integrations/calend
 import { startHAPolling, stopHAPolling } from "./integrations/homeassistant.js";
 import { startRSSPolling, stopRSSPolling } from "./integrations/rss.js";
 import { handleOwnTracksWebhook } from "./integrations/owntracks.js";
+import { initBrowser, closeBrowser } from "./integrations/browser.js";
 import { handleTwiml, handleTurn, handleStatus as handleTwilioStatus } from "./integrations/twilio.js";
 
 const queue = new MessageQueue();
@@ -47,6 +48,9 @@ async function main() {
   startCalendarPolling();
   startHAPolling();
   startRSSPolling();
+
+  // Initialize browser automation (lazy — launches on first task)
+  initBrowser();
 
   // HTTP server: health check, QR code, web chat, and Gmail OAuth
   const server = createServer((req, res) => {
@@ -340,6 +344,7 @@ function shutdown() {
   stopCalendarPolling();
   stopHAPolling();
   stopRSSPolling();
+  closeBrowser();
   process.exit(0);
 }
 
@@ -354,6 +359,7 @@ process.on("uncaughtException", (err) => {
   stopCalendarPolling();
   stopHAPolling();
   stopRSSPolling();
+  closeBrowser();
   process.exit(1);
 });
 process.on("unhandledRejection", (err) => {

@@ -83,6 +83,10 @@
         <IntegrationsOwnTracksCard :owntracks="otData" />
       </UiModal>
 
+      <UiModal :open="activeModal === 'browser'" title="Browser Automation" max-width="640px" @close="activeModal = null">
+        <IntegrationsBrowserCard :browser="browserData" @reload="load" />
+      </UiModal>
+
       <UiModal :open="activeModal === 'twilio'" title="Twilio Voice" max-width="640px" @close="activeModal = null">
         <IntegrationsTwilioCard :twilio="twilioData" @reload="load" />
       </UiModal>
@@ -97,7 +101,7 @@
 </template>
 
 <script setup lang="ts">
-import type { DashboardData, ScheduledMessage, SSHStatus, CalendarStatus, HomeAssistantStatus, RSSStatus, OwnTracksStatus, TwilioStatus, MoltbookStatus } from '~/types/aria'
+import type { DashboardData, ScheduledMessage, SSHStatus, CalendarStatus, HomeAssistantStatus, RSSStatus, OwnTracksStatus, TwilioStatus, BrowserStatus, MoltbookStatus } from '~/types/aria'
 
 const route = useRoute()
 const router = useRouter()
@@ -138,6 +142,7 @@ const calendarData = computed<CalendarStatus>(() => dashboard.value?.calendar ||
 const haData = computed<HomeAssistantStatus>(() => dashboard.value?.homeassistant || { enabled: false, connected: false, url: '', entityCount: 0, lastPoll: 0 })
 const rssData = computed<RSSStatus>(() => dashboard.value?.rss || { feeds: [] })
 const otData = computed<OwnTracksStatus>(() => dashboard.value?.owntracks || { enabled: false, lastLocation: null })
+const browserData = computed<BrowserStatus>(() => dashboard.value?.browser || { ready: false, activeSessions: 0, totalTasks: 0, lastTaskAt: 0, recentTasks: [] })
 const twilioData = computed<TwilioStatus>(() => dashboard.value?.twilio || { enabled: false, configured: false, phoneNumber: '', webhookBaseUrl: '', activeCalls: 0, totalCalls: 0, lastCallAt: 0, recentCalls: [], config: null })
 const moltbookData = computed<MoltbookStatus>(() => dashboard.value?.moltbook || { enabled: false, name: '', profileUrl: '', karma: 0, followers: 0, postCount: 0, lastActive: null })
 
@@ -232,6 +237,16 @@ const integrations = computed<IntegrationDef[]>(() => [
     statusClass: otData.value.lastLocation ? 'online' : otData.value.enabled ? 'pending' : 'offline',
     statusText: otData.value.lastLocation ? 'Tracking' : otData.value.enabled ? 'Waiting' : 'Not configured',
     stat: otData.value.lastLocation ? 'Location known' : 'No data',
+  },
+  {
+    key: 'browser',
+    name: 'Browser',
+    description: 'Headless browser automation with Playwright',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>',
+    isActive: () => browserData.value.ready || browserData.value.totalTasks > 0,
+    statusClass: browserData.value.ready ? 'online' : browserData.value.totalTasks > 0 ? 'pending' : 'offline',
+    statusText: browserData.value.ready ? 'Ready' : browserData.value.totalTasks > 0 ? 'Idle' : 'Not used',
+    stat: `${browserData.value.totalTasks} tasks`,
   },
   {
     key: 'twilio',

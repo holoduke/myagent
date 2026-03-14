@@ -43,7 +43,7 @@ export interface Observation {
   text: string;
   chatJid?: string;
   chatName?: string;
-  source?: "whatsapp" | "gmail" | "calendar" | "homeassistant" | "rss" | "owntracks" | "twilio";
+  source?: "whatsapp" | "gmail" | "calendar" | "homeassistant" | "rss" | "owntracks" | "twilio" | "browser";
   emailMeta?: EmailMeta;
   calendarMeta?: CalendarMeta;
   locationMeta?: LocationMeta;
@@ -278,8 +278,59 @@ function getObservationsSinceTail(since: number, filter?: ObservationFilter, lim
   return results;
 }
 
+/**
+ * Lightweight count of observations since a timestamp.
+ * Extracts only the "timestamp" field via regex, avoiding full JSON.parse
+ * and Observation object allocation for each line.
+ */
+export function getObservationCountSince(since: number): number {
+  try {
+    if (!existsSync(OBS_FILE)) return 0;
+
+    const isRecent = (Date.now() - since) < TAIL_READ_WINDOW_MS;
+    const tsRegex = /"timestamp"\s*:\s*(\d+(?:\.\d+)?)/;
+
+    if (isRecent) {
+      let count = 0;
+      let done = false;
+      for (const chunkLines of readTailChunks(OBS_FILE)) {
+        let foundOlder = false;
+        for (const line of chunkLines) {
+          if (!line.trim()) continue;
+          const m = tsRegex.exec(line);
+          if (!m) continue;
+          const ts = Number(m[1]);
+          if (ts <= since) { foundOlder = true; continue; }
+          count++;
+        }
+        if (foundOlder) break;
+      }
+      return count;
+    }
+
+    // Full-file scan for older queries
+    const raw = readFileSync(OBS_FILE, "utf-8");
+    let count = 0;
+    let start = 0;
+    while (start < raw.length) {
+      let end = raw.indexOf("\n", start);
+      if (end === -1) end = raw.length;
+      const line = raw.substring(start, end);
+      start = end + 1;
+      if (!line.trim()) continue;
+      const m = tsRegex.exec(line);
+      if (!m) continue;
+      if (Number(m[1]) > since) count++;
+    }
+    return count;
+  } catch (err) {
+    log(`Failed to count observations: ${err}`);
+    return 0;
+  }
+}
+
 export function getObservationCount(since: number): number {
-  return getObservationsSince(since).length;
+  return getObservationCountSince(since);
 }
 
 export function pruneObservations(days?: number): void {
