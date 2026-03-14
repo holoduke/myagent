@@ -1,7 +1,7 @@
 import type { MemoryGraph } from "./memory/graph.js";
 import type { WorkingMemory, BrainState } from "./memory/types.js";
 import { GoalTracker } from "./goals.js";
-import { getBrainConfig, getOwnerLocalDate } from "./brain-config.js";
+import { getBrainConfig, getOwnerLocalDate, getOwnerLocalDay } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("initiative");
@@ -25,6 +25,13 @@ export function detectInitiativeSignals(
   const now = Date.now();
   const signals: InitiativeSignal[] = [];
 
+  // Weekend-aware multipliers: weekends have naturally lower activity,
+  // so raise thresholds to avoid false-positive signals.
+  const ownerDay = getOwnerLocalDay(getBrainConfig().ownerTimezone);
+  const isWeekend = ownerDay === 0 || ownerDay === 6; // Sunday or Saturday
+  const absenceMultiplier = isWeekend ? 1.5 : 1;
+  const staleMultiplier = isWeekend ? 2 : 1;
+
   // 1. Follow-up due
   for (const followUp of wm.pendingFollowUps) {
     if (followUp.dueAt && followUp.dueAt <= now) {
@@ -39,7 +46,7 @@ export function detectInitiativeSignals(
   }
 
   // 2. Person absent — pinned person nodes with high access count, not seen in 7+ days
-  const ABSENCE_THRESHOLD = 7 * 24 * 60 * 60 * 1000; // 7 days
+  const ABSENCE_THRESHOLD = 7 * 24 * 60 * 60 * 1000 * absenceMultiplier; // 7d, 10.5d on weekends
   const personNodes = graph.findByType("person");
   for (const node of personNodes) {
     if (node.pinned && node.accessCount > 5 && (now - node.lastAccessedAt) > ABSENCE_THRESHOLD) {
@@ -69,7 +76,7 @@ export function detectInitiativeSignals(
   }
 
   // 4. Conversation stale — active threads with 3+ messages, quiet >48h
-  const STALE_THRESHOLD = 48 * 60 * 60 * 1000;
+  const STALE_THRESHOLD = 48 * 60 * 60 * 1000 * staleMultiplier; // 48h, 96h on weekends
   for (const thread of wm.conversationThreads) {
     if (
       thread.status === "active" &&

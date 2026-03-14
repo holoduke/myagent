@@ -264,6 +264,21 @@ export function getOwnerLocalDate(timezone: string, now: Date = new Date()): str
   }
 }
 
+/** Returns 0 (Sunday) – 6 (Saturday) in the owner's local timezone. */
+export function getOwnerLocalDay(timezone: string, now: Date = new Date()): number {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      weekday: "short",
+    });
+    const day = fmt.format(now); // "Sun", "Mon", …, "Sat"
+    const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    return map[day] ?? now.getDay();
+  } catch {
+    return now.getDay();
+  }
+}
+
 export function getActivePreset(config: BrainConfig): string | null {
   if (config.preset) return config.preset;
 
