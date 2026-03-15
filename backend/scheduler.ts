@@ -33,13 +33,18 @@ function isValidScheduledMessage(entry: unknown): entry is ScheduledMessage {
   );
 }
 
+// Write-through in-memory cache (follows history.ts pattern)
+let scheduleCache: ScheduledMessage[] | null = null;
+
 function loadSchedule(): ScheduledMessage[] {
+  if (scheduleCache) return scheduleCache;
   try {
     if (existsSync(SCHEDULE_FILE)) {
       const raw = JSON.parse(readFileSync(SCHEDULE_FILE, "utf-8"));
       if (!Array.isArray(raw)) {
         log("Schedule file is not a JSON array, starting fresh");
-        return [];
+        scheduleCache = [];
+        return scheduleCache;
       }
       const valid: ScheduledMessage[] = [];
       for (const entry of raw) {
@@ -52,12 +57,14 @@ function loadSchedule(): ScheduledMessage[] {
       if (valid.length < raw.length) {
         log(`Filtered out ${raw.length - valid.length} invalid entry/entries from schedule (${valid.length} valid remaining)`);
       }
-      return valid;
+      scheduleCache = valid;
+      return scheduleCache;
     }
   } catch (err) {
     log(`Failed to read schedule, starting fresh: ${err}`);
   }
-  return [];
+  scheduleCache = [];
+  return scheduleCache;
 }
 
 function saveSchedule(messages: ScheduledMessage[]): void {
@@ -68,6 +75,7 @@ function saveSchedule(messages: ScheduledMessage[]): void {
     const tmp = SCHEDULE_FILE + ".tmp";
     writeFileSync(tmp, JSON.stringify(messages, null, 2));
     renameSync(tmp, SCHEDULE_FILE);
+    scheduleCache = messages;
   } catch (err) {
     log(`Failed to save schedule: ${err}`);
   }
@@ -205,16 +213,24 @@ export interface DeliveryRecord {
   messageSnippet: string;
 }
 
+// Write-through in-memory cache for delivery log
+let deliveryLogCache: DeliveryRecord[] | null = null;
+
 function loadDeliveryLog(): DeliveryRecord[] {
+  if (deliveryLogCache) return deliveryLogCache;
   try {
     if (existsSync(DELIVERY_LOG_FILE)) {
       const raw = JSON.parse(readFileSync(DELIVERY_LOG_FILE, "utf-8"));
-      if (Array.isArray(raw)) return raw;
+      if (Array.isArray(raw)) {
+        deliveryLogCache = raw;
+        return deliveryLogCache;
+      }
     }
   } catch (err) {
     log(`Failed to load delivery log: ${err}`);
   }
-  return [];
+  deliveryLogCache = [];
+  return deliveryLogCache;
 }
 
 function saveDeliveryLog(entries: DeliveryRecord[]): void {
@@ -223,6 +239,7 @@ function saveDeliveryLog(entries: DeliveryRecord[]): void {
     const tmp = DELIVERY_LOG_FILE + ".tmp";
     writeFileSync(tmp, JSON.stringify(entries, null, 2));
     renameSync(tmp, DELIVERY_LOG_FILE);
+    deliveryLogCache = entries;
   } catch (err) {
     log(`Failed to save delivery log: ${err}`);
   }
