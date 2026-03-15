@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "./logger.js";
+import { isWhitelisted } from "./contact-whitelist.js";
 
 const log = createLogger("scheduler");
 
@@ -125,11 +126,24 @@ export function getDueMessages(): ScheduledMessage[] {
   const due = schedule.filter(m => m.deliverAt <= now && !inFlightIds.has(m.id));
   if (due.length === 0) return [];
 
-  // Mark as in-flight immediately so no other poll picks them up
-  for (const m of due) inFlightIds.set(m.id, now);
+  // Filter out messages targeting non-whitelisted contacts
+  const blocked = due.filter(m => !isWhitelisted(m.targetJid));
+  if (blocked.length > 0) {
+    log(`Blocked ${blocked.length} scheduled message(s) to non-whitelisted JID(s): ${blocked.map(m => m.targetJid).join(", ")}`);
+    // Remove blocked messages from the schedule so they don't accumulate
+    const blockedIds = new Set(blocked.map(m => m.id));
+    const cleaned = schedule.filter(m => !blockedIds.has(m.id));
+    saveSchedule(cleaned);
+  }
 
-  log(`${due.length} message(s) due for delivery`);
-  return due;
+  const allowed = due.filter(m => isWhitelisted(m.targetJid));
+  if (allowed.length === 0) return [];
+
+  // Mark as in-flight immediately so no other poll picks them up
+  for (const m of allowed) inFlightIds.set(m.id, now);
+
+  log(`${allowed.length} message(s) due for delivery`);
+  return allowed;
 }
 
 const MAX_RETRIES = 5;
