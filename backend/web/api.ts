@@ -46,6 +46,7 @@ import {
   taskFilePath,
 } from "../sub-agents.js";
 import { detectInitiativeSignals } from "../initiative.js";
+import { getRecentAuditEntries } from "../action-verifier.js";
 import { GoalTracker } from "../goals.js";
 import { MemoryGraph } from "../memory/graph.js";
 import { loadWorkingMemory } from "../memory/working-memory.js";
@@ -109,6 +110,15 @@ export function handleApiRoutes(
   if (pathname === "/api/scheduled" && isAuthenticated(req)) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(getScheduledMessages()));
+    return true;
+  }
+
+  // ── Action Audit Log ──
+  if (pathname === "/api/audit" && isAuthenticated(req)) {
+    const url = new URL(req.url || "/", `http://${req.headers.host}`);
+    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getRecentAuditEntries(Math.min(limit, 200))));
     return true;
   }
 
