@@ -41,7 +41,7 @@ export class ClaudeProvider implements AIProvider {
   }
 
   async ask(message: string, options: ProviderAskOptions = {}): Promise<AgentResult> {
-    const timeout = options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 300_000);
+    const timeout = options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 120_000);
     const allowedTools = options.allowedTools ?? this.config.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
     const noSession = options.noSession ?? false;
 
@@ -65,7 +65,7 @@ export class ClaudeProvider implements AIProvider {
     onDelta: (text: string) => void,
     options: ProviderAskOptions = {},
   ): Promise<AgentResult> {
-    const timeout = options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 300_000);
+    const timeout = options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 120_000);
     const allowedTools = options.allowedTools ?? this.config.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
     const noSession = options.noSession ?? false;
 
