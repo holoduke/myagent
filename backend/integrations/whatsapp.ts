@@ -397,6 +397,24 @@ export async function sendMessage(jid: string, text: string): Promise<void> {
   await sock.sendMessage(jid, { text });
 }
 
+export async function sendImage(
+  jid: string,
+  imagePath: string,
+  caption?: string,
+): Promise<void> {
+  if (!isConnected) {
+    console.log(`[whatsapp] Cannot send image — not connected`);
+    throw new Error("WhatsApp not connected");
+  }
+
+  const imageBuffer = readFileSync(imagePath);
+  await sock.sendMessage(jid, {
+    image: imageBuffer,
+    caption: caption || undefined,
+  });
+  console.log(`[whatsapp] Image sent to ${jid}: ${imagePath}`);
+}
+
 export async function sendTypingIndicator(jid: string): Promise<void> {
   if (!isConnected || !sock) return;
   try {

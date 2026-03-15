@@ -2,7 +2,7 @@ import "dotenv/config";
 import { readFileSync, existsSync } from "fs";
 import { createServer } from "http";
 import { createLogger } from "./logger.js";
-import { startWhatsApp, sendMessage, sendReaction, sendTypingIndicator, stopTypingIndicator, getLatestQr } from "./integrations/whatsapp.js";
+import { startWhatsApp, sendMessage, sendImage, sendReaction, sendTypingIndicator, stopTypingIndicator, getLatestQr } from "./integrations/whatsapp.js";
 import { resetSession } from "./claude.js";
 import { getDefaultProvider, bootstrapDefaultProvider } from "./providers/index.js";
 import { splitMessage } from "./providers/util.js";

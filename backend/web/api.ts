@@ -5,7 +5,7 @@ import { resetSession } from "../claude.js";
 import { getDefaultProvider } from "../providers/index.js";
 import { MessageQueue } from "../queue.js";
 import { getHistory, addMessage, clearHistory, getUsageStats, getUsageData } from "../history.js";
-import { syncContacts, findContacts, getAllContacts, getWhatsAppStatus } from "../integrations/whatsapp.js";
+import { syncContacts, findContacts, getAllContacts, getWhatsAppStatus, sendImage } from "../integrations/whatsapp.js";
 import { getScheduledMessages } from "../scheduler.js";
 import { getWhitelist, addToWhitelist, removeFromWhitelist } from "../contact-whitelist.js";
 import { getAccountStatus, addAccount, removeAccount } from "../integrations/gmail.js";
@@ -342,6 +342,11 @@ export function handleApiRoutes(
     clearBrowserHistory();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
+    return true;
+  }
+
+  if (pathname === "/api/browser/captcha" && req.method === "POST" && isAuthenticated(req)) {
+    handleCaptchaShare(req, res);
     return true;
   }
 
@@ -1275,6 +1280,56 @@ async function handleBrowserExtract(req: IncomingMessage, res: ServerResponse) {
     const result = await extractText(url, selector);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: String(err) }));
+  }
+}
+
+// ── Captcha screenshot + share handler ──
+
+async function handleCaptchaShare(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { url, selector, jid, caption } = JSON.parse(body);
+    if (!url) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "url is required" }));
+      return;
+    }
+
+    // Take screenshot (optionally of a specific element)
+    let result;
+    if (selector) {
+      // Use workflow to navigate + screenshot a specific element
+      result = await runWorkflow([
+        { id: `captcha_nav_${Date.now()}`, type: "navigate", url },
+        { id: `captcha_ss_${Date.now()}`, type: "screenshot", url },
+      ]);
+      result = result[result.length - 1];
+    } else {
+      result = await takeScreenshot(url);
+    }
+
+    if (!result.success || !result.screenshotPath) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: result.error || "Screenshot failed", result }));
+      return;
+    }
+
+    // Send to WhatsApp if jid provided (defaults to Gillis)
+    const targetJid = jid || (process.env.OWNER_PHONE ? `${process.env.OWNER_PHONE}@s.whatsapp.net` : "");
+    if (targetJid) {
+      await sendImage(targetJid, result.screenshotPath, caption || "captcha screenshot");
+    }
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      ok: true,
+      screenshotPath: result.screenshotPath,
+      sentTo: targetJid || null,
+      url: result.url,
+    }));
   } catch (err) {
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: String(err) }));
