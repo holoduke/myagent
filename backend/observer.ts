@@ -242,7 +242,6 @@ export function getObservationsSince(since: number, filter?: ObservationFilter, 
  */
 function getObservationsSinceTail(since: number, filter?: ObservationFilter, limit?: number): Observation[] {
   const results: Observation[] = [];
-  let done = false;
 
   for (const chunkLines of readTailChunks(OBS_FILE)) {
     const chunkResults: Observation[] = [];
@@ -292,7 +291,6 @@ export function getObservationCountSince(since: number): number {
 
     if (isRecent) {
       let count = 0;
-      let done = false;
       for (const chunkLines of readTailChunks(OBS_FILE)) {
         let foundOlder = false;
         for (const line of chunkLines) {
