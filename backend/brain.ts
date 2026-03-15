@@ -107,8 +107,8 @@ function loadState(): BrainState {
     if (existsSync(STATE_FILE)) {
       return { ...defaultState(), ...JSON.parse(readFileSync(STATE_FILE, "utf-8")) };
     }
-  } catch {
-    log("Failed to read state, using defaults");
+  } catch (err) {
+    log(`Failed to read state, using defaults: ${err}`);
   }
   return defaultState();
 }
@@ -143,8 +143,8 @@ function parseBrainResponse(raw: string): BrainResponse | null {
       goalOps: Array.isArray(parsed.goalOps) ? parsed.goalOps : undefined,
       improvementProposals: Array.isArray(parsed.improvementProposals) ? parsed.improvementProposals : undefined,
     };
-  } catch {
-    log(`Failed to parse brain response: ${raw.slice(0, 200)}`);
+  } catch (err) {
+    log(`Failed to parse brain response: ${raw.slice(0, 200)} — ${err}`);
     return null;
   }
 }

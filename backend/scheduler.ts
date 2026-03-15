@@ -53,8 +53,8 @@ function loadSchedule(): ScheduledMessage[] {
       }
       return valid;
     }
-  } catch {
-    log("Failed to read schedule, starting fresh");
+  } catch (err) {
+    log(`Failed to read schedule, starting fresh: ${err}`);
   }
   return [];
 }
@@ -197,7 +197,9 @@ function loadDeliveryLog(): DeliveryRecord[] {
       const raw = JSON.parse(readFileSync(DELIVERY_LOG_FILE, "utf-8"));
       if (Array.isArray(raw)) return raw;
     }
-  } catch {}
+  } catch (err) {
+    log(`Failed to load delivery log: ${err}`);
+  }
   return [];
 }
 
