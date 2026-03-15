@@ -208,6 +208,22 @@ export function selectContextForThink(
   const keywords = extractKeywords(observations);
   log(`Think context: ${keywords.length} keywords from ${observations.length} observations`);
 
+  // Association-triggered archive recall: search cold storage for current topics
+  if (keywords.length > 0 && graph.archiveSize > 0) {
+    const archiveQuery = keywords.slice(0, 10).join(" ");
+    const recalled = graph.searchArchive(archiveQuery, 5);
+    let restored = 0;
+    for (const archived of recalled) {
+      // Only restore if score is high enough (strong match to current context)
+      if (graph.restoreNode(archived.id)) {
+        restored++;
+      }
+    }
+    if (restored > 0) {
+      log(`Archive recall: restored ${restored} nodes triggered by current context`);
+    }
+  }
+
   const activated = spreadingActivation(graph, keywords, 25);
 
   // Boost activation for initiative signal related nodes

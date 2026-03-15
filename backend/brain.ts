@@ -1167,12 +1167,14 @@ async function consolidateTick(
 ): Promise<boolean> {
   const now = Date.now();
 
-  // Run automatic decay first (free)
-  const decayResult = runConsolidation(graph);
-  log(`Consolidate decay: ${decayResult.nodesDecayed} nodes decayed, ${decayResult.nodesPruned} pruned, ${decayResult.edgesDecayed} edges decayed, ${decayResult.edgesPruned} pruned, ${decayResult.orphansPruned} orphans`);
+  // Load working memory first so consolidation can use it for archive rescan
+  const wm = loadWorkingMemory();
+
+  // Run automatic decay + archive rescan (free)
+  const decayResult = runConsolidation(graph, wm);
+  log(`Consolidate decay: ${decayResult.nodesDecayed} nodes decayed, ${decayResult.nodesPruned} archived, ${decayResult.edgesDecayed} edges decayed, ${decayResult.edgesPruned} pruned, ${decayResult.orphansPruned} orphans, ${decayResult.archiveRestored} recalled from archive`);
 
   // Prepare context for Claude consolidation
-  const wm = loadWorkingMemory();
   populateTemporalContext(wm);
 
   // Auto-cleanup working memory during consolidation
