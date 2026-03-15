@@ -219,10 +219,23 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
     }
   }
 
-  // Mark stale threads
+  // Thread lifecycle: active → stale (48h) → closed (7d) → removed (14d)
+  const CLOSED_THRESHOLD = 7 * 24 * 60 * 60 * 1000;  // 7 days since last message
+  const REMOVE_THRESHOLD = 14 * 24 * 60 * 60 * 1000;  // 14 days since last message
+
+  // Remove closed threads older than 14 days
+  wm.conversationThreads = wm.conversationThreads.filter(thread => {
+    if (thread.status === "closed" && (now - thread.lastMessageAt) > REMOVE_THRESHOLD) return false;
+    return true;
+  });
+
   for (const thread of wm.conversationThreads) {
-    if (thread.status === "active" && (now - thread.lastMessageAt) > STALE_THRESHOLD) {
+    const age = now - thread.lastMessageAt;
+    if (thread.status === "active" && age > STALE_THRESHOLD) {
       thread.status = "stale";
+    }
+    if (thread.status === "stale" && age > CLOSED_THRESHOLD) {
+      thread.status = "closed";
     }
   }
 
