@@ -17,12 +17,8 @@ import type { HAConfig, HAConnectionMode } from "../integrations/homeassistant.j
 import { getRSSStatus, addFeed, removeFeed } from "../integrations/rss.js";
 import { getOwnTracksStatus } from "../integrations/owntracks.js";
 import { getTwilioStatus, makeSimpleCall, makeAgentCall, saveConfig as saveTwilioConfig, loadCallHistory } from "../integrations/twilio.js";
-<<<<<<< HEAD
-import { getBrowserStatus, clearBrowserHistory, runWorkflow, navigateTo, takeScreenshot, extractText } from "../integrations/browser.js";
-import { requestCaptchaVerification, getPendingCaptchas, getCaptchaHistory } from "../captcha-verify.js";
-=======
 import { getBrowserStatus, clearBrowserHistory, runWorkflow, runSession, navigateTo, takeScreenshot, extractText } from "../integrations/browser.js";
->>>>>>> 934ebc5 (ARIA self-improvement: add session-based browser workflow with global timeout)
+import { requestCaptchaVerification, getPendingCaptchas, getCaptchaHistory } from "../captcha-verify.js";
 import { getIntegrationsConfig, saveIntegrationsConfig, isValidIntegrationKey } from "../integrations/integration-config.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";

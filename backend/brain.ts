@@ -1097,6 +1097,41 @@ async function thinkTick(
       saveWorkingMemory(wm);
     }
 
+    // Enqueue self-improvement proposals from think ticks
+    if (response.improvementProposals && response.improvementProposals.length > 0 && cfg.selfImproveEnabled) {
+      const weeklyRemaining = cfg.selfImproveMaxPerWeek - getWeeklyCompletedCount();
+      const currentPending = loadQueue().items.filter(i => i.status === "pending" || i.status === "approved" || i.status === "running").length;
+      const canEnqueue = Math.max(0, weeklyRemaining - currentPending);
+
+      for (const proposal of response.improvementProposals.slice(0, canEnqueue)) {
+        if (!proposal.description || !proposal.rationale) {
+          log(`Skipping invalid think improvement proposal: missing description or rationale`);
+          continue;
+        }
+        const improveVerify = verify({
+          type: "self_improve",
+          source: "think",
+          proposalDescription: proposal.description,
+          metadata: { files: proposal.files },
+        });
+        if (improveVerify.verdict === "blocked") {
+          log(`Think self-improve proposal BLOCKED by verifier: ${improveVerify.reasons.join("; ")}`);
+          continue;
+        }
+        const task = {
+          type: "improvement" as const,
+          description: proposal.description,
+          rationale: proposal.rationale,
+          files: Array.isArray(proposal.files) ? proposal.files : [],
+          memoryContext: Array.isArray(proposal.memoryContext) ? proposal.memoryContext : [],
+          planNodeId: proposal.planNodeId || "",
+          createdAt: Date.now(),
+        };
+        enqueueApproved(task);
+        log(`Think: enqueued improvement proposal (pre-approved): ${proposal.description.slice(0, 80)}`);
+      }
+    }
+
     // Handle message — briefings (digest-triggered thinks) bypass rate limits
     if (response.message) {
       const isDigestTriggered = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
