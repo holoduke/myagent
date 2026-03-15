@@ -208,19 +208,57 @@ export function selectContextForThink(
   const keywords = extractKeywords(observations);
   log(`Think context: ${keywords.length} keywords from ${observations.length} observations`);
 
-  // Association-triggered archive recall: search cold storage for current topics
+  // Association-triggered archive recall: use spreading activation pattern to score cold storage
   if (keywords.length > 0 && graph.archiveSize > 0) {
-    const archiveQuery = keywords.slice(0, 10).join(" ");
-    const recalled = graph.searchArchive(archiveQuery, 5);
-    let restored = 0;
-    for (const archived of recalled) {
-      // Only restore if score is high enough (strong match to current context)
-      if (graph.restoreNode(archived.id)) {
-        restored++;
+    // Run a lightweight activation pass to get the current context pattern
+    const contextActivation = spreadingActivation(graph, keywords, 10, 1);
+
+    // Build activation-weighted terms from the activated nodes
+    const weightedTerms = new Map<string, number>();
+    for (const { node, activation } of contextActivation) {
+      for (const term of extractKeywordsFromText(node.content)) {
+        const existing = weightedTerms.get(term) || 0;
+        weightedTerms.set(term, Math.max(existing, activation));
+      }
+      for (const tag of node.tags) {
+        const t = tag.toLowerCase();
+        const existing = weightedTerms.get(t) || 0;
+        weightedTerms.set(t, Math.max(existing, activation));
       }
     }
+    // Direct keywords get base weight
+    for (const kw of keywords.slice(0, 10)) {
+      const existing = weightedTerms.get(kw) || 0;
+      weightedTerms.set(kw, Math.max(existing, 0.3));
+    }
+
+    // Score archived nodes against weighted terms
+    const RECALL_THRESHOLD = 0.2;
+    const recalled: { id: string; score: number }[] = [];
+    for (const archived of graph.allArchivedNodes()) {
+      const contentLower = archived.content.toLowerCase();
+      const tagsLower = archived.tags.map(t => t.toLowerCase());
+      let score = 0;
+      for (const [term, weight] of weightedTerms) {
+        if (contentLower.includes(term)) score += 0.3 * weight;
+        if (tagsLower.some(t => t.includes(term))) score += 0.5 * weight;
+      }
+      if (score > 0) {
+        score *= archived.strength;
+        if (score >= RECALL_THRESHOLD) {
+          recalled.push({ id: archived.id, score });
+        }
+      }
+    }
+
+    // Restore top matches (max 3 per think cycle)
+    recalled.sort((a, b) => b.score - a.score);
+    let restored = 0;
+    for (const { id } of recalled.slice(0, 3)) {
+      if (graph.restoreNode(id)) restored++;
+    }
     if (restored > 0) {
-      log(`Archive recall: restored ${restored} nodes triggered by current context`);
+      log(`Archive recall: restored ${restored} nodes via activation-weighted scoring (${weightedTerms.size} terms)`);
     }
   }
 
