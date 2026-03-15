@@ -112,13 +112,13 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
     }
   }
 
-  // Prune weak nodes
+  // Archive weak nodes (move to long-term cold storage instead of deleting)
   for (const id of toPrune) {
-    graph.removeNode(id);
+    graph.archiveNode(id, "decay");
     pruned++;
   }
 
-  log(`Decay pass: ${decayed} decayed, ${pruned} pruned | tiers: core=${tierCounts.core} important=${tierCounts.important} work=${tierCounts.work} standard=${tierCounts.standard} ephemeral=${tierCounts.ephemeral}`);
+  log(`Decay pass: ${decayed} decayed, ${pruned} archived | tiers: core=${tierCounts.core} important=${tierCounts.important} work=${tierCounts.work} standard=${tierCounts.standard} ephemeral=${tierCounts.ephemeral}`);
   return { decayed, pruned };
 }
 
@@ -187,12 +187,12 @@ export function pruneOrphans(graph: MemoryGraph): number {
     if (node.type === "concept" && graph.getChildren(node.id).length > 0) continue;
     if (now - node.createdAt < graceMs) continue;
 
-    graph.removeNode(node.id);
+    graph.archiveNode(node.id, "orphan");
     pruned++;
   }
 
   if (pruned > 0) {
-    log(`Orphan pruning: ${pruned} orphan nodes removed`);
+    log(`Orphan pruning: ${pruned} orphan nodes archived`);
   }
   return pruned;
 }
@@ -229,11 +229,11 @@ export function emergencyPrune(graph: MemoryGraph, softLimit: number, tierCache?
   const target = softLimit;
   for (const { node } of nodes) {
     if (graph.nodeCount <= target) break;
-    graph.removeNode(node.id);
+    graph.archiveNode(node.id, "emergency");
     pruned++;
   }
 
-  log(`Emergency prune: removed ${pruned} weakest nodes (was ${count}, now ${graph.nodeCount})`);
+  log(`Emergency prune: archived ${pruned} weakest nodes (was ${count}, now ${graph.nodeCount})`);
   return pruned;
 }
 

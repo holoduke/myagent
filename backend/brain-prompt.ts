@@ -499,7 +499,7 @@ export interface ConsolidateContext {
   duplicateCandidates: [MemoryNode, MemoryNode][];
   graph: MemoryGraph;
   wm: WorkingMemory;
-  stats: { nodeCount: number; edgeCount: number; byType: Record<string, number>; avgStrength: number };
+  stats: { nodeCount: number; edgeCount: number; archivedCount: number; byType: Record<string, number>; avgStrength: number };
 }
 
 export function buildConsolidatePrompt(ctx: ConsolidateContext): string {
@@ -515,16 +515,17 @@ export function buildConsolidatePrompt(ctx: ConsolidateContext): string {
 
 ═══ CONSOLIDATION CYCLE ═══
 
-This is a maintenance cycle. Your job: clean up, merge duplicates, decide what to keep/remove.
+This is a maintenance cycle. Your job: clean up, merge duplicates, decide what to keep/archive.
+Note: removed nodes are archived to long-term cold storage, not permanently deleted. They can be recalled later via search or association.
 
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
 
 ═══ GRAPH STATS ═══
-Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
+Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
 By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(", ")}
 
-═══ WEAK NODES (candidates for removal) ═══
+═══ WEAK NODES (candidates for archiving) ═══
 ${ctx.weakNodes.length > 0 ? formatNodeList(ctx.weakNodes) : "(none)"}
 
 ═══ ORPHAN NODES (no connections) ═══
@@ -569,7 +570,7 @@ export interface ReflectContext {
   strongestNodes: MemoryNode[];
   graph: MemoryGraph;
   wm: WorkingMemory;
-  stats: { nodeCount: number; edgeCount: number; byType: Record<string, number>; avgStrength: number };
+  stats: { nodeCount: number; edgeCount: number; archivedCount: number; byType: Record<string, number>; avgStrength: number };
   lastMessageTime: number;
   messagesToday: number;
   maxMessagesPerDay: number;
@@ -641,7 +642,7 @@ ${responsivenessDirective(ctx.responsivenessPreset)}
 ${formatWorkingMemory(ctx.wm)}
 ${goalsBlock}${initiativeBlock}
 ═══ GRAPH STATS ═══
-Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
+Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
 By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(", ")}
 
 ═══ STRONGEST MEMORIES ═══
