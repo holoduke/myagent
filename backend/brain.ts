@@ -25,6 +25,8 @@ import { getDueRecurringTasks, markExecuted } from "./recurring.js";
 import type { RecurringTask } from "./recurring.js";
 import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
 import { ensureSSHKey } from "./integrations/ssh.js";
+import { verify, rotateAuditLog } from "./action-verifier.js";
+import type { ActionContext } from "./action-verifier.js";
 import { getBrainConfig, getActivePreset, getOwnerLocalTime, getOwnerLocalDate } from "./brain-config.js";
 import {
   loadQueue,
@@ -875,13 +877,20 @@ async function handleRecurringTasks(
       switch (task.action.type) {
         case "message": {
           const action = task.action as { type: "message"; targetJid: string; template: string };
-          if (isWhitelisted(action.targetJid)) {
+          const verifyResult = verify({
+            type: "send_recurring",
+            source: "recurring",
+            targetJid: action.targetJid,
+            messageText: action.template,
+            metadata: { taskId: task.id, taskLabel: task.label },
+          });
+          if (verifyResult.verdict === "blocked") {
+            log(`[recurring] Verifier blocked message for "${task.label}": ${verifyResult.reasons.join("; ")}`);
+          } else {
             await sendMessage(action.targetJid, action.template);
             state.lastMessageTime = Date.now();
             state.messagesToday++;
             log(`[recurring] Sent message for task "${task.label}" to ${action.targetJid}`);
-          } else {
-            log(`[recurring] Blocked message for "${task.label}": target not whitelisted`);
           }
           markExecuted(task.id);
           break;
@@ -1042,10 +1051,20 @@ async function thinkTick(
 
     log(`Think reasoning: ${response.reasoning?.slice(0, 200) || "(none)"}`);
 
-    // Apply memory operations
+    // Apply memory operations (with verification)
     if (response.operations.length > 0) {
-      const { applied, skipped } = graph.applyOperations(response.operations as MemoryOperation[]);
-      log(`Think ops: ${applied} applied, ${skipped} skipped`);
+      const opsVerify = verify({
+        type: "memory_ops",
+        source: "think",
+        operationCount: response.operations.length,
+        operationTypes: response.operations.map(o => o.op),
+      });
+      if (opsVerify.verdict === "blocked") {
+        log(`Think ops BLOCKED by verifier: ${opsVerify.reasons.join("; ")}`);
+      } else {
+        const { applied, skipped } = graph.applyOperations(response.operations as MemoryOperation[]);
+        log(`Think ops: ${applied} applied, ${skipped} skipped`);
+      }
     }
 
     // Apply goal operations
@@ -1181,9 +1200,22 @@ async function consolidateTick(
     log(`Consolidate reasoning: ${response.reasoning?.slice(0, 200) || "(none)"}`);
 
     if (response.operations.length > 0) {
-      const { applied, skipped } = graph.applyOperations(response.operations as MemoryOperation[]);
-      log(`Consolidate ops: ${applied} applied, ${skipped} skipped`);
+      const opsVerify = verify({
+        type: "memory_ops",
+        source: "consolidate",
+        operationCount: response.operations.length,
+        operationTypes: response.operations.map(o => o.op),
+      });
+      if (opsVerify.verdict === "blocked") {
+        log(`Consolidate ops BLOCKED by verifier: ${opsVerify.reasons.join("; ")}`);
+      } else {
+        const { applied, skipped } = graph.applyOperations(response.operations as MemoryOperation[]);
+        log(`Consolidate ops: ${applied} applied, ${skipped} skipped`);
+      }
     }
+
+    // Rotate audit log during consolidation
+    rotateAuditLog();
 
     if (response.workingMemory) {
       updateWorkingMemory(wm, response.workingMemory);
@@ -1287,8 +1319,18 @@ async function reflectTick(
     log(`Reflect reasoning: ${response.reasoning?.slice(0, 300) || "(none)"}`);
 
     if (response.operations.length > 0) {
-      const { applied, skipped } = graph.applyOperations(response.operations as MemoryOperation[]);
-      log(`Reflect ops: ${applied} applied, ${skipped} skipped`);
+      const opsVerify = verify({
+        type: "memory_ops",
+        source: "reflect",
+        operationCount: response.operations.length,
+        operationTypes: response.operations.map(o => o.op),
+      });
+      if (opsVerify.verdict === "blocked") {
+        log(`Reflect ops BLOCKED by verifier: ${opsVerify.reasons.join("; ")}`);
+      } else {
+        const { applied, skipped } = graph.applyOperations(response.operations as MemoryOperation[]);
+        log(`Reflect ops: ${applied} applied, ${skipped} skipped`);
+      }
     }
 
     // Apply goal operations
@@ -1306,6 +1348,16 @@ async function reflectTick(
       for (const proposal of response.improvementProposals.slice(0, canEnqueue)) {
         if (!proposal.description || !proposal.rationale) {
           log(`Skipping invalid improvement proposal: missing description or rationale`);
+          continue;
+        }
+        const improveVerify = verify({
+          type: "self_improve",
+          source: "reflect",
+          proposalDescription: proposal.description,
+          metadata: { files: proposal.files },
+        });
+        if (improveVerify.verdict === "blocked") {
+          log(`Self-improve proposal BLOCKED by verifier: ${improveVerify.reasons.join("; ")}`);
           continue;
         }
         const task = {
@@ -1405,11 +1457,21 @@ async function deliverScheduledMessages(
   for (const msg of dueMessages) {
     try {
       const jid = msg.targetJid || ownerJid;
-      if (!isWhitelisted(jid)) {
-        log(`Blocked scheduled message ${msg.id}: target ${jid} not on whitelist`);
+
+      // Action verifier gate (replaces ad-hoc whitelist check)
+      const verifyResult = verify({
+        type: "send_scheduled",
+        source: msg.source,
+        targetJid: jid,
+        messageText: msg.message,
+        metadata: { scheduleId: msg.id },
+      });
+      if (verifyResult.verdict === "blocked") {
+        log(`Verifier blocked scheduled message ${msg.id}: ${verifyResult.reasons.join("; ")}`);
         deliveredIds.push(msg.id); // Remove blocked messages (they'll never succeed)
         continue;
       }
+
       // Dedup: skip brain-sourced messages to JIDs that already received a chat-sourced message recently
       if (msg.source === "brain" && recentChatJids.has(jid)) {
         log(`Dedup: skipping brain-sourced message ${msg.id} to ${jid} — chat-sourced message already delivered in last ${DEDUP_WINDOW_MS / 60000}m`);
@@ -1486,6 +1548,18 @@ async function trySendMessage(
   const messageIntervalOk = (now - state.lastMessageTime) >= cfg.minMessageInterval;
   const underDailyLimit = state.messagesToday < cfg.maxMessagesPerDay;
   const bypass = options?.bypassLimits === true;
+
+  // Action verifier gate
+  const verifyResult = verify({
+    type: "send_message",
+    source: bypass ? "digest" : "think",
+    targetJid: ownerJid,
+    messageText: message,
+  });
+  if (verifyResult.verdict === "blocked") {
+    log(`Verifier blocked proactive message: ${verifyResult.reasons.join("; ")}`);
+    return;
+  }
 
   if (!bypass && isQuiet) {
     log("Suppressed message: quiet hours");
