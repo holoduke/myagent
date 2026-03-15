@@ -18,6 +18,7 @@ import { getRSSStatus, addFeed, removeFeed } from "../integrations/rss.js";
 import { getOwnTracksStatus } from "../integrations/owntracks.js";
 import { getTwilioStatus, makeSimpleCall, makeAgentCall, saveConfig as saveTwilioConfig, loadCallHistory } from "../integrations/twilio.js";
 import { getBrowserStatus, clearBrowserHistory, runWorkflow, navigateTo, takeScreenshot, extractText } from "../integrations/browser.js";
+import { requestCaptchaVerification, getPendingCaptchas, getCaptchaHistory } from "../captcha-verify.js";
 import { getIntegrationsConfig, saveIntegrationsConfig, isValidIntegrationKey } from "../integrations/integration-config.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
@@ -347,6 +348,23 @@ export function handleApiRoutes(
 
   if (pathname === "/api/browser/captcha" && req.method === "POST" && isAuthenticated(req)) {
     handleCaptchaShare(req, res);
+    return true;
+  }
+
+  if (pathname === "/api/browser/captcha/verify" && req.method === "POST" && isAuthenticated(req)) {
+    handleCaptchaVerify(req, res);
+    return true;
+  }
+
+  if (pathname === "/api/browser/captcha/pending" && req.method === "GET" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getPendingCaptchas()));
+    return true;
+  }
+
+  if (pathname === "/api/browser/captcha/history" && req.method === "GET" && isAuthenticated(req)) {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getCaptchaHistory()));
     return true;
   }
 
@@ -1330,6 +1348,33 @@ async function handleCaptchaShare(req: IncomingMessage, res: ServerResponse) {
       sentTo: targetJid || null,
       url: result.url,
     }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: String(err) }));
+  }
+}
+
+// ── Captcha verify handler (full loop) ──
+
+async function handleCaptchaVerify(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = await readBody(req);
+    const { imagePath, caption, timeout } = JSON.parse(body);
+    if (!imagePath) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "imagePath is required" }));
+      return;
+    }
+
+    // This blocks until the owner replies or times out
+    const answer = await requestCaptchaVerification(
+      imagePath,
+      caption || undefined,
+      timeout || 300_000,
+    );
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, answer }));
   } catch (err) {
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: String(err) }));

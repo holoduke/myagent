@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from "fs";
 import { createServer } from "http";
 import { createLogger } from "./logger.js";
 import { startWhatsApp, sendMessage, sendImage, sendReaction, sendTypingIndicator, stopTypingIndicator, getLatestQr } from "./integrations/whatsapp.js";
+import { handleCaptchaReply } from "./captcha-verify.js";
 import { resetSession } from "./claude.js";
 import { getDefaultProvider, bootstrapDefaultProvider } from "./providers/index.js";
 import { splitMessage } from "./providers/util.js";
@@ -191,6 +192,13 @@ async function main() {
     async (jid, text, message) => {
       await queue.add(async () => {
         log(`Received from ${jid}: "${text}"`);
+
+        // Check if this message is a captcha verification reply
+        if (handleCaptchaReply(text)) {
+          log("Message consumed as captcha answer");
+          try { await sendReaction(jid, message.key, "\u2705"); } catch {}
+          return;
+        }
 
         try {
           await sendReaction(jid, message.key, "\u23f3");
