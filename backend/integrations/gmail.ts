@@ -14,6 +14,7 @@ const STATE_FILE = `${GMAIL_DIR}/state.json`;
 const SEEN_IDS_FILE = `${GMAIL_DIR}/seen-ids.json`;
 const POLL_INTERVAL = Number(process.env.GMAIL_POLL_INTERVAL ?? 60000);
 const MAX_BODY_LENGTH = Number(process.env.GMAIL_MAX_BODY_LENGTH ?? 500);
+const API_TIMEOUT = 15_000; // 15s timeout for individual Gmail API calls
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.send",
@@ -204,6 +205,20 @@ function trackMessageId(id: string): boolean {
   return true;
 }
 
+// ── Timeout Helper ──
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms / 1000}s`));
+    }, ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
 // ── Gmail API Operations ──
 
 function getGmailClient(account: GmailAccount): gmail_v1.Gmail {
@@ -273,11 +288,15 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
   const query = `after:${sinceSeconds} in:inbox -in:sent`;
 
   try {
-    const listRes = await gmail.users.messages.list({
-      userId: "me",
-      q: query,
-      maxResults: 20,
-    });
+    const listRes = await withTimeout(
+      gmail.users.messages.list({
+        userId: "me",
+        q: query,
+        maxResults: 20,
+      }),
+      API_TIMEOUT,
+      `gmail.messages.list(${account.id})`,
+    );
 
     const messages = listRes.data.messages || [];
     if (messages.length === 0) {
@@ -292,11 +311,15 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
 
     // Process a single message: fetch full content and record observation
     const processMessage = async (msgRef: gmail_v1.Schema$Message): Promise<void> => {
-      const msgRes = await gmail.users.messages.get({
-        userId: "me",
-        id: msgRef.id!,
-        format: "full",
-      });
+      const msgRes = await withTimeout(
+        gmail.users.messages.get({
+          userId: "me",
+          id: msgRef.id!,
+          format: "full",
+        }),
+        API_TIMEOUT,
+        `gmail.messages.get(${account.id}/${msgRef.id})`,
+      );
 
       const msg = msgRes.data;
       const internalDate = Number(msg.internalDate || 0);
@@ -364,6 +387,8 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
   } catch (err: any) {
     if (err.code === 401) {
       log(`Auth expired for ${account.id}, will retry after refresh`);
+    } else if (err.message?.includes("timed out")) {
+      log(`Gmail API timeout for ${account.id}, skipping this polling cycle`);
     } else {
       log(`Gmail poll failed for ${account.id}: ${err.message || err}`);
     }
