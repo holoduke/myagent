@@ -57,10 +57,15 @@ export function loadQueue(): ImproveQueue {
 }
 
 export function saveQueue(queue: ImproveQueue): void {
-  ensureDir();
-  const tmp = QUEUE_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(queue, null, 2));
-  renameSync(tmp, QUEUE_FILE);
+  try {
+    ensureDir();
+    const tmp = QUEUE_FILE + ".tmp";
+    writeFileSync(tmp, JSON.stringify(queue, null, 2));
+    renameSync(tmp, QUEUE_FILE);
+  } catch (err) {
+    log(`Failed to save queue: ${err}`);
+    throw err;
+  }
 }
 
 export function loadHistory(): ImproveHistory {
@@ -75,14 +80,19 @@ export function loadHistory(): ImproveHistory {
 }
 
 export function saveHistory(history: ImproveHistory): void {
-  ensureDir();
-  // Cap at MAX_HISTORY entries
-  if (history.entries.length > MAX_HISTORY) {
-    history.entries = history.entries.slice(0, MAX_HISTORY);
+  try {
+    ensureDir();
+    // Cap at MAX_HISTORY entries
+    if (history.entries.length > MAX_HISTORY) {
+      history.entries = history.entries.slice(0, MAX_HISTORY);
+    }
+    const tmp = HISTORY_FILE + ".tmp";
+    writeFileSync(tmp, JSON.stringify(history, null, 2));
+    renameSync(tmp, HISTORY_FILE);
+  } catch (err) {
+    log(`Failed to save history: ${err}`);
+    throw err;
   }
-  const tmp = HISTORY_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(history, null, 2));
-  renameSync(tmp, HISTORY_FILE);
 }
 
 // ── Queue Operations ──
