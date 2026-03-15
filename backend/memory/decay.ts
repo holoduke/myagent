@@ -1,6 +1,6 @@
 import type { MemoryGraph } from "./graph.js";
 import type { MemoryNode, RetentionTier, WorkingMemory } from "./types.js";
-import { extractKeywordsFromText } from "./activation.js";
+import { extractKeywordsFromText, spreadingActivation } from "./activation.js";
 import {
   DECAY_LAMBDA,
   PRUNE_NODE_THRESHOLD,
@@ -238,52 +238,109 @@ export function emergencyPrune(graph: MemoryGraph, softLimit: number, tierCache?
   return pruned;
 }
 
+// Activation threshold for archive rescan — archived nodes scoring above this are promoted
+const RESCAN_ACTIVATION_THRESHOLD = 0.15;
+const RESCAN_MAX_RESTORE = 3; // conservative — max restorations per cycle
+
 /**
- * Periodic archive rescan — extract themes from working memory + strongest active nodes,
- * sweep the archive for matches, and restore anything that connects to current context.
- * Like the subconscious surfacing a forgotten memory because something triggered it.
+ * Periodic archive rescan using spreading activation against cold storage.
+ *
+ * Instead of simple keyword matching, this:
+ * 1. Extracts context terms from working memory
+ * 2. Runs spreading activation on the active graph to find the current activation pattern
+ * 3. Builds activation-weighted terms from the most active nodes
+ * 4. Scores each archived node against this weighted pattern
+ * 5. Promotes archived nodes whose activation score exceeds threshold
+ *
+ * This mimics associative recall — contextual triggers reactivate dormant memories
+ * through the same spreading activation mechanism used for active recall.
  */
 export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
   if (graph.archiveSize === 0) return 0;
 
-  // Build search terms from current active context
-  const themes: string[] = [];
-
-  // From working memory context + mood + tracking
-  if (wm.currentContext) themes.push(...extractKeywordsFromText(wm.currentContext));
+  // Step 1: Build context terms from working memory
+  const contextTerms: string[] = [];
+  if (wm.currentContext) contextTerms.push(...extractKeywordsFromText(wm.currentContext));
   if (wm.shortTermTracking) {
     for (const item of wm.shortTermTracking) {
-      themes.push(...extractKeywordsFromText(item));
+      contextTerms.push(...extractKeywordsFromText(item));
     }
   }
 
-  // From strongest active nodes (top 10 by strength)
-  const strongestNodes = graph.allNodes()
-    .filter(n => !n.pinned)
-    .sort((a, b) => b.strength - a.strength)
-    .slice(0, 10);
+  const uniqueContextTerms = [...new Set(contextTerms)].slice(0, 20);
+  if (uniqueContextTerms.length === 0) return 0;
 
-  for (const node of strongestNodes) {
-    themes.push(...extractKeywordsFromText(node.content));
-    themes.push(...node.tags.map(t => t.toLowerCase()));
+  // Step 2: Run spreading activation on active graph to get current activation pattern
+  const activated = spreadingActivation(graph, uniqueContextTerms, 15);
+
+  // Step 3: Build activation-weighted term set from activated nodes
+  // Terms from highly-activated nodes matter more than terms from weakly-activated ones
+  const weightedTerms = new Map<string, number>();
+
+  for (const { node, activation } of activated) {
+    const nodeTerms = [
+      ...extractKeywordsFromText(node.content),
+      ...node.tags.map(t => t.toLowerCase()),
+    ];
+    for (const term of nodeTerms) {
+      const existing = weightedTerms.get(term) || 0;
+      weightedTerms.set(term, Math.max(existing, activation));
+    }
   }
 
-  // Deduplicate and take top terms
-  const uniqueTerms = [...new Set(themes)].slice(0, 20);
-  if (uniqueTerms.length === 0) return 0;
+  // Include direct context terms with base activation weight
+  for (const term of uniqueContextTerms) {
+    const existing = weightedTerms.get(term) || 0;
+    weightedTerms.set(term, Math.max(existing, 0.3));
+  }
 
-  const query = uniqueTerms.join(" ");
-  const candidates = graph.searchArchive(query, 3); // conservative — max 3 per cycle
+  if (weightedTerms.size === 0) return 0;
+
+  // Step 4: Score each archived node using activation-weighted matching
+  const candidates: { id: string; score: number }[] = [];
+
+  for (const archived of graph.allArchivedNodes()) {
+    const contentLower = archived.content.toLowerCase();
+    const tagsLower = archived.tags.map(t => t.toLowerCase());
+
+    let score = 0;
+    let hits = 0;
+
+    for (const [term, weight] of weightedTerms) {
+      if (contentLower.includes(term)) {
+        score += 0.3 * weight;
+        hits++;
+      }
+      if (tagsLower.some(t => t.includes(term))) {
+        score += 0.5 * weight;
+        hits++;
+      }
+    }
+
+    if (hits === 0) continue;
+
+    // Factor in original node strength and archive recency
+    const recencyDays = (Date.now() - archived.archivedAt) / 86400000;
+    const recencyBonus = 1 / (1 + recencyDays / 30);
+    score *= archived.strength * (1 + recencyBonus);
+
+    if (score >= RESCAN_ACTIVATION_THRESHOLD) {
+      candidates.push({ id: archived.id, score });
+    }
+  }
+
+  // Step 5: Restore top candidates that exceed threshold
+  candidates.sort((a, b) => b.score - a.score);
 
   let restored = 0;
-  for (const candidate of candidates) {
+  for (const candidate of candidates.slice(0, RESCAN_MAX_RESTORE)) {
     if (graph.restoreNode(candidate.id)) {
       restored++;
     }
   }
 
   if (restored > 0) {
-    log(`Archive rescan: restored ${restored} nodes from cold storage (matched ${uniqueTerms.length} active themes)`);
+    log(`Archive rescan: restored ${restored}/${candidates.length} nodes via spreading activation (${weightedTerms.size} weighted terms, threshold ${RESCAN_ACTIVATION_THRESHOLD})`);
   }
 
   return restored;
