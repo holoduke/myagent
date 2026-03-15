@@ -23,6 +23,11 @@ export interface MemoryNode {
   accessCount: number;
 }
 
+export interface ArchivedNode extends MemoryNode {
+  archivedAt: number;       // unix ms — when it was moved to cold storage
+  archiveReason: "decay" | "orphan" | "emergency" | "manual" | "consolidation";
+}
+
 // ── Edge Types ──
 
 export type EdgeType =

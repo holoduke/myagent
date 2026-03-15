@@ -1,5 +1,6 @@
 import type { MemoryGraph } from "./graph.js";
-import type { MemoryNode, RetentionTier } from "./types.js";
+import type { MemoryNode, RetentionTier, WorkingMemory } from "./types.js";
+import { extractKeywordsFromText } from "./activation.js";
 import {
   DECAY_LAMBDA,
   PRUNE_NODE_THRESHOLD,
@@ -112,13 +113,13 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
     }
   }
 
-  // Prune weak nodes
+  // Archive weak nodes (move to long-term cold storage instead of deleting)
   for (const id of toPrune) {
-    graph.removeNode(id);
+    graph.archiveNode(id, "decay");
     pruned++;
   }
 
-  log(`Decay pass: ${decayed} decayed, ${pruned} pruned | tiers: core=${tierCounts.core} important=${tierCounts.important} work=${tierCounts.work} standard=${tierCounts.standard} ephemeral=${tierCounts.ephemeral}`);
+  log(`Decay pass: ${decayed} decayed, ${pruned} archived | tiers: core=${tierCounts.core} important=${tierCounts.important} work=${tierCounts.work} standard=${tierCounts.standard} ephemeral=${tierCounts.ephemeral}`);
   return { decayed, pruned };
 }
 
@@ -187,12 +188,12 @@ export function pruneOrphans(graph: MemoryGraph): number {
     if (node.type === "concept" && graph.getChildren(node.id).length > 0) continue;
     if (now - node.createdAt < graceMs) continue;
 
-    graph.removeNode(node.id);
+    graph.archiveNode(node.id, "orphan");
     pruned++;
   }
 
   if (pruned > 0) {
-    log(`Orphan pruning: ${pruned} orphan nodes removed`);
+    log(`Orphan pruning: ${pruned} orphan nodes archived`);
   }
   return pruned;
 }
@@ -229,30 +230,85 @@ export function emergencyPrune(graph: MemoryGraph, softLimit: number, tierCache?
   const target = softLimit;
   for (const { node } of nodes) {
     if (graph.nodeCount <= target) break;
-    graph.removeNode(node.id);
+    graph.archiveNode(node.id, "emergency");
     pruned++;
   }
 
-  log(`Emergency prune: removed ${pruned} weakest nodes (was ${count}, now ${graph.nodeCount})`);
+  log(`Emergency prune: archived ${pruned} weakest nodes (was ${count}, now ${graph.nodeCount})`);
   return pruned;
 }
 
 /**
- * Full consolidation pass: decay → edge decay → orphan prune → emergency prune.
+ * Periodic archive rescan — extract themes from working memory + strongest active nodes,
+ * sweep the archive for matches, and restore anything that connects to current context.
+ * Like the subconscious surfacing a forgotten memory because something triggered it.
  */
-export function runConsolidation(graph: MemoryGraph): {
+export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
+  if (graph.archiveSize === 0) return 0;
+
+  // Build search terms from current active context
+  const themes: string[] = [];
+
+  // From working memory context + mood + tracking
+  if (wm.currentContext) themes.push(...extractKeywordsFromText(wm.currentContext));
+  if (wm.shortTermTracking) {
+    for (const item of wm.shortTermTracking) {
+      themes.push(...extractKeywordsFromText(item));
+    }
+  }
+
+  // From strongest active nodes (top 10 by strength)
+  const strongestNodes = graph.allNodes()
+    .filter(n => !n.pinned)
+    .sort((a, b) => b.strength - a.strength)
+    .slice(0, 10);
+
+  for (const node of strongestNodes) {
+    themes.push(...extractKeywordsFromText(node.content));
+    themes.push(...node.tags.map(t => t.toLowerCase()));
+  }
+
+  // Deduplicate and take top terms
+  const uniqueTerms = [...new Set(themes)].slice(0, 20);
+  if (uniqueTerms.length === 0) return 0;
+
+  const query = uniqueTerms.join(" ");
+  const candidates = graph.searchArchive(query, 3); // conservative — max 3 per cycle
+
+  let restored = 0;
+  for (const candidate of candidates) {
+    if (graph.restoreNode(candidate.id)) {
+      restored++;
+    }
+  }
+
+  if (restored > 0) {
+    log(`Archive rescan: restored ${restored} nodes from cold storage (matched ${uniqueTerms.length} active themes)`);
+  }
+
+  return restored;
+}
+
+/**
+ * Full consolidation pass: decay → edge decay → orphan prune → emergency prune → archive rescan.
+ */
+export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
   nodesDecayed: number;
   nodesPruned: number;
   edgesDecayed: number;
   edgesPruned: number;
   orphansPruned: number;
   emergencyPruned: number;
+  archiveRestored: number;
 } {
   const tierCache = new Map<string, RetentionTier>();
   const nodeResult = applyDecay(graph, tierCache);
   const edgeResult = applyEdgeDecay(graph);
   const orphansPruned = pruneOrphans(graph);
   const emergencyPruned = emergencyPrune(graph, 500, tierCache);
+
+  // Periodic archive rescan — check if any archived memories match current context
+  const archiveRestored = wm ? rescanArchive(graph, wm) : 0;
 
   return {
     nodesDecayed: nodeResult.decayed,
@@ -261,5 +317,6 @@ export function runConsolidation(graph: MemoryGraph): {
     edgesPruned: edgeResult.pruned,
     orphansPruned,
     emergencyPruned,
+    archiveRestored,
   };
 }

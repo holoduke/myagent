@@ -1,13 +1,8 @@
-import { chromium } from "playwright-extra";
-import StealthPlugin from "puppeteer-extra-plugin-stealth";
-import type { Browser, BrowserContext, Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "patchright";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { randomUUID } from "crypto";
 import { createLogger } from "../logger.js";
 import { isIntegrationEnabled } from "./integration-config.js";
-
-// Register stealth plugin once at module load
-chromium.use(StealthPlugin());
 
 const log = createLogger("browser");
 

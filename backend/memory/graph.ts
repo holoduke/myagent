@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { randomBytes } from "crypto";
-import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType } from "./types.js";
+import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode } from "./types.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("graph");
@@ -9,6 +9,9 @@ const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const GRAPH_DIR = `${BRAIN_DIR}/graph`;
 const NODES_FILE = `${GRAPH_DIR}/nodes.json`;
 const EDGES_FILE = `${GRAPH_DIR}/edges.json`;
+const ARCHIVE_FILE = `${GRAPH_DIR}/archive.json`;
+
+const MAX_ARCHIVE_NODES = 2000;
 
 function atomicWrite(filepath: string, data: string): void {
   const tmp = filepath + ".tmp";
@@ -31,6 +34,9 @@ export class MemoryGraph {
   private byTag = new Map<string, Set<string>>();
   private edgesFromIdx = new Map<string, MemoryEdge[]>();
   private edgesToIdx = new Map<string, MemoryEdge[]>();
+
+  // Long-term archive (cold storage — searchable but not active)
+  private archive = new Map<string, ArchivedNode>();
 
   // Pending observations buffer (for observe ticks)
   private pending: Observation[] = [];
@@ -61,9 +67,20 @@ export class MemoryGraph {
       }
     }
 
+    if (existsSync(ARCHIVE_FILE)) {
+      try {
+        const raw = JSON.parse(readFileSync(ARCHIVE_FILE, "utf-8")) as Record<string, ArchivedNode>;
+        for (const [id, node] of Object.entries(raw)) {
+          this.archive.set(id, node);
+        }
+      } catch {
+        log("Failed to parse archive.json, starting fresh");
+      }
+    }
+
     this.rebuildIndexes();
     this.validateGraph();
-    log(`Loaded graph: ${this.nodes.size} nodes, ${this.edges.length} edges`);
+    log(`Loaded graph: ${this.nodes.size} nodes, ${this.edges.length} edges, ${this.archive.size} archived`);
   }
 
   save(): void {
@@ -77,6 +94,13 @@ export class MemoryGraph {
     }
     atomicWrite(NODES_FILE, JSON.stringify(nodesObj));
     atomicWrite(EDGES_FILE, JSON.stringify(this.edges));
+
+    // Save archive
+    const archiveObj: Record<string, ArchivedNode> = {};
+    for (const [id, node] of this.archive) {
+      archiveObj[id] = node;
+    }
+    atomicWrite(ARCHIVE_FILE, JSON.stringify(archiveObj));
   }
 
   private rebuildIndexes(): void {
@@ -401,6 +425,116 @@ export class MemoryGraph {
     return mergedId;
   }
 
+  // ── Archive (Long-term Cold Storage) ──
+
+  /**
+   * Move a node from active graph to archive (cold storage).
+   * The node is removed from active graph + edges, but preserved in archive.
+   * Can be restored later via searchArchive() + restoreNode().
+   */
+  archiveNode(id: string, reason: ArchivedNode["archiveReason"] = "decay"): boolean {
+    const node = this.nodes.get(id);
+    if (!node) return false;
+    if (node.pinned) return false; // never archive pinned nodes
+
+    // Create archived copy
+    const archived: ArchivedNode = {
+      ...node,
+      archivedAt: Date.now(),
+      archiveReason: reason,
+    };
+
+    this.archive.set(id, archived);
+
+    // Remove from active graph (edges get cleaned up)
+    this.removeNode(id);
+
+    // Evict oldest archived nodes if over limit
+    if (this.archive.size > MAX_ARCHIVE_NODES) {
+      const sorted = Array.from(this.archive.values())
+        .sort((a, b) => a.archivedAt - b.archivedAt);
+      const toEvict = sorted.slice(0, this.archive.size - MAX_ARCHIVE_NODES);
+      for (const node of toEvict) {
+        this.archive.delete(node.id);
+      }
+      log(`Archive eviction: removed ${toEvict.length} oldest archived nodes`);
+    }
+
+    return true;
+  }
+
+  /**
+   * Search the archive by keyword (matches content and tags).
+   * Returns matching archived nodes sorted by relevance (strength * recency).
+   */
+  searchArchive(query: string, limit = 20): ArchivedNode[] {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return [];
+
+    const matches: { node: ArchivedNode; score: number }[] = [];
+
+    for (const node of this.archive.values()) {
+      const contentLower = node.content.toLowerCase();
+      const tagsLower = node.tags.map(t => t.toLowerCase());
+
+      let termHits = 0;
+      for (const term of terms) {
+        if (contentLower.includes(term) || tagsLower.some(t => t.includes(term))) {
+          termHits++;
+        }
+      }
+
+      if (termHits === 0) continue;
+
+      // Score: term coverage * original strength * recency bonus
+      const coverage = termHits / terms.length;
+      const recencyDays = (Date.now() - node.archivedAt) / 86400000;
+      const recencyBonus = 1 / (1 + recencyDays / 30); // half-weight after 30 days
+      const score = coverage * node.strength * (1 + recencyBonus);
+
+      matches.push({ node, score });
+    }
+
+    return matches
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(m => m.node);
+  }
+
+  /**
+   * Restore a node from archive back to active graph.
+   * Strength is reduced (it was forgotten for a reason) but the memory lives again.
+   */
+  restoreNode(id: string): boolean {
+    const archived = this.archive.get(id);
+    if (!archived) return false;
+
+    // Restore with reduced strength (it was dormant)
+    const { archivedAt: _, archiveReason: __, ...nodeData } = archived;
+    const restored: MemoryNode = {
+      ...nodeData,
+      strength: Math.min(0.6, archived.strength), // cap at 0.6 — needs reinforcement
+      lastAccessedAt: Date.now(),
+      accessCount: archived.accessCount + 1,
+    };
+
+    this.addNode(restored);
+    this.archive.delete(id);
+
+    log(`Restored node ${id} from archive (was archived for "${archived.archiveReason}")`);
+    return true;
+  }
+
+  /** Get archive stats */
+  get archiveSize(): number {
+    return this.archive.size;
+  }
+
+  /** Get all archived nodes (for dashboard/inspection) */
+  allArchivedNodes(): ArchivedNode[] {
+    return Array.from(this.archive.values());
+  }
+
   // ── Queries ──
 
   findByType(type: NodeType): MemoryNode[] {
@@ -606,7 +740,7 @@ export class MemoryGraph {
 
   // ── Stats ──
 
-  getStats(): { nodeCount: number; edgeCount: number; byType: Record<string, number>; avgStrength: number } {
+  getStats(): { nodeCount: number; edgeCount: number; archivedCount: number; byType: Record<string, number>; avgStrength: number } {
     const byType: Record<string, number> = {};
     let totalStrength = 0;
 
@@ -618,6 +752,7 @@ export class MemoryGraph {
     return {
       nodeCount: this.nodes.size,
       edgeCount: this.edges.length,
+      archivedCount: this.archive.size,
       byType,
       avgStrength: this.nodes.size > 0 ? totalStrength / this.nodes.size : 0,
     };
