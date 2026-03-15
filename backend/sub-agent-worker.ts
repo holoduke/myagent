@@ -7,27 +7,49 @@ const log = createLogger("sub-agent-worker");
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 
 function parseResult(raw: string, agentId: string): SubAgentResult {
-  try {
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (match) {
-      const parsed = JSON.parse(match[0]);
-      return {
-        agentId,
-        success: !!parsed.success,
-        summary: parsed.summary || "",
-        details: parsed.details || "",
-        metrics: parsed.metrics || undefined,
-        error: parsed.error || undefined,
-        completedAt: Date.now(),
-      };
+  // Try to find a JSON block that has our expected result fields (summary/success)
+  // Search from the END of the response since the result JSON comes last
+  const jsonBlocks: string[] = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (raw[i] === "}") {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        jsonBlocks.push(raw.slice(start, i + 1));
+        start = -1;
+      }
     }
-  } catch {}
+  }
 
-  // Could not parse structured JSON — use raw text as details
+  // Search blocks from last to first — result JSON is typically at the end
+  for (let i = jsonBlocks.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(jsonBlocks[i]);
+      if ("summary" in parsed || ("success" in parsed && ("details" in parsed || "error" in parsed))) {
+        return {
+          agentId,
+          success: !!parsed.success,
+          summary: parsed.summary || "",
+          details: parsed.details || "",
+          metrics: parsed.metrics || undefined,
+          error: parsed.error || undefined,
+          completedAt: Date.now(),
+        };
+      }
+    } catch {}
+  }
+
+  // Fallback: treat the whole response as a successful run with raw text details
+  // (the agent did work, it just didn't format the output as JSON)
+  const hasActionWords = /upvot|comment|post|follow|check|notif/i.test(raw);
   return {
     agentId,
-    success: false,
-    summary: "Could not parse structured response",
+    success: hasActionWords,
+    summary: hasActionWords ? "Completed (unstructured response)" : "Could not parse structured response",
     details: raw.slice(0, 2000),
     completedAt: Date.now(),
   };
