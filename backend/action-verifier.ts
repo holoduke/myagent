@@ -84,7 +84,7 @@ const DEFAULT_CONFIG: VerifierConfig = {
     /bearer\s/i,
   ],
   enforceWhitelist: true,
-  maxProposalsPerReflect: 3,
+  maxProposalsPerReflect: 5,
 };
 
 let config: VerifierConfig = { ...DEFAULT_CONFIG };

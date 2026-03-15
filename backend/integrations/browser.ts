@@ -1,14 +1,35 @@
-import { chromium, Browser, BrowserContext, Page } from "playwright";
+import { chromium } from "playwright-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import type { Browser, BrowserContext, Page } from "playwright";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { randomUUID } from "crypto";
 import { createLogger } from "../logger.js";
 import { isIntegrationEnabled } from "./integration-config.js";
+
+// Register stealth plugin once at module load
+chromium.use(StealthPlugin());
 
 const log = createLogger("browser");
 
 const BROWSER_DIR = "/data/browser";
 const STATE_FILE = `${BROWSER_DIR}/state.json`;
 const TASK_HISTORY_FILE = `${BROWSER_DIR}/history.json`;
+
+const STEALTH_CONTEXT_OPTIONS = {
+  userAgent:
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  viewport: { width: 1920, height: 1080 },
+  locale: "nl-NL",
+  timezoneId: "Europe/Amsterdam",
+  colorScheme: "light" as const,
+  deviceScaleFactor: 1,
+  hasTouch: false,
+  javaScriptEnabled: true,
+};
+
+async function createStealthContext(browser: Browser): Promise<BrowserContext> {
+  return browser.newContext(STEALTH_CONTEXT_OPTIONS);
+}
 const MAX_HISTORY = 50;
 const DEFAULT_SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -112,7 +133,7 @@ async function getBrowser(): Promise<Browser> {
     return browserInstance;
   }
 
-  log("Launching Chromium headless...");
+  log("Launching Chromium headless (stealth mode)...");
   browserInstance = await chromium.launch({
     headless: true,
     args: [
@@ -138,10 +159,7 @@ async function getBrowser(): Promise<Browser> {
 
 async function withPage<T>(fn: (page: Page) => Promise<T>, timeout = 30000): Promise<T> {
   const browser = await getBrowser();
-  const context: BrowserContext = await browser.newContext({
-    userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    viewport: { width: 1280, height: 720 },
-  });
+  const context = await createStealthContext(browser);
 
   activeSessions++;
   const page = await context.newPage();
@@ -440,10 +458,7 @@ export async function runSession(
   }
 
   const browser = await getBrowser();
-  const context = await browser.newContext({
-    userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    viewport: { width: 1280, height: 720 },
-  });
+  const context = await createStealthContext(browser);
 
   const results: BrowserTaskResult[] = [];
   const history = loadHistory();

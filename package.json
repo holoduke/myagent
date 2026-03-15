@@ -13,6 +13,8 @@
     "googleapis": "^171.4.0",
     "pino": "^9.6.0",
     "playwright": "^1.58.2",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "qrcode-terminal": "^0.12.0",
     "rss-parser": "^3.13.0",
     "twilio": "^5.4.0"
