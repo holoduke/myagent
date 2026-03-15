@@ -224,8 +224,8 @@ export function getObservationsSince(since: number, filter?: ObservationFilter, 
         if (filter && !matchesFilter(obs, filter)) continue;
         results.push(obs);
         if (limit !== undefined && results.length >= limit) break;
-      } catch {
-        // Skip corrupted lines
+      } catch (err) {
+        log(`Skipping corrupted observation line: ${err}`);
       }
     }
     return results;
@@ -256,8 +256,8 @@ function getObservationsSinceTail(since: number, filter?: ObservationFilter, lim
         }
         if (filter && !matchesFilter(obs, filter)) continue;
         chunkResults.push(obs);
-      } catch {
-        // Skip corrupted lines
+      } catch (err) {
+        log(`Skipping corrupted observation line (tail): ${err}`);
       }
     }
 
@@ -347,8 +347,8 @@ export function pruneObservations(days?: number): void {
         } else {
           pruned++;
         }
-      } catch {
-        // Drop corrupted lines during pruning
+      } catch (err) {
+        log(`Dropping corrupted line during pruning: ${err}`);
         pruned++;
       }
     }

@@ -1,5 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { createLogger } from "../logger.js";
 
+const log = createLogger("integration-config");
 const CONFIG_FILE = "/data/integrations-config.json";
 
 const INTEGRATION_KEYS = [
@@ -43,7 +45,9 @@ export function getIntegrationsConfig(): IntegrationsConfig {
       const raw = JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
       return { ...DEFAULTS, ...raw };
     }
-  } catch {}
+  } catch (err) {
+    log(`Failed to load integrations config: ${err}`);
+  }
   return { ...DEFAULTS };
 }
 

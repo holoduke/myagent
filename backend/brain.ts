@@ -62,6 +62,13 @@ const GITHUB_REPO = process.env.GITHUB_REPO || "";
 const BRAIN_TOOLS = process.env.BRAIN_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch";
 const TIME_AWARENESS_INTERVAL = 30 * 60 * 1000; // 30 min — think even without observations
 
+// Tick-level timeout: prevents the entire tick from blocking the brain loop indefinitely
+const TICK_TIMEOUT = Number(process.env.BRAIN_TICK_TIMEOUT) || 120_000; // 120s default
+
+// Circuit breaker: configurable max failures before backoff kicks in
+const CB_MAX_FAILURES = Number(process.env.BRAIN_CB_MAX_FAILURES) || 3;
+const CB_MAX_BACKOFF = Number(process.env.BRAIN_CB_MAX_BACKOFF) || 30 * 60 * 1000; // 30 min cap
+
 // Urgency bypass
 const URGENCY_BYPASS_THRESHOLD = 0.6;
 const URGENCY_MIN_COOLDOWN = 60000; // 1 min minimum even for urgent
@@ -107,8 +114,8 @@ function loadState(): BrainState {
     if (existsSync(STATE_FILE)) {
       return { ...defaultState(), ...JSON.parse(readFileSync(STATE_FILE, "utf-8")) };
     }
-  } catch {
-    log("Failed to read state, using defaults");
+  } catch (err) {
+    log(`Failed to read state, using defaults: ${err}`);
   }
   return defaultState();
 }
@@ -143,8 +150,8 @@ function parseBrainResponse(raw: string): BrainResponse | null {
       goalOps: Array.isArray(parsed.goalOps) ? parsed.goalOps : undefined,
       improvementProposals: Array.isArray(parsed.improvementProposals) ? parsed.improvementProposals : undefined,
     };
-  } catch {
-    log(`Failed to parse brain response: ${raw.slice(0, 200)}`);
+  } catch (err) {
+    log(`Failed to parse brain response: ${raw.slice(0, 200)} — ${err}`);
     return null;
   }
 }
@@ -631,6 +638,20 @@ export function stopBrainLoop(): void {
   log("Brain loop stopped");
 }
 
+// ── Tick Timeout Helper ──
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms / 1000}s`));
+    }, ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
 // ── Tick Scheduler ──
 
 async function tick(
@@ -704,18 +725,18 @@ async function tick(
   // Priority: reflect > consolidate > think (only one per tick to save cost)
 
   // ── Circuit breaker: back off on consecutive failures ──
-  if (state.consecutiveFailures >= 3) {
+  if (state.consecutiveFailures >= CB_MAX_FAILURES) {
     const backoffMs = Math.min(
       Math.pow(2, state.consecutiveFailures) * cfg.tickInterval,
-      30 * 60 * 1000, // cap at 30 minutes
+      CB_MAX_BACKOFF,
     );
     const timeSinceLastTick = now - Math.max(state.lastThinkTick, state.lastConsolidateTick, state.lastReflectTick);
     if (timeSinceLastTick < backoffMs) {
-      log(`Circuit breaker: backing off (${state.consecutiveFailures} failures, next attempt in ${Math.round((backoffMs - timeSinceLastTick) / 1000)}s)`);
+      log(`Circuit breaker OPEN: backing off (${state.consecutiveFailures} failures, next attempt in ${Math.round((backoffMs - timeSinceLastTick) / 1000)}s)`);
       saveState(state);
       return;
     }
-    log(`Circuit breaker: ${state.consecutiveFailures} failures, but backoff elapsed — retrying`);
+    log(`Circuit breaker HALF-OPEN: ${state.consecutiveFailures} failures, backoff elapsed — retrying one tick`);
   }
 
   const timeSinceReflect = now - state.lastReflectTick;
@@ -744,23 +765,47 @@ async function tick(
   }
 
   let tickSucceeded = false;
+  let tickRan = false;
 
-  if (timeSinceReflect >= cfg.reflectInterval && graph.nodeCount > 0) {
-    tickSucceeded = await reflectTick(state, queue, sendMessage, ownerJid, signals);
-  } else if (timeSinceConsolidate >= cfg.consolidateInterval && graph.nodeCount > 0) {
-    tickSucceeded = await consolidateTick(state, queue);
-  } else if (
-    (hasNewObs && timeSinceThink >= cfg.thinkCooldown) ||
-    (hasNewObs && urgentBypass) ||
-    timeSinceThink >= TIME_AWARENESS_INTERVAL ||
-    initiativeTriggered
-  ) {
-    if (initiativeTriggered && !hasNewObs) {
-      recordInitiativeThink(state);
-      log(`Initiative-triggered think (${highPrioritySignals.length} high-priority signals)`);
+  try {
+    if (timeSinceReflect >= cfg.reflectInterval && graph.nodeCount > 0) {
+      tickRan = true;
+      tickSucceeded = await withTimeout(
+        reflectTick(state, queue, sendMessage, ownerJid, signals),
+        Math.max(TICK_TIMEOUT, 600_000), // reflect gets at least 10min
+        "reflectTick",
+      );
+    } else if (timeSinceConsolidate >= cfg.consolidateInterval && graph.nodeCount > 0) {
+      tickRan = true;
+      tickSucceeded = await withTimeout(
+        consolidateTick(state, queue),
+        TICK_TIMEOUT,
+        "consolidateTick",
+      );
+    } else if (
+      (hasNewObs && timeSinceThink >= cfg.thinkCooldown) ||
+      (hasNewObs && urgentBypass) ||
+      timeSinceThink >= TIME_AWARENESS_INTERVAL ||
+      initiativeTriggered
+    ) {
+      tickRan = true;
+      if (initiativeTriggered && !hasNewObs) {
+        recordInitiativeThink(state);
+        log(`Initiative-triggered think (${highPrioritySignals.length} high-priority signals)`);
+      }
+      tickSucceeded = await withTimeout(
+        thinkTick(state, newObs, queue, sendMessage, ownerJid, signals),
+        TICK_TIMEOUT,
+        "thinkTick",
+      );
     }
-    tickSucceeded = await thinkTick(state, newObs, queue, sendMessage, ownerJid, signals);
-  } else {
+  } catch (err) {
+    tickRan = true;
+    tickSucceeded = false;
+    log(`Tick execution error: ${err}`);
+  }
+
+  if (!tickRan) {
     // Nothing to do this tick
     saveState(state);
     return;

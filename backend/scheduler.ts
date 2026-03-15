@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "./logger.js";
+import { isWhitelisted } from "./contact-whitelist.js";
 
 const log = createLogger("scheduler");
 
@@ -32,13 +33,18 @@ function isValidScheduledMessage(entry: unknown): entry is ScheduledMessage {
   );
 }
 
+// Write-through in-memory cache (follows history.ts pattern)
+let scheduleCache: ScheduledMessage[] | null = null;
+
 function loadSchedule(): ScheduledMessage[] {
+  if (scheduleCache) return scheduleCache;
   try {
     if (existsSync(SCHEDULE_FILE)) {
       const raw = JSON.parse(readFileSync(SCHEDULE_FILE, "utf-8"));
       if (!Array.isArray(raw)) {
         log("Schedule file is not a JSON array, starting fresh");
-        return [];
+        scheduleCache = [];
+        return scheduleCache;
       }
       const valid: ScheduledMessage[] = [];
       for (const entry of raw) {
@@ -51,12 +57,14 @@ function loadSchedule(): ScheduledMessage[] {
       if (valid.length < raw.length) {
         log(`Filtered out ${raw.length - valid.length} invalid entry/entries from schedule (${valid.length} valid remaining)`);
       }
-      return valid;
+      scheduleCache = valid;
+      return scheduleCache;
     }
-  } catch {
-    log("Failed to read schedule, starting fresh");
+  } catch (err) {
+    log(`Failed to read schedule, starting fresh: ${err}`);
   }
-  return [];
+  scheduleCache = [];
+  return scheduleCache;
 }
 
 function saveSchedule(messages: ScheduledMessage[]): void {
@@ -67,6 +75,7 @@ function saveSchedule(messages: ScheduledMessage[]): void {
     const tmp = SCHEDULE_FILE + ".tmp";
     writeFileSync(tmp, JSON.stringify(messages, null, 2));
     renameSync(tmp, SCHEDULE_FILE);
+    scheduleCache = messages;
   } catch (err) {
     log(`Failed to save schedule: ${err}`);
   }
@@ -125,11 +134,24 @@ export function getDueMessages(): ScheduledMessage[] {
   const due = schedule.filter(m => m.deliverAt <= now && !inFlightIds.has(m.id));
   if (due.length === 0) return [];
 
-  // Mark as in-flight immediately so no other poll picks them up
-  for (const m of due) inFlightIds.set(m.id, now);
+  // Filter out messages targeting non-whitelisted contacts
+  const blocked = due.filter(m => !isWhitelisted(m.targetJid));
+  if (blocked.length > 0) {
+    log(`Blocked ${blocked.length} scheduled message(s) to non-whitelisted JID(s): ${blocked.map(m => m.targetJid).join(", ")}`);
+    // Remove blocked messages from the schedule so they don't accumulate
+    const blockedIds = new Set(blocked.map(m => m.id));
+    const cleaned = schedule.filter(m => !blockedIds.has(m.id));
+    saveSchedule(cleaned);
+  }
 
-  log(`${due.length} message(s) due for delivery`);
-  return due;
+  const allowed = due.filter(m => isWhitelisted(m.targetJid));
+  if (allowed.length === 0) return [];
+
+  // Mark as in-flight immediately so no other poll picks them up
+  for (const m of allowed) inFlightIds.set(m.id, now);
+
+  log(`${allowed.length} message(s) due for delivery`);
+  return allowed;
 }
 
 const MAX_RETRIES = 5;
@@ -191,14 +213,24 @@ export interface DeliveryRecord {
   messageSnippet: string;
 }
 
+// Write-through in-memory cache for delivery log
+let deliveryLogCache: DeliveryRecord[] | null = null;
+
 function loadDeliveryLog(): DeliveryRecord[] {
+  if (deliveryLogCache) return deliveryLogCache;
   try {
     if (existsSync(DELIVERY_LOG_FILE)) {
       const raw = JSON.parse(readFileSync(DELIVERY_LOG_FILE, "utf-8"));
-      if (Array.isArray(raw)) return raw;
+      if (Array.isArray(raw)) {
+        deliveryLogCache = raw;
+        return deliveryLogCache;
+      }
     }
-  } catch {}
-  return [];
+  } catch (err) {
+    log(`Failed to load delivery log: ${err}`);
+  }
+  deliveryLogCache = [];
+  return deliveryLogCache;
 }
 
 function saveDeliveryLog(entries: DeliveryRecord[]): void {
@@ -207,6 +239,7 @@ function saveDeliveryLog(entries: DeliveryRecord[]): void {
     const tmp = DELIVERY_LOG_FILE + ".tmp";
     writeFileSync(tmp, JSON.stringify(entries, null, 2));
     renameSync(tmp, DELIVERY_LOG_FILE);
+    deliveryLogCache = entries;
   } catch (err) {
     log(`Failed to save delivery log: ${err}`);
   }

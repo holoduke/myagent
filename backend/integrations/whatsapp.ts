@@ -12,6 +12,7 @@ import pino from "pino";
 import qrcode from "qrcode-terminal";
 import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
 import { createHash } from "crypto";
+import { createLogger } from "../logger.js";
 
 export type MessageHandler = (
   jid: string,
@@ -33,6 +34,7 @@ export interface ObservationEvent {
 export type ObservationHandler = (obs: ObservationEvent) => void;
 
 const logger = pino({ level: "silent" });
+const log = createLogger("whatsapp");
 
 let sock: ReturnType<typeof makeWASocket>;
 let latestQr: string | null = null;
@@ -117,8 +119,8 @@ export async function startWhatsApp(
   if (sock) {
     try {
       sock.end(undefined);
-    } catch {
-      // Socket may already be closed
+    } catch (err) {
+      log(`Failed to close previous socket: ${err}`);
     }
   }
   isConnected = false;
@@ -304,7 +306,8 @@ export async function startWhatsApp(
                 if (oldestKey) groupNameCache.delete(oldestKey);
               }
               groupNameCache.set(jid, { name: groupName, cachedAt: Date.now() });
-            } catch {
+            } catch (err) {
+              log(`Failed to fetch group metadata for ${jid}: ${err}`);
               groupName = jid.split("@")[0];
             }
           }
@@ -419,8 +422,8 @@ export async function sendTypingIndicator(jid: string): Promise<void> {
   if (!isConnected || !sock) return;
   try {
     await sock.sendPresenceUpdate("composing", jid);
-  } catch {
-    // Silently ignore presence errors
+  } catch (err) {
+    log(`Failed to send typing indicator to ${jid}: ${err}`);
   }
 }
 
@@ -428,8 +431,8 @@ export async function stopTypingIndicator(jid: string): Promise<void> {
   if (!isConnected || !sock) return;
   try {
     await sock.sendPresenceUpdate("paused", jid);
-  } catch {
-    // Silently ignore presence errors
+  } catch (err) {
+    log(`Failed to stop typing indicator for ${jid}: ${err}`);
   }
 }
 

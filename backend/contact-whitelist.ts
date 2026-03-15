@@ -12,15 +12,21 @@ export interface WhitelistedContact {
   addedAt: number;
 }
 
+// Write-through in-memory cache (follows history.ts pattern)
+let whitelistCache: WhitelistedContact[] | null = null;
+
 function loadWhitelist(): WhitelistedContact[] {
+  if (whitelistCache) return whitelistCache;
   try {
     if (existsSync(WHITELIST_FILE)) {
-      return JSON.parse(readFileSync(WHITELIST_FILE, "utf-8"));
+      whitelistCache = JSON.parse(readFileSync(WHITELIST_FILE, "utf-8"));
+      return whitelistCache!;
     }
   } catch {
     log("Failed to read whitelist, starting fresh");
   }
-  return [];
+  whitelistCache = [];
+  return whitelistCache;
 }
 
 function saveWhitelist(contacts: WhitelistedContact[]): void {
@@ -30,6 +36,7 @@ function saveWhitelist(contacts: WhitelistedContact[]): void {
   const tmp = WHITELIST_FILE + ".tmp";
   writeFileSync(tmp, JSON.stringify(contacts, null, 2));
   renameSync(tmp, WHITELIST_FILE);
+  whitelistCache = contacts;
 }
 
 export function isWhitelisted(jid: string): boolean {
