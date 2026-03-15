@@ -77,8 +77,14 @@ function ensureDir(): void {
 function atomicWrite(filepath: string, data: string): void {
   ensureDir();
   const tmp = filepath + ".tmp";
-  writeFileSync(tmp, data);
-  renameSync(tmp, filepath);
+  try {
+    writeFileSync(tmp, data);
+    renameSync(tmp, filepath);
+  } catch (err) {
+    log(`atomicWrite failed for ${filepath}: ${err}`);
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
+    throw err;
+  }
 }
 
 // ── Registry (CRUD) ──
