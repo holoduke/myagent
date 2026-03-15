@@ -10,6 +10,7 @@ const BROWSER_DIR = "/data/browser";
 const STATE_FILE = `${BROWSER_DIR}/state.json`;
 const TASK_HISTORY_FILE = `${BROWSER_DIR}/history.json`;
 const MAX_HISTORY = 50;
+const DEFAULT_SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 // ── Types ──
 
@@ -315,6 +316,187 @@ export async function runWorkflow(tasks: BrowserTask[]): Promise<BrowserTaskResu
   state.activeSessions = activeSessions;
   saveState(state);
   saveHistory(history);
+
+  return results;
+}
+
+// ── Session-based workflow (same page across all tasks, with global timeout) ──
+
+async function executeTaskOnPage(page: Page, task: BrowserTask): Promise<BrowserTaskResult> {
+  const start = Date.now();
+  const resultId = randomUUID();
+
+  try {
+    switch (task.type) {
+      case "navigate": {
+        if (!task.url) throw new Error("url is required for navigate");
+        await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
+        if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
+        const title = await page.title();
+        const content = await page.evaluate(() => document.body?.innerText?.slice(0, 5000) || "");
+        return {
+          id: resultId, taskId: task.id, success: true, type: task.type,
+          url: page.url(), title, content,
+          durationMs: Date.now() - start, completedAt: Date.now(),
+        };
+      }
+
+      case "screenshot": {
+        const screenshotPath = `${BROWSER_DIR}/screenshots/${resultId}.png`;
+        if (task.url) {
+          await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
+        }
+        if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
+        await page.screenshot({ path: screenshotPath, fullPage: false });
+        return {
+          id: resultId, taskId: task.id, success: true, type: task.type,
+          url: page.url(), title: await page.title(), screenshotPath,
+          durationMs: Date.now() - start, completedAt: Date.now(),
+        };
+      }
+
+      case "extract": {
+        if (!task.selector) throw new Error("selector is required for extract");
+        if (task.url) {
+          await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
+        }
+        const elements = await page.$$(task.selector);
+        const texts: string[] = [];
+        for (const el of elements) {
+          const text = await el.innerText().catch(() => "");
+          if (text.trim()) texts.push(text.trim());
+        }
+        return {
+          id: resultId, taskId: task.id, success: true, type: task.type,
+          url: page.url(), title: await page.title(), content: texts.join("\n---\n").slice(0, 10000),
+          durationMs: Date.now() - start, completedAt: Date.now(),
+        };
+      }
+
+      case "fill": {
+        if (!task.selector) throw new Error("selector is required for fill");
+        if (task.value === undefined) throw new Error("value is required for fill");
+        if (task.url) {
+          await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
+        }
+        await page.fill(task.selector, task.value);
+        return {
+          id: resultId, taskId: task.id, success: true, type: task.type,
+          url: page.url(), title: await page.title(), content: `Filled "${task.selector}" with value`,
+          durationMs: Date.now() - start, completedAt: Date.now(),
+        };
+      }
+
+      case "click": {
+        if (!task.selector) throw new Error("selector is required for click");
+        if (task.url) {
+          await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
+        }
+        await page.click(task.selector);
+        if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
+        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        const content = await page.evaluate(() => document.body?.innerText?.slice(0, 5000) || "");
+        return {
+          id: resultId, taskId: task.id, success: true, type: task.type,
+          url: page.url(), title: await page.title(), content,
+          durationMs: Date.now() - start, completedAt: Date.now(),
+        };
+      }
+
+      case "script": {
+        if (!task.script) throw new Error("script is required for script");
+        if (task.url) {
+          await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
+        }
+        const evalResult = await page.evaluate(task.script);
+        const content = typeof evalResult === "string" ? evalResult : JSON.stringify(evalResult, null, 2);
+        return {
+          id: resultId, taskId: task.id, success: true, type: task.type,
+          url: page.url(), title: await page.title(), content: (content || "").slice(0, 10000),
+          durationMs: Date.now() - start, completedAt: Date.now(),
+        };
+      }
+
+      default:
+        throw new Error(`Unknown task type: ${task.type}`);
+    }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log(`Task ${task.id} failed: ${errorMsg}`);
+    return {
+      id: resultId, taskId: task.id, success: false, type: task.type,
+      url: task.url || page.url(), error: errorMsg,
+      durationMs: Date.now() - start, completedAt: Date.now(),
+    };
+  }
+}
+
+export async function runSession(
+  tasks: BrowserTask[],
+  sessionTimeoutMs: number = DEFAULT_SESSION_TIMEOUT_MS,
+): Promise<BrowserTaskResult[]> {
+  if (!isIntegrationEnabled("browser")) {
+    throw new Error("Browser integration is disabled");
+  }
+
+  const browser = await getBrowser();
+  const context = await browser.newContext({
+    userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    viewport: { width: 1280, height: 720 },
+  });
+
+  activeSessions++;
+  const page = await context.newPage();
+  page.setDefaultTimeout(30000);
+
+  const results: BrowserTaskResult[] = [];
+  const history = loadHistory();
+  const state = loadState();
+  let timedOut = false;
+
+  try {
+    const taskLoop = async () => {
+      for (const task of tasks) {
+        if (timedOut) break;
+        if (!task.id) task.id = randomUUID();
+        log(`Session task ${task.id}: ${task.type} ${task.url || task.selector || ""}`);
+
+        const result = await executeTaskOnPage(page, task);
+        results.push(result);
+        history.push(result);
+
+        state.totalTasks++;
+        state.lastTaskAt = Date.now();
+
+        if (!result.success) {
+          log(`Session stopped at task ${task.id}: ${result.error}`);
+          break;
+        }
+      }
+    };
+
+    const timeout = new Promise<void>((_, reject) => {
+      setTimeout(() => {
+        timedOut = true;
+        reject(new Error(`Session timed out after ${sessionTimeoutMs}ms`));
+      }, sessionTimeoutMs);
+    });
+
+    await Promise.race([taskLoop(), timeout]);
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    if (timedOut) {
+      log(`Session timed out after ${sessionTimeoutMs}ms — returning ${results.length} partial result(s)`);
+    } else {
+      log(`Session error: ${errorMsg}`);
+    }
+  } finally {
+    activeSessions--;
+    await context.close().catch(() => {});
+    state.activeSessions = activeSessions;
+    saveState(state);
+    saveHistory(history);
+  }
 
   return results;
 }
