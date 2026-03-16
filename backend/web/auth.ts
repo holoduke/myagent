@@ -94,21 +94,47 @@ function safeCompare(a: string, b: string): boolean {
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
+const READ_BODY_TIMEOUT = 30_000; // 30 seconds
+
 export function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
     let size = 0;
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        req.destroy();
+        reject(new Error("Request body timeout"));
+      }
+    }, READ_BODY_TIMEOUT);
+
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_BODY_SIZE) {
+        settled = true;
+        clearTimeout(timer);
         req.destroy();
         reject(new Error("Request body too large"));
         return;
       }
       body += chunk.toString();
     });
-    req.on("end", () => resolve(body));
-    req.on("error", reject);
+    req.on("end", () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve(body);
+      }
+    });
+    req.on("error", (err) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      }
+    });
   });
 }
 
