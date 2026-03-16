@@ -153,7 +153,20 @@ export class MemoryGraph {
       repairsMade = true;
     }
 
-    // (3) Deduplicate edges (same from/to/type) — keep highest weight
+    // (3) Clamp out-of-range edge weights to [0, 1]
+    let weightsClamped = 0;
+    for (const edge of this.edges) {
+      if (edge.weight < 0 || edge.weight > 1) {
+        edge.weight = Math.max(0, Math.min(1, edge.weight));
+        weightsClamped++;
+      }
+    }
+    if (weightsClamped > 0) {
+      log(`Graph validation: clamped ${weightsClamped} edge weight(s) to [0, 1] range`);
+      repairsMade = true;
+    }
+
+    // (4) Deduplicate edges (same from/to/type) — keep highest weight
     const bestByKey = new Map<string, MemoryEdge>();
     for (const edge of this.edges) {
       const key = `${edge.from}|${edge.to}|${edge.type}`;
@@ -169,15 +182,15 @@ export class MemoryGraph {
       repairsMade = true;
     }
 
-    // Rebuild indexes if any edge repairs were made in steps 2-3
+    // Rebuild indexes if any edge repairs were made in steps 2-4
     if (selfLoopsRemoved > 0 || duplicatesRemoved > 0) {
       this.rebuildIndexes();
     }
 
-    // (4) Persist repairs and log summary
+    // (5) Persist repairs and log summary
     if (repairsMade) {
       this.save();
-      log(`Graph validation: repairs complete (${phantomEdgesRemoved} phantom, ${selfLoopsRemoved} self-loops, ${duplicatesRemoved} duplicates removed)`);
+      log(`Graph validation: repairs complete (${phantomEdgesRemoved} phantom, ${selfLoopsRemoved} self-loops, ${weightsClamped} weights clamped, ${duplicatesRemoved} duplicates removed)`);
     }
   }
 
@@ -266,6 +279,9 @@ export class MemoryGraph {
     const exists = this.edges.some(e => e.from === edge.from && e.to === edge.to && e.type === edge.type);
     if (exists) return;
 
+    // Clamp weight to [0, 1]
+    edge.weight = Math.max(0, Math.min(1, edge.weight));
+
     this.edges.push(edge);
     if (!this.edgesFromIdx.has(edge.from)) this.edgesFromIdx.set(edge.from, []);
     this.edgesFromIdx.get(edge.from)!.push(edge);
@@ -292,7 +308,7 @@ export class MemoryGraph {
   updateEdge(from: string, to: string, updates: { weight?: number; type?: string }): void {
     const edge = this.edges.find(e => e.from === from && e.to === to);
     if (!edge) return;
-    if (updates.weight !== undefined) edge.weight = updates.weight;
+    if (updates.weight !== undefined) edge.weight = Math.max(0, Math.min(1, updates.weight));
     if (updates.type !== undefined) edge.type = updates.type as MemoryEdge["type"];
     edge.lastReinforcedAt = Date.now();
   }
