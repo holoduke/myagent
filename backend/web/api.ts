@@ -116,9 +116,10 @@ export function handleApiRoutes(
   // ── Action Audit Log ──
   if (pathname === "/api/audit" && isAuthenticated(req)) {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
-    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+    const parsed = parseInt(url.searchParams.get("limit") || "50", 10);
+    const limit = Number.isNaN(parsed) ? 50 : Math.min(parsed, 200);
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getRecentAuditEntries(Math.min(limit, 200))));
+    res.end(JSON.stringify(getRecentAuditEntries(limit)));
     return true;
   }
 
