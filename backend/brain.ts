@@ -652,6 +652,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+// ── Tick Concurrency Guards ──
+// Prevent overlapping execution of tick functions when a previous invocation
+// is still running (e.g., slow Claude response exceeding tick interval).
+let thinkRunning = false;
+let consolidateRunning = false;
+let reflectRunning = false;
+
 // ── Tick Scheduler ──
 
 async function tick(
@@ -769,35 +776,62 @@ async function tick(
 
   try {
     if (timeSinceReflect >= cfg.reflectInterval && graph.nodeCount > 0) {
-      tickRan = true;
-      tickSucceeded = await withTimeout(
-        reflectTick(state, queue, sendMessage, ownerJid, signals),
-        Math.max(TICK_TIMEOUT, 600_000), // reflect gets at least 10min
-        "reflectTick",
-      );
+      if (reflectRunning) {
+        log("Skipping reflectTick — previous invocation still running");
+      } else {
+        tickRan = true;
+        reflectRunning = true;
+        try {
+          tickSucceeded = await withTimeout(
+            reflectTick(state, queue, sendMessage, ownerJid, signals),
+            Math.max(TICK_TIMEOUT, 600_000), // reflect gets at least 10min
+            "reflectTick",
+          );
+        } finally {
+          reflectRunning = false;
+        }
+      }
     } else if (timeSinceConsolidate >= cfg.consolidateInterval && graph.nodeCount > 0) {
-      tickRan = true;
-      tickSucceeded = await withTimeout(
-        consolidateTick(state, queue),
-        TICK_TIMEOUT,
-        "consolidateTick",
-      );
+      if (consolidateRunning) {
+        log("Skipping consolidateTick — previous invocation still running");
+      } else {
+        tickRan = true;
+        consolidateRunning = true;
+        try {
+          tickSucceeded = await withTimeout(
+            consolidateTick(state, queue),
+            TICK_TIMEOUT,
+            "consolidateTick",
+          );
+        } finally {
+          consolidateRunning = false;
+        }
+      }
     } else if (
       (hasNewObs && timeSinceThink >= cfg.thinkCooldown) ||
       (hasNewObs && urgentBypass) ||
       timeSinceThink >= TIME_AWARENESS_INTERVAL ||
       initiativeTriggered
     ) {
-      tickRan = true;
-      if (initiativeTriggered && !hasNewObs) {
-        recordInitiativeThink(state);
-        log(`Initiative-triggered think (${highPrioritySignals.length} high-priority signals)`);
+      if (thinkRunning) {
+        log("Skipping thinkTick — previous invocation still running");
+      } else {
+        tickRan = true;
+        if (initiativeTriggered && !hasNewObs) {
+          recordInitiativeThink(state);
+          log(`Initiative-triggered think (${highPrioritySignals.length} high-priority signals)`);
+        }
+        thinkRunning = true;
+        try {
+          tickSucceeded = await withTimeout(
+            thinkTick(state, newObs, queue, sendMessage, ownerJid, signals),
+            TICK_TIMEOUT,
+            "thinkTick",
+          );
+        } finally {
+          thinkRunning = false;
+        }
       }
-      tickSucceeded = await withTimeout(
-        thinkTick(state, newObs, queue, sendMessage, ownerJid, signals),
-        TICK_TIMEOUT,
-        "thinkTick",
-      );
     }
   } catch (err) {
     tickRan = true;
