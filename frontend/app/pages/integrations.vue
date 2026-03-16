@@ -298,7 +298,7 @@ async function syncContacts() {
     await api<{ success: boolean }>('/api/sync-contacts', { method: 'POST' })
     await load()
   } catch {
-    // Silent
+    showToast('Failed to sync WhatsApp contacts', 'error')
   }
 }
 
@@ -308,7 +308,7 @@ async function sshTest(id: string) {
     await api<{ success: boolean; error?: string }>('/api/ssh/test', { method: 'POST', body: { id } })
     await load()
   } catch {
-    // Silent
+    showToast('SSH connection test failed', 'error')
   } finally {
     sshTesting.value = ''
   }
@@ -319,7 +319,7 @@ async function sshAdd(data: { label: string; host: string; user: string; port: n
     await api<{ success: boolean }>('/api/ssh/targets', { method: 'POST', body: data })
     await load()
   } catch {
-    // Silent
+    showToast('Failed to add SSH target', 'error')
   }
 }
 
@@ -328,7 +328,7 @@ async function sshRemove(id: string) {
     await api<{ success: boolean }>('/api/ssh/targets', { method: 'DELETE', body: { id } })
     await load()
   } catch {
-    // Silent
+    showToast('Failed to remove SSH target', 'error')
   }
 }
 
