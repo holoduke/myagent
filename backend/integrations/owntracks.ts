@@ -76,6 +76,15 @@ export function handleOwnTracksWebhook(req: IncomingMessage, res: ServerResponse
         return;
       }
 
+      // Validate lat/lon are finite numbers to prevent NaN propagation
+      if (typeof payload.lat !== "number" || typeof payload.lon !== "number" ||
+          !isFinite(payload.lat) || !isFinite(payload.lon)) {
+        log(`Invalid lat/lon: lat=${payload.lat}, lon=${payload.lon}`);
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid or missing lat/lon" }));
+        return;
+      }
+
       const location: OwnTracksLocation = {
         lat: payload.lat,
         lon: payload.lon,
