@@ -392,7 +392,7 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
     } else {
       log(`Gmail poll failed for ${account.id}: ${err.message || err}`);
     }
-    state[account.id] = { ...accountState, lastPollTime: Date.now() };
+    state[account.id] = { lastPollTime: Date.now(), lastMessageTimestamp: Date.now() };
   }
 }
 
