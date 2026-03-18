@@ -12,7 +12,12 @@ import pino from "pino";
 import qrcode from "qrcode-terminal";
 import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
 import { createHash } from "crypto";
+import { EventEmitter } from "events";
 import { createLogger } from "../logger.js";
+
+// Emits 'logout' when WhatsApp session is logged out.
+// Listeners can perform cleanup before the process exits.
+export const whatsappEvents = new EventEmitter();
 
 export type MessageHandler = (
   jid: string,
@@ -218,7 +223,13 @@ export async function startWhatsApp(
         setTimeout(() => startWhatsApp(onMessage, onObservation), delay);
       } else {
         log.error("Logged out. Delete auth_state/ and restart to re-scan QR.");
-        process.exit(1);
+        log.info("Emitting logout event for graceful shutdown...");
+        whatsappEvents.emit("logout");
+        // Fallback: force exit after 5s if listeners haven't shut down
+        setTimeout(() => {
+          log.error("Graceful shutdown timeout (5s) — forcing exit.");
+          process.exit(1);
+        }, 5_000).unref();
       }
     } else if (connection === "open") {
       isConnected = true;
