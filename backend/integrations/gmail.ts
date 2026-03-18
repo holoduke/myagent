@@ -392,7 +392,7 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
     } else {
       log(`Gmail poll failed for ${account.id}: ${err.message || err}`);
     }
-    state[account.id] = { ...accountState, lastPollTime: Date.now() };
+    state[account.id] = { lastPollTime: Date.now(), lastMessageTimestamp: Date.now() };
   }
 }
 
@@ -431,10 +431,14 @@ export async function sendEmail(
     .replace(/=+$/, "");
 
   try {
-    await gmail.users.messages.send({
-      userId: "me",
-      requestBody: { raw },
-    });
+    await withTimeout(
+      gmail.users.messages.send({
+        userId: "me",
+        requestBody: { raw },
+      }),
+      30000,
+      "gmail-send"
+    );
     log(`Email sent from ${account.id} to ${to}: "${subject}"`);
     logDelivery(to, "email", `[EMAIL to ${to}] Subject: ${subject}`);
     return { success: true };
