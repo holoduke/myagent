@@ -888,16 +888,23 @@ async function tick(
   state.nodeCount = graph.nodeCount;
   state.edgeCount = graph.edgeCount;
 
-  // ── Merge scheduler-critical fields to prevent race condition ──
+  // ── Merge scheduler-critical numeric fields to prevent race condition ──
   // pollScheduledMessages() runs every 10s and may have updated state.json
   // while this tick was running (Claude calls take 1-5 min). Re-read disk
   // state and take the maximum values so delivered messages aren't lost.
   const freshState = loadState();
-  if (freshState.messagesToday > state.messagesToday) {
-    state.messagesToday = freshState.messagesToday;
-  }
-  if (freshState.lastMessageTime > state.lastMessageTime) {
-    state.lastMessageTime = freshState.lastMessageTime;
+  const schedulerMaxFields: (keyof BrainState)[] = [
+    "messagesToday",
+    "lastMessageTime",
+    "recurringThinksToday",
+    "initiativeThinksToday",
+  ];
+  for (const field of schedulerMaxFields) {
+    const diskVal = freshState[field];
+    const memVal = state[field];
+    if (typeof diskVal === "number" && typeof memVal === "number" && diskVal > memVal) {
+      (state as any)[field] = diskVal;
+    }
   }
 
   saveState(state);
