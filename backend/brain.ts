@@ -27,6 +27,7 @@ import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThi
 import { ensureSSHKey } from "./integrations/ssh.js";
 import { verify, rotateAuditLog } from "./action-verifier.js";
 import type { ActionContext } from "./action-verifier.js";
+import { BrainError, TickError, ProviderError, SchedulerError, wrapError } from "./brain-errors.js";
 import { getBrainConfig, getActivePreset, getOwnerLocalTime, getOwnerLocalDate } from "./brain-config.js";
 import {
   loadQueue,
@@ -773,6 +774,7 @@ async function tick(
 
   let tickSucceeded = false;
   let tickRan = false;
+  let lastTickError: BrainError | null = null;
 
   try {
     if (timeSinceReflect >= cfg.reflectInterval && graph.nodeCount > 0) {
@@ -836,7 +838,11 @@ async function tick(
   } catch (err) {
     tickRan = true;
     tickSucceeded = false;
-    log(`Tick execution error: ${err}`);
+    const wrapped = err instanceof BrainError ? err : wrapError(err, "think", `Tick execution error: ${err}`);
+    const structured = wrapped.toStructuredLog();
+    log(`Tick execution error [${structured.phase}]: ${structured.message} (transient=${structured.transient}, elapsed=${structured.elapsedMs ?? "?"}ms)`);
+    if (structured.cause) log(`  cause: ${structured.cause}`);
+    lastTickError = wrapped;
   }
 
   if (!tickRan) {
@@ -851,7 +857,10 @@ async function tick(
   // ── Track success/failure for health ──
   if (!tickSucceeded) {
     state.consecutiveFailures++;
-    log(`Tick failed (${state.consecutiveFailures} consecutive failures)`);
+    const errInfo = lastTickError
+      ? ` [${lastTickError.context.phase}, transient=${lastTickError.context.transient}]`
+      : "";
+    log(`Tick failed${errInfo} (${state.consecutiveFailures} consecutive failures)`);
   } else {
     state.consecutiveFailures = 0;
     state.lastSuccessfulTick = now;
@@ -1238,10 +1247,12 @@ async function thinkTick(
     log(`Think #${state.totalThinks} complete (${graph.nodeCount} nodes, ${graph.edgeCount} edges, lifetime cost: $${state.totalCost.toFixed(4)})`);
     return true;
   } catch (err) {
-    log(`Think failed: ${err}`);
     state.lastThinkTick = now;
     state.lastObservationTime = now;
-    return false;
+    throw wrapError(err, "think", `Think failed: ${err}`, {
+      elapsedMs: Date.now() - now,
+      metadata: { obsCount: newObs.length, contextNodes: contextNodes?.length },
+    });
   }
 }
 
@@ -1353,9 +1364,11 @@ async function consolidateTick(
     log(`Consolidate complete (${graph.nodeCount} nodes, ${graph.edgeCount} edges)`);
     return true;
   } catch (err) {
-    log(`Consolidate failed: ${err}`);
     state.lastConsolidateTick = now;
-    return false;
+    throw wrapError(err, "consolidate", `Consolidate failed: ${err}`, {
+      elapsedMs: Date.now() - now,
+      metadata: { weakNodes: weakNodes?.length, orphanNodes: orphanNodes?.length },
+    });
   }
 }
 
@@ -1520,9 +1533,11 @@ async function reflectTick(
     log(`Reflect complete (${graph.nodeCount} nodes, ${graph.edgeCount} edges)`);
     return true;
   } catch (err) {
-    log(`Reflect failed: ${err}`);
     state.lastReflectTick = now;
-    return false;
+    throw wrapError(err, "reflect", `Reflect failed: ${err}`, {
+      elapsedMs: Date.now() - now,
+      metadata: { contextNodes: strongestNodes?.length, signalCount: initiativeSignals?.length },
+    });
   }
 }
 

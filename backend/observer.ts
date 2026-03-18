@@ -1,5 +1,6 @@
 import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, openSync, fstatSync, readSync, closeSync } from "fs";
 import { createLogger } from "./logger.js";
+import { BrainError } from "./brain-errors.js";
 
 const log = createLogger("observer");
 
@@ -136,22 +137,26 @@ function getObservationKey(obs: Observation): string {
 }
 
 export function recordObservation(obs: Observation): void {
+  const key = getObservationKey(obs);
+  if (recentObservationKeys.has(key)) return; // deduplicated
+
+  recentObservationKeys.add(key);
+  // Prevent unbounded growth of dedup set — keep newest entries
+  if (recentObservationKeys.size > MAX_DEDUP_ENTRIES) {
+    const keep = [...recentObservationKeys].slice(-MAX_DEDUP_ENTRIES + 100);
+    recentObservationKeys.clear();
+    for (const e of keep) recentObservationKeys.add(e);
+  }
+
   try {
-    const key = getObservationKey(obs);
-    if (recentObservationKeys.has(key)) return; // deduplicated
-
-    recentObservationKeys.add(key);
-    // Prevent unbounded growth of dedup set — keep newest entries
-    if (recentObservationKeys.size > MAX_DEDUP_ENTRIES) {
-      const keep = [...recentObservationKeys].slice(-MAX_DEDUP_ENTRIES + 100);
-      recentObservationKeys.clear();
-      for (const e of keep) recentObservationKeys.add(e);
-    }
-
     ensureBrainDir();
     appendFileSync(OBS_FILE, JSON.stringify(obs) + "\n");
   } catch (err) {
-    log(`Failed to record observation: ${err}`);
+    throw new BrainError(`Failed to record observation: ${err}`, {
+      phase: "observer",
+      transient: false,
+      metadata: { sender: obs.sender, source: obs.source },
+    }, err);
   }
 }
 
@@ -230,8 +235,11 @@ export function getObservationsSince(since: number, filter?: ObservationFilter, 
     }
     return results;
   } catch (err) {
-    log(`Failed to read observations: ${err}`);
-    return [];
+    throw new BrainError(`Failed to read observations: ${err}`, {
+      phase: "observer",
+      transient: false,
+      metadata: { since },
+    }, err);
   }
 }
 
@@ -322,8 +330,11 @@ export function getObservationCountSince(since: number): number {
     }
     return count;
   } catch (err) {
-    log(`Failed to count observations: ${err}`);
-    return 0;
+    throw new BrainError(`Failed to count observations: ${err}`, {
+      phase: "observer",
+      transient: false,
+      metadata: { since },
+    }, err);
   }
 }
 
@@ -359,6 +370,10 @@ export function pruneObservations(days?: number): void {
       log(`Pruned ${pruned} old observations, kept ${kept.length}`);
     }
   } catch (err) {
-    log(`Failed to prune observations: ${err}`);
+    throw new BrainError(`Failed to prune observations: ${err}`, {
+      phase: "observer",
+      transient: false,
+      metadata: { cutoffDays: days ?? RETENTION_DAYS },
+    }, err);
   }
 }
