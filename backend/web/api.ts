@@ -53,6 +53,7 @@ import { loadWorkingMemory } from "../memory/working-memory.js";
 import type { GoalData, RetentionTier } from "../memory/types.js";
 import { classifyRetentionTier } from "../memory/decay.js";
 import { createLogger } from "../logger.js";
+import { respondJson, apiHandler, apiGetHandler, ApiError } from "../utils/api-helpers.js";
 
 const log = createLogger("web");
 
@@ -68,17 +69,14 @@ export function handleApiRoutes(
 
   // ── Auth check (no auth needed) ──
   if (pathname === "/api/auth-check") {
-    const ok = isAuthenticated(req);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ authenticated: ok }));
+    respondJson(res, 200, { authenticated: isAuthenticated(req) });
     return true;
   }
 
-  // ── Chat SSE ──
+  // ── Chat SSE (not wrapped — uses SSE streaming) ──
   if (pathname === "/api/chat" && req.method === "POST") {
     if (!isAuthenticated(req)) {
-      res.writeHead(401, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Unauthorized" }));
+      respondJson(res, 401, { error: "Unauthorized" });
       return true;
     }
     handleChat(req, res, queue);
@@ -87,47 +85,41 @@ export function handleApiRoutes(
 
   // ── History ──
   if (pathname === "/api/history" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getHistory()));
+    respondJson(res, 200, getHistory());
     return true;
   }
 
   // ── ARIA status (full brain/graph data) ──
   if (pathname === "/api/aria/status" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getAriaStatus()));
+    respondJson(res, 200, getAriaStatus());
     return true;
   }
 
   // ── Dashboard composite endpoint ──
   if (pathname === "/api/dashboard" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getDashboardData(queue)));
+    respondJson(res, 200, getDashboardData(queue));
     return true;
   }
 
   // ── Scheduled messages ──
   if (pathname === "/api/scheduled" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getScheduledMessages()));
+    respondJson(res, 200, getScheduledMessages());
     return true;
   }
 
   // ── Action Audit Log ──
   if (pathname === "/api/audit" && isAuthenticated(req)) {
-    const url = new URL(req.url || "/", `http://${req.headers.host}`);
-    const parsed = parseInt(url.searchParams.get("limit") || "50", 10);
+    const auditUrl = new URL(req.url || "/", `http://${req.headers.host}`);
+    const parsed = parseInt(auditUrl.searchParams.get("limit") || "50", 10);
     const limit = Number.isNaN(parsed) ? 50 : Math.min(parsed, 200);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getRecentAuditEntries(limit)));
+    respondJson(res, 200, getRecentAuditEntries(limit));
     return true;
   }
 
   // ── Whitelist CRUD ──
   if (pathname === "/api/whitelist" && isAuthenticated(req)) {
     if (req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(getWhitelist()));
+      respondJson(res, 200, getWhitelist());
       return true;
     }
     if (req.method === "POST") {
@@ -140,19 +132,17 @@ export function handleApiRoutes(
     }
   }
 
-  // ── Contact sync ──
+  // ── Contact sync (not wrapped — uses setTimeout callback pattern) ──
   if (pathname === "/api/sync-contacts" && req.method === "POST" && isAuthenticated(req)) {
     syncContacts()
       .then(() => {
         setTimeout(() => {
           const contacts = getAllContacts();
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true, contactCount: contacts.length }));
+          respondJson(res, 200, { success: true, contactCount: contacts.length });
         }, 3000);
       })
       .catch((err) => {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        respondJson(res, 500, { error: String(err) });
       });
     return true;
   }
@@ -161,15 +151,13 @@ export function handleApiRoutes(
   if (pathname === "/api/contacts" && isAuthenticated(req)) {
     const query = url.searchParams.get("q");
     const contacts = query ? findContacts(query) : getAllContacts();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(contacts));
+    respondJson(res, 200, contacts);
     return true;
   }
 
   // ── SSH public key ──
   if (pathname === "/api/ssh/public-key" && req.method === "GET" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ publicKey: getPublicKey() }));
+    respondJson(res, 200, { publicKey: getPublicKey() });
     return true;
   }
 
@@ -205,51 +193,31 @@ export function handleApiRoutes(
 
   // ── WhatsApp QR ──
   if (pathname === "/api/whatsapp/qr" && req.method === "GET" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ qr: getLatestQr() }));
+    respondJson(res, 200, { qr: getLatestQr() });
     return true;
   }
 
   // ── Calendar status ──
   if (pathname === "/api/calendar/status" && req.method === "GET" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getCalendarStatus()));
+    respondJson(res, 200, getCalendarStatus());
     return true;
   }
 
   // ── Calendar event creation ──
   if (pathname === "/api/calendar/events" && req.method === "POST" && isAuthenticated(req)) {
-    readBody(req).then(async (raw) => {
-      try {
-        const body = JSON.parse(raw);
-        const { accountId, summary, startDateTime, endDateTime, location } = body;
-        if (!accountId || !summary || !startDateTime || !endDateTime) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Missing required fields: accountId, summary, startDateTime, endDateTime" }));
-          return;
-        }
-        const result = await createEvent(accountId, summary, startDateTime, endDateTime, location);
-        res.writeHead(result.success ? 200 : 500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
-      } catch (err: any) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err.message || "Invalid request" }));
-      }
-    });
+    handleCalendarCreateEvent(req, res);
     return true;
   }
 
   // ── Home Assistant config CRUD ──
   if (pathname === "/api/homeassistant/status" && req.method === "GET" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getHAStatus()));
+    respondJson(res, 200, getHAStatus());
     return true;
   }
 
   if (pathname === "/api/homeassistant/config" && isAuthenticated(req)) {
     if (req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(getHAStatus()));
+      respondJson(res, 200, getHAStatus());
       return true;
     }
     if (req.method === "PUT") {
@@ -266,8 +234,7 @@ export function handleApiRoutes(
   // ── RSS feeds CRUD ──
   if (pathname === "/api/rss/feeds" && isAuthenticated(req)) {
     if (req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(getRSSStatus()));
+      respondJson(res, 200, getRSSStatus());
       return true;
     }
     if (req.method === "POST") {
@@ -282,22 +249,19 @@ export function handleApiRoutes(
 
   // ── OwnTracks status ──
   if (pathname === "/api/owntracks/status" && req.method === "GET" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getOwnTracksStatus()));
+    respondJson(res, 200, getOwnTracksStatus());
     return true;
   }
 
   // ── Twilio voice calling ──
   if (pathname === "/api/twilio/status" && req.method === "GET" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getTwilioStatus()));
+    respondJson(res, 200, getTwilioStatus());
     return true;
   }
 
   if (pathname === "/api/twilio/config" && isAuthenticated(req)) {
     if (req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(getTwilioStatus()));
+      respondJson(res, 200, getTwilioStatus());
       return true;
     }
     if (req.method === "PUT") {
@@ -312,15 +276,13 @@ export function handleApiRoutes(
   }
 
   if (pathname === "/api/twilio/history" && req.method === "GET" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(loadCallHistory()));
+    respondJson(res, 200, loadCallHistory());
     return true;
   }
 
   // ── Browser automation ──
   if (pathname === "/api/browser/status" && req.method === "GET" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getBrowserStatus()));
+    respondJson(res, 200, getBrowserStatus());
     return true;
   }
 
@@ -350,15 +312,13 @@ export function handleApiRoutes(
   }
 
   if (pathname === "/api/browser/history" && req.method === "GET" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getBrowserStatus().recentTasks));
+    respondJson(res, 200, getBrowserStatus().recentTasks);
     return true;
   }
 
   if (pathname === "/api/browser/history" && req.method === "DELETE" && isAuthenticated(req)) {
     clearBrowserHistory();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true }));
+    respondJson(res, 200, { ok: true });
     return true;
   }
 
@@ -373,14 +333,12 @@ export function handleApiRoutes(
   }
 
   if (pathname === "/api/browser/captcha/pending" && req.method === "GET" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getPendingCaptchas()));
+    respondJson(res, 200, getPendingCaptchas());
     return true;
   }
 
   if (pathname === "/api/browser/captcha/history" && req.method === "GET" && isAuthenticated(req)) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getCaptchaHistory()));
+    respondJson(res, 200, getCaptchaHistory());
     return true;
   }
 
@@ -392,80 +350,38 @@ export function handleApiRoutes(
 
   // ── Improve queue ──
   if (pathname === "/api/improve-queue" && req.method === "GET" && isAuthenticated(req)) {
-    try {
-      const queue = loadQueue();
-      const history = loadHistory();
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        queue: queue.items,
-        history: history.entries,
-        weeklyCount: getWeeklyCompletedCount(),
-      }));
-    } catch (err) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: String(err) }));
-    }
+    handleImproveQueueGet(req, res);
     return true;
   }
 
   if (pathname.match(/^\/api\/improve-queue\/[^/]+\/approve$/) && req.method === "POST" && isAuthenticated(req)) {
     const id = pathname.split("/")[3];
-    try {
-      const item = approveItem(id);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(item));
-    } catch (err) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: String(err) }));
-    }
+    handleImproveQueueAction(req, res, () => approveItem(id));
     return true;
   }
 
   if (pathname.match(/^\/api\/improve-queue\/[^/]+\/reject$/) && req.method === "POST" && isAuthenticated(req)) {
     const id = pathname.split("/")[3];
-    try {
-      rejectItem(id);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true }));
-    } catch (err) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: String(err) }));
-    }
+    handleImproveQueueAction(req, res, () => { rejectItem(id); return { ok: true }; });
     return true;
   }
 
   if (pathname.match(/^\/api\/improve-queue\/[^/]+$/) && req.method === "DELETE" && isAuthenticated(req)) {
     const id = pathname.split("/")[3];
-    try {
-      deleteItem(id);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true }));
-    } catch (err) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: String(err) }));
-    }
+    handleImproveQueueAction(req, res, () => { deleteItem(id); return { ok: true }; });
     return true;
   }
 
   // ── Brain dashboard (composite) ──
   if (pathname === "/api/brain/dashboard" && req.method === "GET" && isAuthenticated(req)) {
-    try {
-      const data = getBrainDashboard();
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(data));
-    } catch (err) {
-      log(`Brain dashboard error: ${err}`);
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: String(err) }));
-    }
+    handleBrainDashboardGet(req, res);
     return true;
   }
 
   // ── Brain recurring tasks CRUD ──
   if (pathname === "/api/brain/recurring" && isAuthenticated(req)) {
     if (req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(getAllRecurringTasks()));
+      respondJson(res, 200, getAllRecurringTasks());
       return true;
     }
     if (req.method === "POST") {
@@ -482,8 +398,7 @@ export function handleApiRoutes(
     }
     if (req.method === "DELETE") {
       const deleted = deleteRecurringTask(id);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: deleted }));
+      respondJson(res, 200, { ok: deleted });
       return true;
     }
   }
@@ -491,14 +406,7 @@ export function handleApiRoutes(
   // ── Brain goals CRUD ──
   if (pathname === "/api/brain/goals" && isAuthenticated(req)) {
     if (req.method === "GET") {
-      try {
-        const goals = getBrainGoals();
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(goals));
-      } catch (err) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
-      }
+      handleBrainGoalsGet(req, res);
       return true;
     }
     if (req.method === "POST") {
@@ -527,71 +435,20 @@ export function handleApiRoutes(
 
   // ── Brain signals (read-only) ──
   if (pathname === "/api/brain/signals" && req.method === "GET" && isAuthenticated(req)) {
-    try {
-      const graph = new MemoryGraph();
-      graph.load();
-      const wm = loadWorkingMemory();
-      const signals = detectInitiativeSignals(graph, wm);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(signals));
-    } catch (err) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: String(err) }));
-    }
+    handleBrainSignalsGet(req, res);
     return true;
   }
 
   // ── Brain follow-ups (read-only) ──
   if (pathname === "/api/brain/follow-ups" && req.method === "GET" && isAuthenticated(req)) {
-    try {
-      const wm = loadWorkingMemory();
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(wm.pendingFollowUps));
-    } catch (err) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: String(err) }));
-    }
+    handleBrainFollowUpsGet(req, res);
     return true;
   }
 
   // ── Memory node relationships ──
   if (pathname.match(/^\/api\/memory\/node\/[^/]+\/relationships$/) && req.method === "GET" && isAuthenticated(req)) {
     const nodeId = pathname.split("/")[4];
-    try {
-      const graph = new MemoryGraph();
-      graph.load();
-      const node = graph.getNode(nodeId);
-      if (!node) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Node not found" }));
-        return true;
-      }
-      const parents = graph.getParents(nodeId).map(n => ({ id: n.id, type: n.type, content: n.content, strength: n.strength }));
-      const children = graph.getChildren(nodeId).map(n => ({ id: n.id, type: n.type, content: n.content, strength: n.strength }));
-      // Siblings: other children of this node's parents
-      const siblingIds = new Set<string>();
-      const siblings: { id: string; type: string; content: string; strength: number }[] = [];
-      for (const parent of graph.getParents(nodeId)) {
-        for (const child of graph.getChildren(parent.id)) {
-          if (child.id !== nodeId && !siblingIds.has(child.id)) {
-            siblingIds.add(child.id);
-            siblings.push({ id: child.id, type: child.type, content: child.content, strength: child.strength });
-          }
-        }
-      }
-      const edges = graph.edgesFor(nodeId).map(e => ({ from: e.from, to: e.to, type: e.type, weight: e.weight }));
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        node: { id: node.id, type: node.type, content: node.content, tags: node.tags, strength: node.strength },
-        parents,
-        children,
-        siblings,
-        edges,
-      }));
-    } catch (err) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: String(err) }));
-    }
+    handleMemoryNodeRelationships(req, res, nodeId);
     return true;
   }
 
@@ -599,13 +456,12 @@ export function handleApiRoutes(
   if (pathname === "/api/brain-config" && isAuthenticated(req)) {
     if (req.method === "GET") {
       const config = getBrainConfig();
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
+      respondJson(res, 200, {
         config,
         activePreset: getActivePreset(config),
         presets: BRAIN_PRESETS,
         characterPresets: CHARACTER_PRESETS,
-      }));
+      });
       return true;
     }
     if (req.method === "PUT") {
@@ -620,13 +476,11 @@ export function handleApiRoutes(
       const agents = loadSubAgents();
       const state = loadSubAgentState();
       const allHistory = loadAllSubAgentHistory();
-      // Trim history to last 5 per agent for the list view
       const recentRuns: Record<string, unknown[]> = {};
       for (const [agentId, runs] of Object.entries(allHistory)) {
         recentRuns[agentId] = runs.slice(0, 5);
       }
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ agents, state, recentRuns }));
+      respondJson(res, 200, { agents, state, recentRuns });
       return true;
     }
     if (req.method === "POST") {
@@ -641,22 +495,19 @@ export function handleApiRoutes(
     if (req.method === "GET") {
       const agent = getSubAgent(id);
       if (!agent) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Not found" }));
+        respondJson(res, 404, { error: "Not found" });
       } else {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(agent));
+        respondJson(res, 200, agent);
       }
       return true;
     }
     if (req.method === "PUT") {
-      handleSubAgentUpdate(req, res, id);
+      handleSubAgentUpdate(req, res);
       return true;
     }
     if (req.method === "DELETE") {
       const deleted = deleteSubAgent(id);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: deleted }));
+      respondJson(res, 200, { ok: deleted });
       return true;
     }
   }
@@ -665,21 +516,17 @@ export function handleApiRoutes(
     const id = pathname.split("/")[3];
     const agent = getSubAgent(id);
     if (!agent) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Not found" }));
+      respondJson(res, 404, { error: "Not found" });
     } else {
       const updated = updateSubAgent(id, { enabled: !agent.enabled });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(updated));
+      respondJson(res, 200, updated);
     }
     return true;
   }
 
   if (pathname.match(/^\/api\/sub-agents\/[^/]+\/history$/) && req.method === "GET" && isAuthenticated(req)) {
     const id = pathname.split("/")[3];
-    const history = loadSubAgentHistory(id);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(history));
+    respondJson(res, 200, loadSubAgentHistory(id));
     return true;
   }
 
@@ -687,15 +534,12 @@ export function handleApiRoutes(
     const id = pathname.split("/")[3];
     const agent = getSubAgent(id);
     if (!agent) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Not found" }));
+      respondJson(res, 404, { error: "Not found" });
     } else {
       const state = loadSubAgentState();
       if (state.runningAgents[id]) {
-        res.writeHead(409, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Agent is already running" }));
+        respondJson(res, 409, { error: "Agent is already running" });
       } else {
-        // Write task file and spawn worker directly
         const tFile = taskFilePath(id);
         writeFileSync(tFile, JSON.stringify({
           agentId: id,
@@ -709,8 +553,7 @@ export function handleApiRoutes(
           detached: true, stdio: "ignore", cwd: "/app", env: { ...process.env },
         });
         child.unref();
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true, message: "Run triggered" }));
+        respondJson(res, 200, { ok: true, message: "Run triggered" });
       }
     }
     return true;
@@ -721,48 +564,30 @@ export function handleApiRoutes(
 
 // ── Sub-Agent handlers ──
 
-async function handleSubAgentCreate(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
-    const agent = addSubAgent({
-      name: data.name || "Untitled Agent",
-      description: data.description || "",
-      prompt: data.prompt || "",
-      tools: data.tools || "Bash,WebFetch",
-      schedule: data.schedule || { hours: [9, 21] },
-      enabled: data.enabled !== false,
-      timeout: data.timeout || 300000,
-      maxHistoryRuns: data.maxHistoryRuns || 20,
-      source: "owner",
-    });
-    res.writeHead(201, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(agent));
-  } catch (err) {
-    log(`Sub-agent create error: ${err}`);
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
-}
+const handleSubAgentCreate = apiHandler(async (_req, res, data: Record<string, unknown>) => {
+  const agent = addSubAgent({
+    name: (data.name as string) || "Untitled Agent",
+    description: (data.description as string) || "",
+    prompt: (data.prompt as string) || "",
+    tools: (data.tools as string) || "Bash,WebFetch",
+    schedule: (data.schedule as { hours: number[] }) || { hours: [9, 21] },
+    enabled: data.enabled !== false,
+    timeout: (data.timeout as number) || 300000,
+    maxHistoryRuns: (data.maxHistoryRuns as number) || 20,
+    source: "owner",
+  });
+  respondJson(res, 201, agent);
+});
 
-async function handleSubAgentUpdate(req: IncomingMessage, res: ServerResponse, id: string) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
-    const updated = updateSubAgent(id, data);
-    if (!updated) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Not found" }));
-    } else {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(updated));
-    }
-  } catch (err) {
-    log(`Sub-agent update error: ${err}`);
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
+const handleSubAgentUpdate = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
+  const url = new URL(_req.url || "/", "http://localhost");
+  const id = decodeURIComponent(url.pathname.split("/")[3]);
+  const updated = updateSubAgent(id, data);
+  if (!updated) {
+    throw new ApiError(404, "Not found");
   }
-}
+  return updated;
+});
 
 // ── Dashboard composite data ──
 // ── Moltbook status (cached, refreshed in background) ──
@@ -777,16 +602,13 @@ let moltbookLastFetch = 0;
 function getMoltbookStatus() {
   if (!existsSync(MOLTBOOK_CREDS)) return { ...moltbookCache, enabled: false };
 
-  // Return cache if fresh
   if (Date.now() - moltbookLastFetch < MOLTBOOK_CACHE_MS && moltbookCache.enabled) return moltbookCache;
 
-  // Refresh in background (non-blocking)
   try {
     const creds = JSON.parse(readFileSync(MOLTBOOK_CREDS, "utf-8"));
     const apiKey = creds.api_key;
     if (!apiKey) return { ...moltbookCache, enabled: false };
 
-    // Immediately return what we know from creds
     moltbookCache = {
       enabled: true,
       name: creds.name || "aria-agent",
@@ -797,7 +619,6 @@ function getMoltbookStatus() {
       lastActive: moltbookCache.lastActive,
     };
 
-    // Background fetch from moltbook API
     fetch("https://www.moltbook.com/api/v1/agents/status", {
       headers: { Authorization: `Bearer ${apiKey}` },
     })
@@ -902,7 +723,6 @@ function getAriaStatus(): Record<string, unknown> {
         .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
         .slice(0, 10);
 
-      // Build concept tree: find concept nodes and their hierarchical children
       const conceptTree = nodeList
         .filter(n => n.type === "concept")
         .map(concept => {
@@ -921,7 +741,6 @@ function getAriaStatus(): Record<string, unknown> {
         })
         .sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0));
 
-      // Compute retention tier distribution (load full graph for connection-based classification)
       const tierGraph = new MemoryGraph();
       tierGraph.load();
       const tierDistribution: Record<RetentionTier, number> = { core: 0, important: 0, work: 0, standard: 0, ephemeral: 0 };
@@ -966,15 +785,14 @@ function getAriaStatus(): Record<string, unknown> {
   return status;
 }
 
-// ── Chat SSE handler ──
+// ── Chat SSE handler (not wrapped — uses SSE streaming) ──
 async function handleChat(req: IncomingMessage, res: ServerResponse, queue: MessageQueue) {
   try {
     const body = await readBody(req);
     const { message } = JSON.parse(body);
 
     if (!message?.trim()) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Message is required" }));
+      respondJson(res, 400, { error: "Message is required" });
       return;
     }
 
@@ -1028,7 +846,6 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, queue: Mess
             }
           }, {});
         } else {
-          // Non-streaming provider: run blocking then emit full response
           result = await provider.ask(message, {});
           fullResponse = result.messages.join("\n");
           if (!res.writableEnded) {
@@ -1075,447 +892,263 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, queue: Mess
 }
 
 // ── Whitelist handlers ──
-async function handleWhitelistAdd(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { jid, name } = JSON.parse(body);
-    if (!jid || !name) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "jid and name are required" }));
-      return;
-    }
-    addToWhitelist(jid, name);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: true }));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
-}
 
-async function handleWhitelistRemove(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { jid } = JSON.parse(body);
-    if (!jid) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "jid is required" }));
-      return;
-    }
-    const removed = removeFromWhitelist(jid);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: removed }));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
-}
+const handleWhitelistAdd = apiHandler(async (_req, _res, body: { jid?: string; name?: string }) => {
+  if (!body.jid || !body.name) throw new ApiError(400, "jid and name are required");
+  addToWhitelist(body.jid, body.name);
+  return { success: true };
+});
+
+const handleWhitelistRemove = apiHandler(async (_req, _res, body: { jid?: string }) => {
+  if (!body.jid) throw new ApiError(400, "jid is required");
+  return { success: removeFromWhitelist(body.jid) };
+});
 
 // ── SSH handlers ──
-async function handleSSHAddTarget(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { label, host, user, port } = JSON.parse(body);
-    if (!label || !host || !user) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "label, host, and user are required" }));
-      return;
-    }
-    const target = addTarget(label, host, user, port || 22);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: true, target }));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
-}
 
-async function handleSSHRemoveTarget(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { id } = JSON.parse(body);
-    if (!id) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "id is required" }));
-      return;
-    }
-    const removed = removeTarget(id);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: removed }));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
-}
+const handleSSHAddTarget = apiHandler(async (_req, _res, body: { label?: string; host?: string; user?: string; port?: number }) => {
+  if (!body.label || !body.host || !body.user) throw new ApiError(400, "label, host, and user are required");
+  const target = addTarget(body.label, body.host, body.user, body.port || 22);
+  return { success: true, target };
+});
 
-async function handleSSHTest(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { id } = JSON.parse(body);
-    if (!id) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "id is required" }));
-      return;
-    }
-    const result = await testConnection(id);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(result));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
-}
+const handleSSHRemoveTarget = apiHandler(async (_req, _res, body: { id?: string }) => {
+  if (!body.id) throw new ApiError(400, "id is required");
+  return { success: removeTarget(body.id) };
+});
+
+const handleSSHTest = apiHandler(async (_req, _res, body: { id?: string }) => {
+  if (!body.id) throw new ApiError(400, "id is required");
+  return await testConnection(body.id);
+});
 
 // ── Gmail handlers ──
-async function handleGmailAddAccount(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { id, email, clientId, clientSecret, redirectUri } = JSON.parse(body);
-    if (!id || !email || !clientId || !clientSecret) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "id, email, clientId, and clientSecret are required" }));
-      return;
-    }
-    const uri = redirectUri || `${req.headers.origin || "http://localhost:3000"}/gmail/callback`;
-    const account = addAccount(id, email, clientId, clientSecret, uri);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: true, account: { id: account.id, email: account.email } }));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
-}
 
-async function handleGmailRemoveAccount(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { id } = JSON.parse(body);
-    if (!id) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "id is required" }));
-      return;
-    }
-    const removed = removeAccount(id);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: removed }));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
+const handleGmailAddAccount = apiHandler(async (req, _res, body: { id?: string; email?: string; clientId?: string; clientSecret?: string; redirectUri?: string }) => {
+  if (!body.id || !body.email || !body.clientId || !body.clientSecret) {
+    throw new ApiError(400, "id, email, clientId, and clientSecret are required");
   }
-}
+  const uri = body.redirectUri || `${req.headers.origin || "http://localhost:3000"}/gmail/callback`;
+  const account = addAccount(body.id, body.email, body.clientId, body.clientSecret, uri);
+  return { success: true, account: { id: account.id, email: account.email } };
+});
+
+const handleGmailRemoveAccount = apiHandler(async (_req, _res, body: { id?: string }) => {
+  if (!body.id) throw new ApiError(400, "id is required");
+  return { success: removeAccount(body.id) };
+});
+
+// ── Calendar handler ──
+
+const handleCalendarCreateEvent = apiHandler(async (_req, res, body: { accountId?: string; summary?: string; startDateTime?: string; endDateTime?: string; location?: string }) => {
+  if (!body.accountId || !body.summary || !body.startDateTime || !body.endDateTime) {
+    throw new ApiError(400, "Missing required fields: accountId, summary, startDateTime, endDateTime");
+  }
+  const result = await createEvent(body.accountId, body.summary, body.startDateTime, body.endDateTime, body.location);
+  respondJson(res, result.success ? 200 : 500, result);
+});
 
 // ── RSS handlers ──
-async function handleRSSAddFeed(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { name, url } = JSON.parse(body);
-    if (!name || !url) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "name and url are required" }));
-      return;
-    }
-    const feed = addFeed(name.trim(), url.trim());
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: true, feed }));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
-}
 
-async function handleRSSRemoveFeed(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { id } = JSON.parse(body);
-    if (!id) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "id is required" }));
-      return;
-    }
-    const removed = removeFeed(id);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: removed }));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
-}
+const handleRSSAddFeed = apiHandler(async (_req, _res, body: { name?: string; url?: string }) => {
+  if (!body.name || !body.url) throw new ApiError(400, "name and url are required");
+  const feed = addFeed(body.name.trim(), body.url.trim());
+  return { success: true, feed };
+});
+
+const handleRSSRemoveFeed = apiHandler(async (_req, _res, body: { id?: string }) => {
+  if (!body.id) throw new ApiError(400, "id is required");
+  return { success: removeFeed(body.id) };
+});
 
 // ── Browser handlers ──
 
-async function handleBrowserRun(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { tasks } = JSON.parse(body);
-    if (!Array.isArray(tasks) || tasks.length === 0) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "tasks array is required" }));
-      return;
-    }
-    if (tasks.length > 10) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "max 10 tasks per workflow" }));
-      return;
-    }
-    const results = await runWorkflow(tasks);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: true, results }));
-  } catch (err) {
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: String(err) }));
+const handleBrowserRun = apiHandler(async (_req, _res, body: Record<string, unknown>) => {
+  const { tasks } = body;
+  if (!Array.isArray(tasks) || tasks.length === 0) throw new ApiError(400, "tasks array is required");
+  if (tasks.length > 10) throw new ApiError(400, "max 10 tasks per workflow");
+  const results = await runWorkflow(tasks);
+  return { success: true, results };
+});
+
+const handleBrowserSession = apiHandler(async (_req, _res, body: Record<string, unknown>) => {
+  const { tasks, sessionTimeoutMs } = body;
+  if (!Array.isArray(tasks) || tasks.length === 0) throw new ApiError(400, "tasks array is required");
+  if (tasks.length > 20) throw new ApiError(400, "max 20 tasks per session");
+  const results = await runSession(tasks, sessionTimeoutMs as number | undefined);
+  return { success: true, results };
+});
+
+const handleBrowserNavigate = apiHandler(async (_req, _res, body: { url?: string }) => {
+  if (!body.url) throw new ApiError(400, "url is required");
+  return await navigateTo(body.url);
+});
+
+const handleBrowserScreenshot = apiHandler(async (_req, _res, body: { url?: string }) => {
+  if (!body.url) throw new ApiError(400, "url is required");
+  return await takeScreenshot(body.url);
+});
+
+const handleBrowserExtract = apiHandler(async (_req, _res, body: { url?: string; selector?: string }) => {
+  if (!body.url || !body.selector) throw new ApiError(400, "url and selector are required");
+  return await extractText(body.url, body.selector);
+});
+
+// ── Captcha handlers ──
+
+const handleCaptchaShare = apiHandler(async (_req, res, body: { url?: string; selector?: string; jid?: string; caption?: string }) => {
+  if (!body.url) throw new ApiError(400, "url is required");
+
+  let result;
+  if (body.selector) {
+    result = await runWorkflow([
+      { id: `captcha_nav_${Date.now()}`, type: "navigate", url: body.url },
+      { id: `captcha_ss_${Date.now()}`, type: "screenshot", url: body.url },
+    ]);
+    result = result[result.length - 1];
+  } else {
+    result = await takeScreenshot(body.url);
   }
-}
 
-async function handleBrowserSession(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { tasks, sessionTimeoutMs } = JSON.parse(body);
-    if (!Array.isArray(tasks) || tasks.length === 0) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "tasks array is required" }));
-      return;
-    }
-    if (tasks.length > 20) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "max 20 tasks per session" }));
-      return;
-    }
-    const results = await runSession(tasks, sessionTimeoutMs);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: true, results }));
-  } catch (err) {
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: String(err) }));
+  if (!result.success || !result.screenshotPath) {
+    respondJson(res, 500, { error: result.error || "Screenshot failed", result });
+    return;
   }
-}
 
-async function handleBrowserNavigate(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { url } = JSON.parse(body);
-    if (!url) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "url is required" }));
-      return;
-    }
-    const result = await navigateTo(url);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(result));
-  } catch (err) {
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: String(err) }));
+  const targetJid = body.jid || (process.env.OWNER_PHONE ? `${process.env.OWNER_PHONE}@s.whatsapp.net` : "");
+  if (targetJid) {
+    await sendImage(targetJid, result.screenshotPath, body.caption || "captcha screenshot");
   }
-}
 
-async function handleBrowserScreenshot(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { url } = JSON.parse(body);
-    if (!url) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "url is required" }));
-      return;
-    }
-    const result = await takeScreenshot(url);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(result));
-  } catch (err) {
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: String(err) }));
-  }
-}
+  return {
+    ok: true,
+    screenshotPath: result.screenshotPath,
+    sentTo: targetJid || null,
+    url: result.url,
+  };
+});
 
-async function handleBrowserExtract(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { url, selector } = JSON.parse(body);
-    if (!url || !selector) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "url and selector are required" }));
-      return;
-    }
-    const result = await extractText(url, selector);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(result));
-  } catch (err) {
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: String(err) }));
-  }
-}
-
-// ── Captcha screenshot + share handler ──
-
-async function handleCaptchaShare(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { url, selector, jid, caption } = JSON.parse(body);
-    if (!url) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "url is required" }));
-      return;
-    }
-
-    // Take screenshot (optionally of a specific element)
-    let result;
-    if (selector) {
-      // Use workflow to navigate + screenshot a specific element
-      result = await runWorkflow([
-        { id: `captcha_nav_${Date.now()}`, type: "navigate", url },
-        { id: `captcha_ss_${Date.now()}`, type: "screenshot", url },
-      ]);
-      result = result[result.length - 1];
-    } else {
-      result = await takeScreenshot(url);
-    }
-
-    if (!result.success || !result.screenshotPath) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: result.error || "Screenshot failed", result }));
-      return;
-    }
-
-    // Send to WhatsApp if jid provided (defaults to Gillis)
-    const targetJid = jid || (process.env.OWNER_PHONE ? `${process.env.OWNER_PHONE}@s.whatsapp.net` : "");
-    if (targetJid) {
-      await sendImage(targetJid, result.screenshotPath, caption || "captcha screenshot");
-    }
-
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({
-      ok: true,
-      screenshotPath: result.screenshotPath,
-      sentTo: targetJid || null,
-      url: result.url,
-    }));
-  } catch (err) {
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: String(err) }));
-  }
-}
-
-// ── Captcha verify handler (full loop) ──
-
-async function handleCaptchaVerify(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { imagePath, caption, timeout } = JSON.parse(body);
-    if (!imagePath) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "imagePath is required" }));
-      return;
-    }
-
-    // This blocks until the owner replies or times out
-    const answer = await requestCaptchaVerification(
-      imagePath,
-      caption || undefined,
-      timeout || 300_000,
-    );
-
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true, answer }));
-  } catch (err) {
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: String(err) }));
-  }
-}
+const handleCaptchaVerify = apiHandler(async (_req, _res, body: { imagePath?: string; caption?: string; timeout?: number }) => {
+  if (!body.imagePath) throw new ApiError(400, "imagePath is required");
+  const answer = await requestCaptchaVerification(body.imagePath, body.caption || undefined, body.timeout || 300_000);
+  return { ok: true, answer };
+});
 
 // ── Integrations config handler ──
 
-async function handleIntegrationsConfigUpdate(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
+const handleIntegrationsConfigUpdate = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
+  for (const [key, val] of Object.entries(data)) {
+    if (!isValidIntegrationKey(key)) throw new ApiError(400, `Unknown integration key: ${key}`);
+    if (typeof val !== "boolean") throw new ApiError(400, `Value for "${key}" must be a boolean`);
+  }
+  return saveIntegrationsConfig(data);
+});
 
-    // Validate: all keys must be valid integration keys with boolean values
-    for (const [key, val] of Object.entries(data)) {
-      if (!isValidIntegrationKey(key)) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: `Unknown integration key: ${key}` }));
-        return;
-      }
-      if (typeof val !== "boolean") {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: `Value for "${key}" must be a boolean` }));
-        return;
+// ── Improve queue handlers ──
+
+const handleImproveQueueGet = apiGetHandler(() => {
+  const q = loadQueue();
+  const h = loadHistory();
+  return { queue: q.items, history: h.entries, weeklyCount: getWeeklyCompletedCount() };
+});
+
+function handleImproveQueueAction(_req: IncomingMessage, res: ServerResponse, action: () => unknown) {
+  try {
+    const result = action();
+    respondJson(res, 200, result);
+  } catch (err) {
+    respondJson(res, 400, { error: String(err) });
+  }
+}
+
+// ── Brain dashboard handler ──
+
+const handleBrainDashboardGet = apiGetHandler(() => getBrainDashboard());
+
+// ── Brain signals handler ──
+
+const handleBrainSignalsGet = apiGetHandler(() => {
+  const graph = new MemoryGraph();
+  graph.load();
+  const wm = loadWorkingMemory();
+  return detectInitiativeSignals(graph, wm);
+});
+
+// ── Brain follow-ups handler ──
+
+const handleBrainFollowUpsGet = apiGetHandler(() => {
+  const wm = loadWorkingMemory();
+  return wm.pendingFollowUps;
+});
+
+// ── Brain goals GET handler ──
+
+const handleBrainGoalsGet = apiGetHandler(() => getBrainGoals());
+
+// ── Memory node relationships handler ──
+
+function handleMemoryNodeRelationships(_req: IncomingMessage, res: ServerResponse, nodeId: string) {
+  try {
+    const graph = new MemoryGraph();
+    graph.load();
+    const node = graph.getNode(nodeId);
+    if (!node) {
+      respondJson(res, 404, { error: "Node not found" });
+      return;
+    }
+    const parents = graph.getParents(nodeId).map(n => ({ id: n.id, type: n.type, content: n.content, strength: n.strength }));
+    const children = graph.getChildren(nodeId).map(n => ({ id: n.id, type: n.type, content: n.content, strength: n.strength }));
+    const siblingIds = new Set<string>();
+    const siblings: { id: string; type: string; content: string; strength: number }[] = [];
+    for (const parent of graph.getParents(nodeId)) {
+      for (const child of graph.getChildren(parent.id)) {
+        if (child.id !== nodeId && !siblingIds.has(child.id)) {
+          siblingIds.add(child.id);
+          siblings.push({ id: child.id, type: child.type, content: child.content, strength: child.strength });
+        }
       }
     }
-
-    const config = saveIntegrationsConfig(data);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(config));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
+    const edges = graph.edgesFor(nodeId).map(e => ({ from: e.from, to: e.to, type: e.type, weight: e.weight }));
+    respondJson(res, 200, {
+      node: { id: node.id, type: node.type, content: node.content, tags: node.tags, strength: node.strength },
+      parents, children, siblings, edges,
+    });
+  } catch (err) {
+    respondJson(res, 500, { error: String(err) });
   }
 }
 
 // ── Home Assistant handlers ──
 
-async function handleHASaveConfig(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
+const handleHASaveConfig = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
+  const mode = data.mode as HAConnectionMode;
+  if (!mode || !["direct_api", "cloud"].includes(mode)) throw new ApiError(400, "mode must be 'direct_api' or 'cloud'");
 
-    const mode = data.mode as HAConnectionMode;
-    if (!mode || !["direct_api", "cloud"].includes(mode)) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "mode must be 'direct_api' or 'cloud'" }));
-      return;
-    }
+  const config: HAConfig = {
+    mode,
+    entities: Array.isArray(data.entities) ? data.entities : ["light", "switch", "lock", "climate", "binary_sensor", "sensor"],
+    pollInterval: typeof data.pollInterval === "number" ? data.pollInterval : 60000,
+  };
 
-    const config: HAConfig = {
-      mode,
-      entities: Array.isArray(data.entities) ? data.entities : ["light", "switch", "lock", "climate", "binary_sensor", "sensor"],
-      pollInterval: typeof data.pollInterval === "number" ? data.pollInterval : 60000,
-    };
-
-    if (data.direct_api && typeof data.direct_api === "object") {
-      config.direct_api = {
-        url: String(data.direct_api.url || ""),
-        token: String(data.direct_api.token || ""),
-      };
-    }
-
-    if (data.cloud && typeof data.cloud === "object") {
-      config.cloud = {
-        url: String(data.cloud.url || ""),
-        token: String(data.cloud.token || ""),
-      };
-    }
-
-    saveConfig(config);
-    restartHAPolling();
-
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: true, status: getHAStatus() }));
-  } catch (err) {
-    log(`HA config save error: ${err}`);
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
+  if (data.direct_api && typeof data.direct_api === "object") {
+    const directApi = data.direct_api as Record<string, unknown>;
+    config.direct_api = { url: String(directApi.url || ""), token: String(directApi.token || "") };
   }
-}
 
-async function handleHATestConnection(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const { mode, url, token } = JSON.parse(body);
-
-    if (!mode || !url || !token) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "mode, url, and token are required" }));
-      return;
-    }
-
-    const result = await testHAConnection(mode as HAConnectionMode, url, token);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(result));
-  } catch (err) {
-    log(`HA test connection error: ${err}`);
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
+  if (data.cloud && typeof data.cloud === "object") {
+    const cloud = data.cloud as Record<string, unknown>;
+    config.cloud = { url: String(cloud.url || ""), token: String(cloud.token || "") };
   }
-}
+
+  saveConfig(config);
+  restartHAPolling();
+  return { success: true, status: getHAStatus() };
+});
+
+const handleHATestConnection = apiHandler(async (_req, _res, body: { mode?: string; url?: string; token?: string }) => {
+  if (!body.mode || !body.url || !body.token) throw new ApiError(400, "mode, url, and token are required");
+  return await testHAConnection(body.mode as HAConnectionMode, body.url, body.token);
+});
 
 // ── Brain config handler ──
 
@@ -1587,100 +1220,54 @@ function getBrainDashboard() {
   };
 }
 
-async function handleBrainRecurringAdd(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
-    if (!data.label || !data.type || !data.pattern || !data.action) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "label, type, pattern, and action are required" }));
-      return;
-    }
-    const task = addRecurringTask({
-      type: data.type,
-      label: data.label,
-      pattern: data.pattern,
-      action: data.action,
-      enabled: data.enabled !== false,
-      source: data.source || "owner",
-    });
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(task));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
+const handleBrainRecurringAdd = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
+  if (!data.label || !data.type || !data.pattern || !data.action) {
+    throw new ApiError(400, "label, type, pattern, and action are required");
   }
-}
+  return addRecurringTask(data as unknown as Parameters<typeof addRecurringTask>[0]);
+});
 
 async function handleBrainRecurringUpdate(req: IncomingMessage, res: ServerResponse, id: string) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
+  const handler = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
     const task = updateRecurringTask(id, data);
-    if (!task) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Task not found" }));
-      return;
-    }
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(task));
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
+    if (!task) throw new ApiError(404, "Task not found");
+    return task;
+  });
+  await handler(req, res);
 }
 
-async function handleBrainGoalCreate(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
-    if (!data.title || !data.description) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "title and description are required" }));
-      return;
-    }
-    const graph = loadBrainGraph();
-    const tracker = new GoalTracker(graph);
-    tracker.applyGoalOps([{
-      op: "create_goal",
-      title: data.title,
-      description: data.description,
-      priority: data.priority || 2,
-      deadline: data.deadline,
-      checkpoints: data.checkpoints,
-      createdBy: "owner",
-    }]);
-    graph.save();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true }));
-  } catch (err) {
-    log(`Goal create error: ${err}`);
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
-}
+const handleBrainGoalCreate = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
+  if (!data.title || !data.description) throw new ApiError(400, "title and description are required");
+  const graph = loadBrainGraph();
+  const tracker = new GoalTracker(graph);
+  tracker.applyGoalOps([{
+    op: "create_goal" as const,
+    title: data.title as string,
+    description: data.description as string,
+    priority: (data.priority || 2) as 1 | 2 | 3,
+    deadline: data.deadline as number | undefined,
+    checkpoints: data.checkpoints as string[] | undefined,
+    createdBy: "owner" as const,
+  }]);
+  graph.save();
+  return { ok: true };
+});
 
 async function handleBrainGoalUpdate(req: IncomingMessage, res: ServerResponse, nodeId: string) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
+  const handler = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
     const graph = loadBrainGraph();
     const tracker = new GoalTracker(graph);
     tracker.applyGoalOps([{
-      op: "update_goal",
+      op: "update_goal" as const,
       nodeId,
-      progress: data.progress,
-      status: data.status,
-      checkpoints: data.checkpoints,
+      progress: data.progress as number | undefined,
+      status: data.status as "active" | "completed" | "abandoned" | "paused" | undefined,
+      checkpoints: data.checkpoints as { label: string; done: boolean }[] | undefined,
     }]);
     graph.save();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true }));
-  } catch (err) {
-    log(`Goal update error: ${err}`);
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
-  }
+    return { ok: true };
+  });
+  await handler(req, res);
 }
 
 function handleBrainGoalAction(res: ServerResponse, nodeId: string, action: "complete" | "abandon") {
@@ -1693,141 +1280,79 @@ function handleBrainGoalAction(res: ServerResponse, nodeId: string, action: "com
       tracker.applyGoalOps([{ op: "abandon_goal", nodeId }]);
     }
     graph.save();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true }));
+    respondJson(res, 200, { ok: true });
   } catch (err) {
     log(`Goal ${action} error: ${err}`);
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
+    respondJson(res, 400, { error: "Invalid request" });
   }
 }
 
-async function handleBrainConfigUpdate(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
+const handleBrainConfigUpdate = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
+  let update: Partial<BrainConfig>;
 
-    let update: Partial<BrainConfig>;
-
-    if (data.preset && typeof data.preset === "string") {
-      // Apply preset values
-      const preset = BRAIN_PRESETS.find(p => p.name === data.preset);
-      if (!preset) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: `Unknown preset: ${data.preset}` }));
-        return;
+  if (data.preset && typeof data.preset === "string") {
+    const preset = BRAIN_PRESETS.find(p => p.name === data.preset);
+    if (!preset) throw new ApiError(400, `Unknown preset: ${data.preset}`);
+    update = { ...preset.values, preset: data.preset };
+    if ("enabled" in data && typeof data.enabled === "boolean") update.enabled = data.enabled;
+    if ("selfImproveEnabled" in data && typeof data.selfImproveEnabled === "boolean") update.selfImproveEnabled = data.selfImproveEnabled;
+    if ("selfImproveAutoApprove" in data && typeof data.selfImproveAutoApprove === "boolean") update.selfImproveAutoApprove = data.selfImproveAutoApprove;
+    if ("selfImproveMaxPerWeek" in data && typeof data.selfImproveMaxPerWeek === "number") update.selfImproveMaxPerWeek = data.selfImproveMaxPerWeek;
+  } else {
+    update = {};
+    for (const key of BRAIN_CONFIG_ALLOWED_KEYS) {
+      if (key in data && key !== "preset") {
+        (update as Record<string, unknown>)[key] = data[key];
       }
-      update = { ...preset.values, preset: data.preset };
-      // Respect explicit enabled override alongside preset
-      if ("enabled" in data && typeof data.enabled === "boolean") {
-        update.enabled = data.enabled;
-      }
-      // Forward self-improve fields alongside preset
-      if ("selfImproveEnabled" in data && typeof data.selfImproveEnabled === "boolean") {
-        update.selfImproveEnabled = data.selfImproveEnabled;
-      }
-      if ("selfImproveAutoApprove" in data && typeof data.selfImproveAutoApprove === "boolean") {
-        update.selfImproveAutoApprove = data.selfImproveAutoApprove;
-      }
-      if ("selfImproveMaxPerWeek" in data && typeof data.selfImproveMaxPerWeek === "number") {
-        update.selfImproveMaxPerWeek = data.selfImproveMaxPerWeek;
-      }
-    } else {
-      // Individual field overrides
-      update = {};
-      for (const key of BRAIN_CONFIG_ALLOWED_KEYS) {
-        if (key in data && key !== "preset") {
-          (update as Record<string, unknown>)[key] = data[key];
-        }
-      }
-      update.preset = null;
     }
-
-    const config = saveBrainConfig(update);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({
-      config,
-      activePreset: getActivePreset(config),
-      presets: BRAIN_PRESETS,
-      characterPresets: CHARACTER_PRESETS,
-    }));
-  } catch (err) {
-    log(`Brain config update error: ${err}`);
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
+    update.preset = null;
   }
-}
+
+  const config = saveBrainConfig(update);
+  return {
+    config,
+    activePreset: getActivePreset(config),
+    presets: BRAIN_PRESETS,
+    characterPresets: CHARACTER_PRESETS,
+  };
+});
 
 // ── Twilio handlers ──
 
-async function handleTwilioSaveConfig(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
-
-    if (!data.accountSid || !data.authToken || !data.phoneNumber || !data.webhookBaseUrl) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "accountSid, authToken, phoneNumber, and webhookBaseUrl are required" }));
-      return;
-    }
-
-    const config = {
-      accountSid: String(data.accountSid),
-      authToken: String(data.authToken),
-      phoneNumber: String(data.phoneNumber),
-      webhookBaseUrl: String(data.webhookBaseUrl).replace(/\/+$/, ""),
-      defaultVoice: String(data.defaultVoice || "Polly.Lotte"),
-      defaultLanguage: String(data.defaultLanguage || "nl-NL"),
-      maxCallDurationSec: Number(data.maxCallDurationSec) || 600,
-      model: String(data.model || "claude-sonnet-4-20250514"),
-    };
-
-    saveTwilioConfig(config);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ success: true, status: getTwilioStatus() }));
-  } catch (err) {
-    log(`Twilio config save error: ${err}`);
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid request" }));
+const handleTwilioSaveConfig = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
+  if (!data.accountSid || !data.authToken || !data.phoneNumber || !data.webhookBaseUrl) {
+    throw new ApiError(400, "accountSid, authToken, phoneNumber, and webhookBaseUrl are required");
   }
-}
+  const config = {
+    accountSid: String(data.accountSid),
+    authToken: String(data.authToken),
+    phoneNumber: String(data.phoneNumber),
+    webhookBaseUrl: String(data.webhookBaseUrl).replace(/\/+$/, ""),
+    defaultVoice: String(data.defaultVoice || "Polly.Lotte"),
+    defaultLanguage: String(data.defaultLanguage || "nl-NL"),
+    maxCallDurationSec: Number(data.maxCallDurationSec) || 600,
+    model: String(data.model || "claude-sonnet-4-20250514"),
+  };
+  saveTwilioConfig(config);
+  return { success: true, status: getTwilioStatus() };
+});
 
-async function handleTwilioCall(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
-    const { to, mode, message, systemPrompt, greeting, voice, language, model } = data;
+const handleTwilioCall = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
+  const { to, mode, message, systemPrompt, greeting, voice, language, model } = data as {
+    to?: string; mode?: string; message?: string; systemPrompt?: string;
+    greeting?: string; voice?: string; language?: string; model?: string;
+  };
+  if (!to) throw new ApiError(400, "to is required");
 
-    if (!to) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "to is required" }));
-      return;
-    }
-
-    if (mode === "agent") {
-      const record = await makeAgentCall(
-        to,
-        systemPrompt || "You are ARIA, a helpful AI assistant making a phone call. Be concise and natural.",
-        greeting || "Hello, this is ARIA calling.",
-        voice,
-        language,
-        model,
-      );
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(record));
-    } else {
-      if (!message) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "message is required for simple calls" }));
-        return;
-      }
-      const record = await makeSimpleCall(to, message, voice, language);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(record));
-    }
-  } catch (err) {
-    log(`Twilio call error: ${err}`);
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: String(err) }));
+  if (mode === "agent") {
+    return await makeAgentCall(
+      to,
+      systemPrompt || "You are ARIA, a helpful AI assistant making a phone call. Be concise and natural.",
+      greeting || "Hello, this is ARIA calling.",
+      voice, language, model,
+    );
+  } else {
+    if (!message) throw new ApiError(400, "message is required for simple calls");
+    return await makeSimpleCall(to, message, voice, language);
   }
-}
+});

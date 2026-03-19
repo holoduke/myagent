@@ -10,16 +10,12 @@ import {
   invalidateProviderCache,
 } from "../providers/index.js";
 import { maskSecrets } from "../providers/provider-store.js";
-import { isAuthenticated, readBody } from "./auth.js";
+import { isAuthenticated } from "./auth.js";
 import type { ProviderProfile } from "../providers/types.js";
 import { createLogger } from "../logger.js";
+import { respondJson, apiHandler, ApiError } from "../utils/api-helpers.js";
 
 const log = createLogger("providers-api");
-
-function json(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
-}
 
 export function handleProviderRoutes(
   req: IncomingMessage,
@@ -30,13 +26,13 @@ export function handleProviderRoutes(
 
   if (!pathname.startsWith("/api/providers")) return false;
   if (!isAuthenticated(req)) {
-    json(res, 401, { error: "Unauthorized" });
+    respondJson(res, 401, { error: "Unauthorized" });
     return true;
   }
 
   // GET /api/providers — list all
   if (pathname === "/api/providers" && req.method === "GET") {
-    json(res, 200, listProviders().map(maskSecrets));
+    respondJson(res, 200, listProviders().map(maskSecrets));
     return true;
   }
 
@@ -44,9 +40,9 @@ export function handleProviderRoutes(
   if (pathname === "/api/providers/default" && req.method === "GET") {
     const provider = getDefaultProviderProfile();
     if (!provider) {
-      json(res, 404, { error: "No providers configured" });
+      respondJson(res, 404, { error: "No providers configured" });
     } else {
-      json(res, 200, maskSecrets(provider));
+      respondJson(res, 200, maskSecrets(provider));
     }
     return true;
   }
@@ -65,9 +61,9 @@ export function handleProviderRoutes(
     if (req.method === "GET") {
       const provider = getProvider(id);
       if (!provider) {
-        json(res, 404, { error: "Provider not found" });
+        respondJson(res, 404, { error: "Provider not found" });
       } else {
-        json(res, 200, maskSecrets(provider));
+        respondJson(res, 200, maskSecrets(provider));
       }
       return true;
     }
@@ -80,11 +76,11 @@ export function handleProviderRoutes(
     if (req.method === "DELETE") {
       const deleted = deleteProvider(id);
       if (!deleted) {
-        json(res, 404, { error: "Provider not found" });
+        respondJson(res, 404, { error: "Provider not found" });
         return true;
       }
       invalidateProviderCache();
-      json(res, 200, { success: true });
+      respondJson(res, 200, { success: true });
       return true;
     }
   }
@@ -95,11 +91,11 @@ export function handleProviderRoutes(
     const id = setDefaultMatch[1];
     const provider = getProvider(id);
     if (!provider) {
-      json(res, 404, { error: "Provider not found" });
+      respondJson(res, 404, { error: "Provider not found" });
     } else {
       setDefault(id);
       invalidateProviderCache();
-      json(res, 200, { success: true });
+      respondJson(res, 200, { success: true });
     }
     return true;
   }
@@ -114,71 +110,51 @@ export function handleProviderRoutes(
   return false;
 }
 
-async function handleCreate(req: IncomingMessage, res: ServerResponse) {
-  try {
-    const body = await readBody(req);
-    const data = JSON.parse(body);
-    const { name, provider, config, isDefault } = data;
-
-    if (!name || !provider || !["claude", "codex", "grok"].includes(provider)) {
-      json(res, 400, { error: "name and provider (claude|codex|grok) are required" });
-      return;
-    }
-
-    const id = `${provider}-${Date.now().toString(36)}`;
-    const profile: ProviderProfile = {
-      id,
-      name,
-      provider,
-      isDefault: isDefault ?? false,
-      config: config || {},
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    saveProvider(profile);
-    if (profile.isDefault) {
-      setDefault(id);
-    }
-    invalidateProviderCache();
-    log(`Created provider: ${id}`);
-    json(res, 201, maskSecrets(profile));
-  } catch {
-    json(res, 400, { error: "Invalid request" });
+const handleCreate = apiHandler(async (_req, res, data: { name?: string; provider?: string; config?: Record<string, unknown>; isDefault?: boolean }) => {
+  if (!data.name || !data.provider || !["claude", "codex", "grok"].includes(data.provider)) {
+    throw new ApiError(400, "name and provider (claude|codex|grok) are required");
   }
-}
+
+  const id = `${data.provider}-${Date.now().toString(36)}`;
+  const profile: ProviderProfile = {
+    id,
+    name: data.name,
+    provider: data.provider as "claude" | "codex" | "grok",
+    isDefault: data.isDefault ?? false,
+    config: data.config || {},
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  saveProvider(profile);
+  if (profile.isDefault) setDefault(id);
+  invalidateProviderCache();
+  log(`Created provider: ${id}`);
+  respondJson(res, 201, maskSecrets(profile));
+});
 
 async function handleUpdate(req: IncomingMessage, res: ServerResponse, id: string) {
-  try {
+  const handler = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
     const existing = getProvider(id);
-    if (!existing) {
-      json(res, 404, { error: "Provider not found" });
-      return;
-    }
+    if (!existing) throw new ApiError(404, "Provider not found");
 
-    const body = await readBody(req);
-    const data = JSON.parse(body);
-
-    if (data.name !== undefined) existing.name = data.name;
-    if (data.config !== undefined) existing.config = data.config;
-    if (data.isDefault !== undefined) existing.isDefault = data.isDefault;
+    if (data.name !== undefined) existing.name = data.name as string;
+    if (data.config !== undefined) existing.config = data.config as Record<string, unknown>;
+    if (data.isDefault !== undefined) existing.isDefault = data.isDefault as boolean;
 
     saveProvider(existing);
-    if (existing.isDefault) {
-      setDefault(id);
-    }
+    if (existing.isDefault) setDefault(id);
     invalidateProviderCache();
     log(`Updated provider: ${id}`);
-    json(res, 200, maskSecrets(existing));
-  } catch {
-    json(res, 400, { error: "Invalid request" });
-  }
+    return maskSecrets(existing);
+  });
+  await handler(req, res);
 }
 
 async function handleTest(res: ServerResponse, id: string) {
   const provider = getProvider(id);
   if (!provider) {
-    json(res, 404, { error: "Provider not found" });
+    respondJson(res, 404, { error: "Provider not found" });
     return;
   }
 
@@ -188,17 +164,10 @@ async function handleTest(res: ServerResponse, id: string) {
     const result = await aiProvider.ask("Say hello in one sentence.", { timeout: 30_000, noSession: true });
     const durationMs = Date.now() - start;
     log(`Test for ${id}: ${result.messages[0]?.slice(0, 100)}`);
-    json(res, 200, {
-      success: true,
-      response: result.messages[0] || "",
-      durationMs,
-    });
+    respondJson(res, 200, { success: true, response: result.messages[0] || "", durationMs });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Test failed for ${id}: ${msg}`);
-    json(res, 200, {
-      success: false,
-      error: msg,
-    });
+    respondJson(res, 200, { success: false, error: msg });
   }
 }
