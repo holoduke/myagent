@@ -175,7 +175,8 @@ const BACKOFF_DELAYS_MS = [2 * 60000, 10 * 60000, 30 * 60000, 60 * 60000, 120 * 
 export function markDelivered(ids: string[]): void {
   if (ids.length === 0) return;
   const schedule = loadSchedule();
-  const remaining = schedule.filter(m => !ids.includes(m.id));
+  const idSet = new Set(ids);
+  const remaining = schedule.filter(m => !idSet.has(m.id));
   saveSchedule(remaining);
   // Clear in-flight tracking
   for (const id of ids) inFlightIds.delete(id);
@@ -189,10 +190,11 @@ export function markDelivered(ids: string[]): void {
 export function markFailed(ids: string[]): string[] {
   if (ids.length === 0) return [];
   const schedule = loadSchedule();
+  const idSet = new Set(ids);
   const droppedIds: string[] = [];
 
   for (const msg of schedule) {
-    if (ids.includes(msg.id)) {
+    if (idSet.has(msg.id)) {
       msg.retryCount = (msg.retryCount || 0) + 1;
       if (msg.retryCount > MAX_RETRIES) {
         droppedIds.push(msg.id);
@@ -205,7 +207,8 @@ export function markFailed(ids: string[]): string[] {
     }
   }
 
-  const remaining = schedule.filter(m => !droppedIds.includes(m.id));
+  const droppedSet = new Set(droppedIds);
+  const remaining = schedule.filter(m => !droppedSet.has(m.id));
   saveSchedule(remaining);
   // Clear in-flight tracking for all failed messages (retried or dropped)
   for (const id of ids) inFlightIds.delete(id);
