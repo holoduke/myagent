@@ -29,7 +29,7 @@ const startedAt = Date.now();
 async function main() {
   const ownerPhone = process.env.OWNER_PHONE;
   if (!ownerPhone) {
-    console.error("OWNER_PHONE is not set in .env");
+    log.error("OWNER_PHONE is not set in .env");
     process.exit(1);
   }
 
@@ -172,18 +172,18 @@ async function main() {
     log(`HTTP server error: ${err.message}`);
   });
 
-  server.listen(3000, () => console.log("[agent] Health check on :3000"));
+  server.listen(3000, () => log.info("Health check on :3000"));
 
-  console.log(`[agent] Starting WhatsApp Claude Agent`);
-  console.log(`[agent] Owner phone: ${ownerPhone}`);
-  console.log(`[agent] Claude timeout: ${process.env.CLAUDE_TIMEOUT ?? 300000}ms`);
+  log.info("Starting WhatsApp Claude Agent");
+  log.info(`Owner phone: ${ownerPhone}`);
+  log.info(`Claude timeout: ${process.env.CLAUDE_TIMEOUT ?? 300000}ms`);
 
   // Delay WhatsApp connection to let health check pass first.
   // During rolling deploys, Coolify stops the old container after the new one is healthy.
   // This prevents two containers from competing for the same WhatsApp session.
   const startupDelay = Number(process.env.WA_STARTUP_DELAY ?? 40) * 1000;
   if (startupDelay > 0) {
-    console.log(`[agent] Waiting ${startupDelay / 1000}s before connecting WhatsApp (deploy safety)...`);
+    log.info(`Waiting ${startupDelay / 1000}s before connecting WhatsApp (deploy safety)...`);
     await new Promise((r) => setTimeout(r, startupDelay));
   }
 
@@ -346,7 +346,7 @@ async function main() {
 
 // Graceful shutdown
 function shutdown() {
-  console.log("\n[agent] Shutting down...");
+  log.info("Shutting down...");
   stopBrainLoop();
   stopGmailPolling();
   stopCalendarPolling();
@@ -375,6 +375,6 @@ process.on("unhandledRejection", (err) => {
 });
 
 main().catch((err) => {
-  console.error("[agent] Fatal error:", err);
+  log.error(`Fatal error: ${err}`);
   process.exit(1);
 });

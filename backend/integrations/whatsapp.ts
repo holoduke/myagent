@@ -64,9 +64,9 @@ function loadContacts(): void {
     for (const c of data) {
       contactStore.set(c.id, c);
     }
-    console.log(`[whatsapp] Loaded ${contactStore.size} contacts from disk`);
+    log.info(`Loaded ${contactStore.size} contacts from disk`);
   } catch (err) {
-    console.error("[whatsapp] Failed to load contacts:", err);
+    log.error(`Failed to load contacts: ${err}`);
   }
 }
 
@@ -133,7 +133,7 @@ export async function startWhatsApp(
   const credLid = (state.creds.me as { lid?: string } | undefined)?.lid;
   if (credLid) {
     ownerLid = credLid.replace(/:\d+@/, "@");
-    console.log(`[whatsapp] Owner LID from credentials: ${ownerLid}`);
+    log.info(`Owner LID from credentials: ${ownerLid}`);
   }
 
   sock = makeWASocket({
@@ -157,7 +157,7 @@ export async function startWhatsApp(
       contactStore.set(c.id, { ...existing, ...c });
       added++;
     }
-    console.log(`[whatsapp] contacts.upsert: ${added} contacts`);
+    log.info(`contacts.upsert: ${added} contacts`);
     saveContacts();
   });
 
@@ -173,7 +173,7 @@ export async function startWhatsApp(
         updated++;
       }
     }
-    console.log(`[whatsapp] contacts.update: ${updated} contacts`);
+    log.info(`contacts.update: ${updated} contacts`);
     saveContacts();
   });
 
@@ -184,7 +184,7 @@ export async function startWhatsApp(
       const existing = contactStore.get(c.id);
       contactStore.set(c.id, { ...existing, ...c });
     }
-    console.log(`[whatsapp] messaging-history.set: ${contacts.length} contacts synced`);
+    log.info(`messaging-history.set: ${contacts.length} contacts synced`);
     saveContacts();
   });
 
@@ -194,8 +194,8 @@ export async function startWhatsApp(
     if (qr) {
       latestQr = qr;
       qrcode.generate(qr, { small: true });
-      console.log("[whatsapp] Scan the QR code above with WhatsApp");
-      console.log(`[whatsapp] Or visit http://<host>:3000/qr`);
+      log.info("Scan the QR code above with WhatsApp");
+      log.info("Or visit http://<host>:3000/qr");
     }
 
     if (connection === "close") {
@@ -210,20 +210,20 @@ export async function startWhatsApp(
       );
       reconnectAttempt++;
 
-      console.log(
-        `[whatsapp] Connection closed (code: ${statusCode}). Reconnecting: ${shouldReconnect} (attempt ${reconnectAttempt}, delay ${Math.round(delay / 1000)}s)`
+      log.warn(
+        `Connection closed (code: ${statusCode}). Reconnecting: ${shouldReconnect} (attempt ${reconnectAttempt}, delay ${Math.round(delay / 1000)}s)`
       );
 
       if (shouldReconnect) {
         setTimeout(() => startWhatsApp(onMessage, onObservation), delay);
       } else {
-        console.error("[whatsapp] Logged out. Delete auth_state/ and restart to re-scan QR.");
+        log.error("Logged out. Delete auth_state/ and restart to re-scan QR.");
         process.exit(1);
       }
     } else if (connection === "open") {
       isConnected = true;
       reconnectAttempt = 0; // Reset backoff on successful connection
-      console.log("[whatsapp] Connected!");
+      log.info("Connected!");
     }
   });
 
@@ -252,14 +252,14 @@ export async function startWhatsApp(
         "";
 
       // Log all incoming messages for debugging (before any filtering)
-      console.log(`[whatsapp] MSG jid=${jid} fromMe=${msg.key.fromMe} group=${isGroup} participant=${msg.key.participant || "N/A"} text=${text.slice(0, 50) || "(no text)"}`);
+      log.debug(`MSG jid=${jid} fromMe=${msg.key.fromMe} group=${isGroup} participant=${msg.key.participant || "N/A"} text=${text.slice(0, 50) || "(no text)"}`);
 
       // Update owner LID from credentials if not yet set (e.g. after reconnect)
       if (!ownerLid && sock?.user) {
         const lid = (sock.user as { lid?: string }).lid;
         if (lid) {
           ownerLid = lid.replace(/:\d+@/, "@");
-          console.log(`[whatsapp] Owner LID from socket: ${ownerLid}`);
+          log.info(`Owner LID from socket: ${ownerLid}`);
         }
       }
 
@@ -268,7 +268,7 @@ export async function startWhatsApp(
       // Deduplicate messages (Baileys can deliver same message via @lid and @s.whatsapp.net)
       const msgId = msg.key.id;
       if (msgId && processedMessages.has(msgId)) {
-        console.log(`[whatsapp] Dedup skip: ${msgId} from ${jid}`);
+        log.debug(`Dedup skip: ${msgId} from ${jid}`);
         continue;
       }
       if (msgId) {
@@ -344,7 +344,7 @@ export async function startWhatsApp(
             chatName,
           });
         } catch (err) {
-          console.error("[whatsapp] Observation handler error:", err);
+          log.error(`Observation handler error: ${err}`);
         }
       }
 
@@ -355,14 +355,14 @@ export async function startWhatsApp(
       const matchesLid = ownerLid !== null && jid === ownerLid;
       const isOwner = matchesJid || matchesLid;
 
-      console.log(`[whatsapp] DM check: jid=${jid} ownerJid=${ownerJid} ownerLid=${ownerLid || "unset"} fromMe=${msg.key.fromMe} matchJid=${matchesJid} matchLid=${matchesLid} → isOwner=${isOwner}`);
+      log.debug(`DM check: jid=${jid} ownerJid=${ownerJid} ownerLid=${ownerLid || "unset"} fromMe=${msg.key.fromMe} matchJid=${matchesJid} matchLid=${matchesLid} → isOwner=${isOwner}`);
 
       if (!isOwner) {
-        console.log(`[whatsapp] Skipping non-owner DM from: ${jid}`);
+        log.debug(`Skipping non-owner DM from: ${jid}`);
         continue;
       }
 
-      console.log(`[whatsapp] Processing owner message: ${text.slice(0, 100)}`);
+      log.info(`Processing owner message: ${text.slice(0, 100)}`);
 
       // Always reply to owner's @s.whatsapp.net JID (LID replies may not deliver)
       await onMessage(ownerJid, text, msg);
@@ -373,17 +373,17 @@ export async function startWhatsApp(
 /** Force a contact sync via Baileys app state resync. */
 export async function syncContacts(): Promise<void> {
   if (!sock) {
-    console.log("[whatsapp] syncContacts: socket not ready");
+    log.warn("syncContacts: socket not ready");
     return;
   }
-  console.log("[whatsapp] Triggering contact sync via resyncAppState...");
+  log.info("Triggering contact sync via resyncAppState...");
   await sock.resyncAppState(["regular_high", "regular_low"], false);
-  console.log("[whatsapp] Contact sync triggered, waiting for events...");
+  log.info("Contact sync triggered, waiting for events...");
 }
 
 export async function sendMessage(jid: string, text: string): Promise<void> {
   if (!isConnected) {
-    console.log(`[whatsapp] Cannot send message — not connected`);
+    log.warn("Cannot send message — not connected");
     throw new Error("WhatsApp not connected");
   }
 
@@ -391,7 +391,7 @@ export async function sendMessage(jid: string, text: string): Promise<void> {
   const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
   const dedupKey = `${jid}|${hash}`;
   if (sentMessages.has(dedupKey)) {
-    console.log(`[whatsapp] Outgoing dedup skip: already sent to ${jid} (hash=${hash})`);
+    log.debug(`Outgoing dedup skip: already sent to ${jid} (hash=${hash})`);
     return;
   }
   sentMessages.add(dedupKey);
@@ -406,7 +406,7 @@ export async function sendImage(
   caption?: string,
 ): Promise<void> {
   if (!isConnected) {
-    console.log(`[whatsapp] Cannot send image — not connected`);
+    log.warn("Cannot send image — not connected");
     throw new Error("WhatsApp not connected");
   }
 
@@ -415,7 +415,7 @@ export async function sendImage(
     image: imageBuffer,
     caption: caption || undefined,
   });
-  console.log(`[whatsapp] Image sent to ${jid}: ${imagePath}`);
+  log.info(`Image sent to ${jid}: ${imagePath}`);
 }
 
 export async function sendTypingIndicator(jid: string): Promise<void> {
