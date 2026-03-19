@@ -20,6 +20,8 @@ import { getTwilioStatus, makeSimpleCall, makeAgentCall, saveConfig as saveTwili
 import { getBrowserStatus, clearBrowserHistory, runWorkflow, runSession, navigateTo, takeScreenshot, extractText } from "../integrations/browser.js";
 import { requestCaptchaVerification, getPendingCaptchas, getCaptchaHistory } from "../captcha-verify.js";
 import { getIntegrationsConfig, saveIntegrationsConfig, isValidIntegrationKey } from "../integrations/integration-config.js";
+import { getTrustConfig, saveTrustConfig } from "../trust.js";
+import type { TrustConfig } from "../trust.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
 import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS, CHARACTER_PRESETS } from "../brain-config.js";
@@ -345,6 +347,20 @@ export function handleApiRoutes(
   // ── Integrations config ──
   if (pathname === "/api/integrations/config" && req.method === "PUT" && isAuthenticated(req)) {
     handleIntegrationsConfigUpdate(req, res);
+    return true;
+  }
+
+  // ── Trust / Security config ──
+  if (pathname === "/api/trust/config" && req.method === "GET" && isAuthenticated(req)) {
+    respondJson(res, 200, getTrustConfig());
+    return true;
+  }
+  if (pathname === "/api/trust/config" && req.method === "PUT" && isAuthenticated(req)) {
+    handleTrustConfigUpdate(req, res);
+    return true;
+  }
+  if (pathname === "/api/trust/injection-log" && req.method === "GET" && isAuthenticated(req)) {
+    handleInjectionLogGet(req, res);
     return true;
   }
 
@@ -1042,6 +1058,26 @@ const handleIntegrationsConfigUpdate = apiHandler(async (_req, _res, data: Recor
     if (typeof val !== "boolean") throw new ApiError(400, `Value for "${key}" must be a boolean`);
   }
   return saveIntegrationsConfig(data);
+});
+
+// ── Trust config handlers ──
+
+const handleTrustConfigUpdate = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
+  return saveTrustConfig(data as Partial<TrustConfig>);
+});
+
+const handleInjectionLogGet = apiGetHandler(() => {
+  const logFile = "/data/brain/injection-attempts.jsonl";
+  try {
+    if (!existsSync(logFile)) return [];
+    const content = readFileSync(logFile, "utf-8");
+    const lines = content.trim().split("\n").filter(Boolean);
+    return lines
+      .slice(-100)
+      .map(line => { try { return JSON.parse(line); } catch { return null; } })
+      .filter(Boolean)
+      .reverse();
+  } catch { return []; }
 });
 
 // ── Improve queue handlers ──

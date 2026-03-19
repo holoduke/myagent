@@ -3,6 +3,7 @@ import { ensureDir, atomicWriteFile, safeReadJSON } from "./utils/file-store.js"
 import { createLogger } from "./logger.js";
 import { BrainError } from "./brain-errors.js";
 import { scoreAndMaybeInterrupt } from "./urgency.js";
+import { classifyTrust, detectInjection, logInjectionAttempt } from "./trust.js";
 
 const log = createLogger("observer");
 
@@ -52,6 +53,8 @@ export interface Observation {
   locationMeta?: LocationMeta;
   callMeta?: CallMeta;
   urgency?: number;
+  /** Trust classification — set at intake, used for prompt sanitization */
+  trustLevel?: "owner" | "trusted" | "untrusted";
 }
 
 export interface CallMeta {
@@ -141,6 +144,19 @@ export function recordObservation(obs: Observation): void {
     const keep = [...recentObservationKeys].slice(-MAX_DEDUP_ENTRIES + 100);
     recentObservationKeys.clear();
     for (const e of keep) recentObservationKeys.add(e);
+  }
+
+  // Classify trust level at intake
+  if (!obs.trustLevel) {
+    obs.trustLevel = classifyTrust(obs);
+  }
+
+  // Detect injection attempts in untrusted content
+  if (obs.trustLevel === "untrusted") {
+    const detection = detectInjection(obs.text);
+    if (detection.detected) {
+      logInjectionAttempt(obs, detection);
+    }
   }
 
   try {
