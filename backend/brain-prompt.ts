@@ -306,8 +306,8 @@ Memory decay is governed by a hierarchical retention system. Tags on nodes deter
 
 CORE (0.1x decay — near-permanent): family, child, children, partner, co-parent, parent, sibling, owner
   → Family members, Gillis himself, core relationships. These memories barely fade.
-IMPORTANT (0.25x decay): friend, gillis-friend, milestone, birthday, birth, core-insight, rule, persistent
-  → Friends, key insights, life milestones. Very slow decay.
+IMPORTANT (0.25x decay): friend, gillis-friend, milestone, birthday, birth, core-insight, rule, persistent, corrected
+  → Friends, key insights, life milestones, learned corrections. Very slow decay.
 WORK (0.5x decay): work, newstory, colleague, project, football-mania, serie-a, business, meeting
   → Professional context. Moderate decay.
 STANDARD (1.0x decay): anything without tier-specific tags. Normal decay.
@@ -558,6 +558,11 @@ CONSOLIDATION GUIDELINES:
 - Look for clusters of 3+ nodes that share a theme. Create a "concept" node to group them with hierarchical edges.
 - Update existing concept node content to reflect their children's current state.
 - When orphan nodes relate to an existing concept, adopt them (add hierarchical edge) instead of removing.
+- CONTRADICTION DETECTION: Watch for pairs of nodes that contain contradictory information about the same topic or person. When found:
+  1. Merge them using merge_nodes, keeping the most recent and reliable information.
+  2. Add a "corrected" tag to the merged node so it is retained as important.
+  3. Create a meta node noting the resolution: what conflicted, which version was kept, and why.
+  This prevents stale or incorrect information from lingering in the memory graph.
 
 Respond with ONLY the JSON object.`;
 }
@@ -682,6 +687,22 @@ Respond with ONLY a JSON object:
     }
   ]
 }
+
+PATTERN RECOGNITION — actively look for PATTERNS across your memory:
+
+1. **Behavioral patterns**: Does a person consistently do X? (e.g., always late, always changes plans last minute, always positive about topic Y)
+2. **Temporal patterns**: Do certain events cluster around times/days? (e.g., owner is busiest on Mondays, conversations with X always happen in evening)
+3. **Relationship dynamics**: How do people interact with each other? Are there tensions, alliances, dependencies?
+4. **Recurring themes**: What topics keep coming up? What concerns persist across weeks?
+5. **Trend detection**: Is something increasing or decreasing over time? (e.g., communication frequency with a person, mood trends, work intensity)
+
+When you identify a pattern across 3+ observations/nodes, create an insight node that:
+- Names the pattern clearly
+- Lists the supporting evidence (reference node IDs)
+- Rates your confidence (low/medium/high)
+- Notes when the pattern might break or exceptions you've seen
+
+Connect pattern insight nodes to all supporting nodes via 'supports' edges.
 
 REFLECTION GUIDELINES:
 - Create insight nodes for realizations and patterns you notice.
