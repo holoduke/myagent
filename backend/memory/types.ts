@@ -223,7 +223,7 @@ export const TIER_TAG_SIGNALS: Record<RetentionTier, string[]> = {
   important: [
     "friend", "gillis-friend", "milestone", "birthday", "birth", "pinned",
     "core-insight", "rule", "lesson", "persistent", "arjan", "important",
-    "first-contact", "whitelisted", "aria-aware",
+    "first-contact", "whitelisted", "aria-aware", "corrected",
   ],
   work: [
     "work", "newstory", "colleague", "professional-life", "project",

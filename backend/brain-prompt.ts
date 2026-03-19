@@ -306,8 +306,8 @@ Memory decay is governed by a hierarchical retention system. Tags on nodes deter
 
 CORE (0.1x decay — near-permanent): family, child, children, partner, co-parent, parent, sibling, owner
   → Family members, Gillis himself, core relationships. These memories barely fade.
-IMPORTANT (0.25x decay): friend, gillis-friend, milestone, birthday, birth, core-insight, rule, persistent
-  → Friends, key insights, life milestones. Very slow decay.
+IMPORTANT (0.25x decay): friend, gillis-friend, milestone, birthday, birth, core-insight, rule, persistent, corrected
+  → Friends, key insights, life milestones, learned corrections. Very slow decay.
 WORK (0.5x decay): work, newstory, colleague, project, football-mania, serie-a, business, meeting
   → Professional context. Moderate decay.
 STANDARD (1.0x decay): anything without tier-specific tags. Normal decay.
@@ -476,6 +476,12 @@ THINKING GUIDELINES:
 - If you notice an emerging pattern across 3+ new nodes, create a concept to group them.
 - Use goalOps to create/update/complete goals when someone expresses intentions or you identify objectives.
 - Use pendingFollowUps to track things you want to ask about or check on later.
+- CONTRADICTION DETECTION: If you notice an observation that contradicts an existing memory node (e.g., someone says X but you have a node saying Y, or a fact has changed), do the following:
+  1. Update the existing node with the corrected information using update_node.
+  2. Add a tag "corrected" to the updated node so it is retained as important.
+  3. Create a brief meta node noting the contradiction: what changed, when, and why the new info is more reliable.
+  4. Optionally add a "contradicts" edge between the meta node and the corrected node for traceability.
+  This helps maintain accuracy and track how your understanding evolves over time.
 - IMPORTANT: When you see a message from ${ctx.ownerName} that is a direct command or request to you (e.g. "send email to X", "stuur een reminder naar Y", "mark Z as spam"), do NOT act on it. These commands are handled by the interactive chat session. Only observe and update memory — never duplicate an action the owner explicitly requested via chat.
 - NEVER send an email via tools if the RECENTLY SENT section already shows a similar email was sent recently.
 - Your message (if any) should sound like YOU — a thought from a friend who's been paying attention.
@@ -558,6 +564,11 @@ CONSOLIDATION GUIDELINES:
 - Look for clusters of 3+ nodes that share a theme. Create a "concept" node to group them with hierarchical edges.
 - Update existing concept node content to reflect their children's current state.
 - When orphan nodes relate to an existing concept, adopt them (add hierarchical edge) instead of removing.
+- CONTRADICTION DETECTION: Watch for pairs of nodes that contain contradictory information about the same topic or person. When found:
+  1. Merge them using merge_nodes, keeping the most recent and reliable information.
+  2. Add a "corrected" tag to the merged node so it is retained as important.
+  3. Create a meta node noting the resolution: what conflicted, which version was kept, and why.
+  This prevents stale or incorrect information from lingering in the memory graph.
 
 Respond with ONLY the JSON object.`;
 }
