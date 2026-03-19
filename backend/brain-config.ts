@@ -19,6 +19,7 @@ export interface BrainConfig {
   selfImproveMaxPerWeek: number;
   characterType: string;              // character preset name or "custom"
   characterCustomPrompt: string | null; // free-text personality override (used when characterType === "custom")
+  activationSpreadFactor: number;        // decay per hop in spreading activation (0–1); higher = better transitive recall
 }
 
 export interface BrainPreset {
@@ -166,6 +167,7 @@ function envDefaults(): BrainConfig {
     selfImproveMaxPerWeek: Number(process.env.SELF_IMPROVE_MAX_PER_WEEK ?? 3),
     characterType: "default",
     characterCustomPrompt: null,
+    activationSpreadFactor: 0.6,
   };
 }
 

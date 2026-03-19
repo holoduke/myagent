@@ -2,6 +2,7 @@ import type { MemoryGraph } from "./graph.js";
 import type { MemoryNode, WorkingMemory } from "./types.js";
 import type { Observation } from "../observer.js";
 import { createLogger } from "../logger.js";
+import { getBrainConfig } from "../brain-config.js";
 
 const log = createLogger("activation");
 
@@ -126,7 +127,8 @@ export function spreadingActivation(
 
   // Spread through edges
   for (let hop = 0; hop < maxHops; hop++) {
-    const spreadFactor = Math.pow(0.5, hop + 1); // 0.5, 0.25, ...
+    const decay = getBrainConfig().activationSpreadFactor;
+    const spreadFactor = Math.pow(decay, hop + 1); // e.g. 0.6, 0.36, ...
     const currentIds = Array.from(activations.keys());
 
     for (const id of currentIds) {
