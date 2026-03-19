@@ -134,8 +134,13 @@ export function getDueMessages(): ScheduledMessage[] {
   const due = schedule.filter(m => m.deliverAt <= now && !inFlightIds.has(m.id));
   if (due.length === 0) return [];
 
-  // Filter out messages targeting non-whitelisted contacts
-  const blocked = due.filter(m => !isWhitelisted(m.targetJid));
+  // Single-pass partition into allowed / blocked by whitelist status
+  const allowed: ScheduledMessage[] = [];
+  const blocked: ScheduledMessage[] = [];
+  for (const m of due) {
+    (isWhitelisted(m.targetJid) ? allowed : blocked).push(m);
+  }
+
   if (blocked.length > 0) {
     log(`Blocked ${blocked.length} scheduled message(s) to non-whitelisted JID(s): ${blocked.map(m => m.targetJid).join(", ")}`);
     // Remove blocked messages from the schedule so they don't accumulate
@@ -144,8 +149,10 @@ export function getDueMessages(): ScheduledMessage[] {
     saveSchedule(cleaned);
   }
 
-  const allowed = due.filter(m => isWhitelisted(m.targetJid));
-  if (allowed.length === 0) return [];
+  if (allowed.length === 0) {
+    if (due.length > 0) log(`All ${due.length} due message(s) were blocked by whitelist`);
+    return [];
+  }
 
   // Mark as in-flight immediately so no other poll picks them up
   for (const m of allowed) inFlightIds.set(m.id, now);
