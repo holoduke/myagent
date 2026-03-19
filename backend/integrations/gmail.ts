@@ -1,6 +1,6 @@
 import { google, gmail_v1 } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { FileStore, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { recordObservation } from "../observer.js";
 import { isIntegrationEnabled } from "./integration-config.js";
 import { logDelivery } from "../scheduler.js";
@@ -52,71 +52,42 @@ interface GmailState {
 
 // ── Persistence ──
 
-function ensureGmailDir(): void {
-  if (!existsSync(GMAIL_DIR)) {
-    mkdirSync(GMAIL_DIR, { recursive: true });
-  }
-}
+const accountsStore = new FileStore<GmailAccount[]>({ filePath: ACCOUNTS_FILE, defaultValue: [] });
+const stateStore = new FileStore<GmailState>({ filePath: STATE_FILE, defaultValue: {} });
+const seenIdsStore = new FileStore<string[]>({ filePath: SEEN_IDS_FILE, defaultValue: [] });
 
 export function loadAccounts(): GmailAccount[] {
-  try {
-    if (existsSync(ACCOUNTS_FILE)) {
-      return JSON.parse(readFileSync(ACCOUNTS_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load accounts: ${err}`);
-  }
-  return [];
+  return accountsStore.load();
 }
 
 export function saveAccounts(accounts: GmailAccount[]): void {
-  ensureGmailDir();
-  const tmp = ACCOUNTS_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(accounts, null, 2));
-  renameSync(tmp, ACCOUNTS_FILE);
+  accountsStore.save(accounts);
 }
 
 function loadState(): GmailState {
-  try {
-    if (existsSync(STATE_FILE)) {
-      return JSON.parse(readFileSync(STATE_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load Gmail state: ${err}`);
-  }
-  return {};
+  return stateStore.load();
 }
 
 function saveState(state: GmailState): void {
-  ensureGmailDir();
-  const tmp = STATE_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(state, null, 2));
-  renameSync(tmp, STATE_FILE);
+  stateStore.save(state);
 }
 
 function loadSeenIds(): void {
-  try {
-    if (existsSync(SEEN_IDS_FILE)) {
-      const ids: string[] = JSON.parse(readFileSync(SEEN_IDS_FILE, "utf-8"));
-      seenMessageIds.clear();
-      for (const id of ids) {
-        seenMessageIds.add(id);
-      }
-      log(`Loaded ${seenMessageIds.size} seen message IDs from disk`);
-    }
-  } catch (err) {
-    log(`Failed to load seen IDs: ${err}`);
+  const ids = seenIdsStore.load();
+  seenMessageIds.clear();
+  for (const id of ids) {
+    seenMessageIds.add(id);
+  }
+  if (ids.length > 0) {
+    log(`Loaded ${seenMessageIds.size} seen message IDs from disk`);
   }
 }
 
 function saveSeenIds(): void {
-  ensureGmailDir();
   // Keep only the most recent MAX_SEEN_IDS entries (tail of the set = newest)
   const allIds = Array.from(seenMessageIds);
   const toSave = allIds.length > MAX_SEEN_IDS ? allIds.slice(allIds.length - MAX_SEEN_IDS) : allIds;
-  const tmp = SEEN_IDS_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(toSave));
-  renameSync(tmp, SEEN_IDS_FILE);
+  atomicWriteJSON(SEEN_IDS_FILE, toSave, 0);
 }
 
 // ── OAuth2 Client Factory ──
@@ -506,7 +477,7 @@ async function pollAllAccounts(): Promise<void> {
 // ── Account Management ──
 
 export function addAccount(id: string, email: string, clientId: string, clientSecret: string, redirectUri: string): GmailAccount {
-  ensureGmailDir();
+  ensureDir(GMAIL_DIR);
   const accounts = loadAccounts();
 
   const existing = accounts.find(a => a.id === id);

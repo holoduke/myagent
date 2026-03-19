@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { FileStore } from "./utils/file-store.js";
 import type { ImprovementTask } from "./self-improve-prompt.js";
 import { createLogger } from "./logger.js";
 
@@ -39,29 +39,16 @@ export interface ImproveHistory {
 
 // ── Persistence ──
 
-function ensureDir(): void {
-  if (!existsSync(BRAIN_DIR)) {
-    mkdirSync(BRAIN_DIR, { recursive: true });
-  }
-}
+const queueStore = new FileStore<ImproveQueue>({ filePath: QUEUE_FILE, defaultValue: { items: [] } });
+const historyStore = new FileStore<ImproveHistory>({ filePath: HISTORY_FILE, defaultValue: { entries: [] } });
 
 export function loadQueue(): ImproveQueue {
-  try {
-    if (existsSync(QUEUE_FILE)) {
-      return JSON.parse(readFileSync(QUEUE_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load queue: ${err}`);
-  }
-  return { items: [] };
+  return queueStore.load();
 }
 
 export function saveQueue(queue: ImproveQueue): void {
   try {
-    ensureDir();
-    const tmp = QUEUE_FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(queue, null, 2));
-    renameSync(tmp, QUEUE_FILE);
+    queueStore.save(queue);
   } catch (err) {
     log(`Failed to save queue: ${err}`);
     throw err;
@@ -69,26 +56,16 @@ export function saveQueue(queue: ImproveQueue): void {
 }
 
 export function loadHistory(): ImproveHistory {
-  try {
-    if (existsSync(HISTORY_FILE)) {
-      return JSON.parse(readFileSync(HISTORY_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load history: ${err}`);
-  }
-  return { entries: [] };
+  return historyStore.load();
 }
 
 export function saveHistory(history: ImproveHistory): void {
   try {
-    ensureDir();
     // Cap at MAX_HISTORY entries
     if (history.entries.length > MAX_HISTORY) {
       history.entries = history.entries.slice(0, MAX_HISTORY);
     }
-    const tmp = HISTORY_FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(history, null, 2));
-    renameSync(tmp, HISTORY_FILE);
+    historyStore.save(history);
   } catch (err) {
     log(`Failed to save history: ${err}`);
     throw err;

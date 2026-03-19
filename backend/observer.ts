@@ -1,4 +1,5 @@
-import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, openSync, fstatSync, readSync, closeSync } from "fs";
+import { appendFileSync, readFileSync, existsSync, openSync, fstatSync, readSync, closeSync } from "fs";
+import { ensureDir, atomicWriteFile, safeReadJSON } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
 import { BrainError } from "./brain-errors.js";
 import { scoreAndMaybeInterrupt } from "./urgency.js";
@@ -71,7 +72,7 @@ export interface ObservationFilter {
 
 export function ensureBrainDir(): void {
   if (!existsSync(BRAIN_DIR)) {
-    mkdirSync(BRAIN_DIR, { recursive: true });
+    ensureDir(BRAIN_DIR);
     log(`Created brain directory: ${BRAIN_DIR}`);
   }
 }
@@ -87,10 +88,7 @@ const MAX_DEDUP_ENTRIES = 500;
 export function saveDedupSet(): void {
   try {
     ensureBrainDir();
-    const data = JSON.stringify([...recentObservationKeys]);
-    const tmp = DEDUP_FILE + ".tmp";
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, DEDUP_FILE);
+    atomicWriteFile(DEDUP_FILE, JSON.stringify([...recentObservationKeys]));
     log(`Saved dedup set (${recentObservationKeys.size} entries)`);
   } catch (err) {
     log(`Failed to save dedup set: ${err}`);
@@ -98,20 +96,16 @@ export function saveDedupSet(): void {
 }
 
 function loadDedupSet(): void {
-  try {
-    if (!existsSync(DEDUP_FILE)) return;
-    const raw = readFileSync(DEDUP_FILE, "utf-8");
-    const keys: unknown = JSON.parse(raw);
-    if (!Array.isArray(keys)) return;
-    recentObservationKeys.clear();
-    // Load only the most recent entries if file has more than max
-    const start = Math.max(0, keys.length - MAX_DEDUP_ENTRIES);
-    for (let i = start; i < keys.length; i++) {
-      if (typeof keys[i] === "string") recentObservationKeys.add(keys[i] as string);
-    }
+  const keys = safeReadJSON<unknown>(DEDUP_FILE, null);
+  if (!Array.isArray(keys)) return;
+  recentObservationKeys.clear();
+  // Load only the most recent entries if file has more than max
+  const start = Math.max(0, keys.length - MAX_DEDUP_ENTRIES);
+  for (let i = start; i < keys.length; i++) {
+    if (typeof keys[i] === "string") recentObservationKeys.add(keys[i] as string);
+  }
+  if (recentObservationKeys.size > 0) {
     log(`Loaded dedup set (${recentObservationKeys.size} entries from disk)`);
-  } catch (err) {
-    log(`Failed to load dedup set, starting fresh: ${err}`);
   }
 }
 
@@ -368,9 +362,7 @@ export function pruneObservations(days?: number): void {
       }
     }
     if (pruned > 0) {
-      const tmp = OBS_FILE + ".tmp";
-      writeFileSync(tmp, kept.join("\n") + (kept.length ? "\n" : ""));
-      renameSync(tmp, OBS_FILE);
+      atomicWriteFile(OBS_FILE, kept.join("\n") + (kept.length ? "\n" : ""));
       log(`Pruned ${pruned} old observations, kept ${kept.length}`);
     }
   } catch (err) {

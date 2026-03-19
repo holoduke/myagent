@@ -1,5 +1,5 @@
 import { IncomingMessage, ServerResponse } from "http";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { FileStore } from "../utils/file-store.js";
 import { spawn } from "child_process";
 import Twilio from "twilio";
 import { createLogger } from "../logger.js";
@@ -94,59 +94,33 @@ const pendingCalls = new Map<string, ActiveCall>();
 
 // ── File helpers ──
 
-function ensureDir(): void {
-  if (!existsSync(TWILIO_DIR)) mkdirSync(TWILIO_DIR, { recursive: true });
-}
+const configStore = new FileStore<TwilioConfig | null>({ filePath: CONFIG_FILE, defaultValue: null });
+const twilioStateStore = new FileStore<{ totalCalls: number; lastCallAt: number }>({ filePath: STATE_FILE, defaultValue: { totalCalls: 0, lastCallAt: 0 } });
+const callHistoryStore = new FileStore<TwilioCallRecord[]>({ filePath: HISTORY_FILE, defaultValue: [] });
 
 export function loadConfig(): TwilioConfig | null {
-  try {
-    if (existsSync(CONFIG_FILE)) {
-      return JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load config: ${err}`);
-  }
-  return null;
+  return configStore.load();
 }
 
 export function saveConfig(cfg: TwilioConfig): void {
-  ensureDir();
-  const tmp = CONFIG_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(cfg, null, 2));
-  renameSync(tmp, CONFIG_FILE);
+  configStore.save(cfg);
   log("Config saved");
 }
 
 function loadState(): { totalCalls: number; lastCallAt: number } {
-  try {
-    if (existsSync(STATE_FILE)) {
-      return JSON.parse(readFileSync(STATE_FILE, "utf-8"));
-    }
-  } catch {}
-  return { totalCalls: 0, lastCallAt: 0 };
+  return twilioStateStore.load();
 }
 
 function saveState(state: { totalCalls: number; lastCallAt: number }): void {
-  ensureDir();
-  const tmp = STATE_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(state, null, 2));
-  renameSync(tmp, STATE_FILE);
+  twilioStateStore.save(state);
 }
 
 export function loadCallHistory(): TwilioCallRecord[] {
-  try {
-    if (existsSync(HISTORY_FILE)) {
-      return JSON.parse(readFileSync(HISTORY_FILE, "utf-8"));
-    }
-  } catch {}
-  return [];
+  return callHistoryStore.load();
 }
 
 function saveCallHistory(history: TwilioCallRecord[]): void {
-  ensureDir();
-  const tmp = HISTORY_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(history.slice(-MAX_HISTORY), null, 2));
-  renameSync(tmp, HISTORY_FILE);
+  callHistoryStore.save(history.slice(-MAX_HISTORY));
 }
 
 function appendCallToHistory(record: TwilioCallRecord): void {

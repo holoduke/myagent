@@ -1,5 +1,5 @@
 import Parser from "rss-parser";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { FileStore, ensureDir } from "../utils/file-store.js";
 import { randomUUID } from "crypto";
 import { recordObservation } from "../observer.js";
 import { isIntegrationEnabled } from "./integration-config.js";
@@ -29,46 +29,23 @@ interface RSSState {
   };
 }
 
-function ensureDir(): void {
-  if (!existsSync(RSS_DIR)) {
-    mkdirSync(RSS_DIR, { recursive: true });
-  }
-}
+const feedsStore = new FileStore<RSSFeed[]>({ filePath: FEEDS_FILE, defaultValue: [] });
+const stateStore = new FileStore<RSSState>({ filePath: STATE_FILE, defaultValue: {} });
 
 function loadFeeds(): RSSFeed[] {
-  try {
-    if (existsSync(FEEDS_FILE)) {
-      return JSON.parse(readFileSync(FEEDS_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load feeds: ${err}`);
-  }
-  return [];
+  return feedsStore.load();
 }
 
 function saveFeeds(feeds: RSSFeed[]): void {
-  ensureDir();
-  const tmp = FEEDS_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(feeds, null, 2));
-  renameSync(tmp, FEEDS_FILE);
+  feedsStore.save(feeds);
 }
 
 function loadState(): RSSState {
-  try {
-    if (existsSync(STATE_FILE)) {
-      return JSON.parse(readFileSync(STATE_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load RSS state: ${err}`);
-  }
-  return {};
+  return stateStore.load();
 }
 
 function saveState(state: RSSState): void {
-  ensureDir();
-  const tmp = STATE_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(state, null, 2));
-  renameSync(tmp, STATE_FILE);
+  stateStore.save(state);
 }
 
 async function fetchFeed(feed: RSSFeed, state: RSSState): Promise<void> {
@@ -161,7 +138,7 @@ async function pollAllFeeds(): Promise<void> {
 }
 
 export function addFeed(name: string, url: string): RSSFeed {
-  ensureDir();
+  ensureDir(RSS_DIR);
   const feeds = loadFeeds();
   const feed: RSSFeed = { id: randomUUID(), name, url, enabled: true };
   feeds.push(feed);

@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
+import { existsSync } from "fs";
 
 // ── Types ──
 
@@ -202,15 +203,10 @@ export function getBrainConfig(): BrainConfig {
 
   const defaults = envDefaults();
 
-  try {
-    if (existsSync(CONFIG_FILE)) {
-      const raw = readFileSync(CONFIG_FILE, "utf-8");
-      const saved = JSON.parse(raw) as Partial<BrainConfig>;
-      cachedConfig = { ...defaults, ...saved };
-    } else {
-      cachedConfig = defaults;
-    }
-  } catch {
+  if (existsSync(CONFIG_FILE)) {
+    const saved = safeReadJSON<Partial<BrainConfig>>(CONFIG_FILE, {});
+    cachedConfig = { ...defaults, ...saved };
+  } else {
     cachedConfig = defaults;
   }
 
@@ -223,12 +219,8 @@ export function saveBrainConfig(partial: Partial<BrainConfig>): BrainConfig {
   const updated = { ...current, ...partial };
 
   try {
-    if (!existsSync(BRAIN_DIR)) {
-      mkdirSync(BRAIN_DIR, { recursive: true });
-    }
-    const tmp = CONFIG_FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(updated, null, 2));
-    renameSync(tmp, CONFIG_FILE);
+    ensureDir(BRAIN_DIR);
+    atomicWriteJSON(CONFIG_FILE, updated);
   } catch (err) {
     throw new Error(`Failed to save brain config: ${err}`);
   }

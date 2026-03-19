@@ -1,5 +1,6 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "patchright";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { existsSync } from "fs";
+import { FileStore, ensureDir } from "../utils/file-store.js";
 import { randomUUID } from "crypto";
 import { createLogger } from "../logger.js";
 import { isIntegrationEnabled } from "./integration-config.js";
@@ -72,50 +73,32 @@ export interface BrowserStatus {
 
 // ── State management ──
 
-function ensureDir(): void {
-  if (!existsSync(BROWSER_DIR)) {
-    mkdirSync(BROWSER_DIR, { recursive: true });
-  }
+const browserStateStore = new FileStore<BrowserState>({ filePath: STATE_FILE, defaultValue: { ready: false, activeSessions: 0, totalTasks: 0, lastTaskAt: 0 } });
+const browserHistoryStore = new FileStore<BrowserTaskResult[]>({ filePath: TASK_HISTORY_FILE, defaultValue: [] });
+
+function ensureBrowserDir(): void {
+  ensureDir(BROWSER_DIR);
   if (!existsSync(`${BROWSER_DIR}/screenshots`)) {
-    mkdirSync(`${BROWSER_DIR}/screenshots`, { recursive: true });
+    ensureDir(`${BROWSER_DIR}/screenshots`);
   }
 }
 
 function loadState(): BrowserState {
-  try {
-    if (existsSync(STATE_FILE)) {
-      return JSON.parse(readFileSync(STATE_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load state: ${err}`);
-  }
-  return { ready: false, activeSessions: 0, totalTasks: 0, lastTaskAt: 0 };
+  return browserStateStore.load();
 }
 
 function saveState(state: BrowserState): void {
-  ensureDir();
-  const tmp = STATE_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(state, null, 2));
-  renameSync(tmp, STATE_FILE);
+  ensureBrowserDir();
+  browserStateStore.save(state);
 }
 
 function loadHistory(): BrowserTaskResult[] {
-  try {
-    if (existsSync(TASK_HISTORY_FILE)) {
-      return JSON.parse(readFileSync(TASK_HISTORY_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load history: ${err}`);
-  }
-  return [];
+  return browserHistoryStore.load();
 }
 
 function saveHistory(history: BrowserTaskResult[]): void {
-  ensureDir();
-  const trimmed = history.slice(-MAX_HISTORY);
-  const tmp = TASK_HISTORY_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(trimmed, null, 2));
-  renameSync(tmp, TASK_HISTORY_FILE);
+  ensureBrowserDir();
+  browserHistoryStore.save(history.slice(-MAX_HISTORY));
 }
 
 // ── Browser instance management ──
@@ -571,6 +554,6 @@ export async function initBrowser(): Promise<void> {
     log("Browser integration disabled, skipping init");
     return;
   }
-  ensureDir();
+  ensureBrowserDir();
   log("Browser integration initialized (lazy launch — browser starts on first task)");
 }

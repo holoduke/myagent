@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
+import { safeReadJSON, atomicWriteJSON } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("history");
@@ -24,23 +24,13 @@ let cache: ChatMessage[] | null = null;
 
 export function getHistory(): ChatMessage[] {
   if (cache) return cache;
-  try {
-    if (existsSync(HISTORY_FILE)) {
-      cache = JSON.parse(readFileSync(HISTORY_FILE, "utf-8"));
-      return cache!;
-    }
-  } catch {
-    // Corrupted file, start fresh
-  }
-  cache = [];
+  cache = safeReadJSON<ChatMessage[]>(HISTORY_FILE, []);
   return cache;
 }
 
 function save(): void {
   try {
-    const tmp = HISTORY_FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(cache, null, 0));
-    renameSync(tmp, HISTORY_FILE);
+    atomicWriteJSON(HISTORY_FILE, cache, 0);
   } catch (err) {
     log.error(`Failed to save: ${err}`);
   }

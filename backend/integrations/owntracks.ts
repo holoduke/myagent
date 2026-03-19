@@ -1,5 +1,5 @@
 import { IncomingMessage, ServerResponse } from "http";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { FileStore } from "../utils/file-store.js";
 import { recordObservation } from "../observer.js";
 import { createLogger } from "../logger.js";
 
@@ -24,28 +24,14 @@ interface OTState {
   lastLocation: OwnTracksLocation | null;
 }
 
-function ensureDir(): void {
-  if (!existsSync(OT_DIR)) {
-    mkdirSync(OT_DIR, { recursive: true });
-  }
-}
+const stateStore = new FileStore<OTState>({ filePath: STATE_FILE, defaultValue: { lastLocation: null } });
 
 function loadState(): OTState {
-  try {
-    if (existsSync(STATE_FILE)) {
-      return JSON.parse(readFileSync(STATE_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load OwnTracks state: ${err}`);
-  }
-  return { lastLocation: null };
+  return stateStore.load();
 }
 
 function saveState(state: OTState): void {
-  ensureDir();
-  const tmp = STATE_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(state, null, 2));
-  renameSync(tmp, STATE_FILE);
+  stateStore.save(state);
 }
 
 function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {

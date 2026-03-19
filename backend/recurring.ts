@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { FileStore } from "./utils/file-store.js";
 import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 
@@ -26,25 +26,15 @@ export interface RecurringTask {
 
 // ── Persistence ──
 
+const store = new FileStore<RecurringTask[]>({ filePath: RECURRING_FILE, defaultValue: [] });
+
 function loadTasks(): RecurringTask[] {
-  try {
-    if (existsSync(RECURRING_FILE)) {
-      return JSON.parse(readFileSync(RECURRING_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load recurring tasks: ${err}`);
-  }
-  return [];
+  return store.load();
 }
 
 function saveTasks(tasks: RecurringTask[]): void {
   try {
-    if (!existsSync(BRAIN_DIR)) {
-      mkdirSync(BRAIN_DIR, { recursive: true });
-    }
-    const tmp = RECURRING_FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(tasks, null, 2));
-    renameSync(tmp, RECURRING_FILE);
+    store.save(tasks);
   } catch (err) {
     log(`Failed to save recurring tasks: ${err}`);
   }

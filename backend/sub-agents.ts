@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync } from "fs";
+import { existsSync, unlinkSync } from "fs";
+import { FileStore } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
 
 import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
@@ -68,40 +69,18 @@ export interface SubAgentResult {
 
 // ── Persistence helpers ──
 
-function ensureDir(): void {
-  if (!existsSync(BRAIN_DIR)) {
-    mkdirSync(BRAIN_DIR, { recursive: true });
-  }
-}
-
-function atomicWrite(filepath: string, data: string): void {
-  ensureDir();
-  const tmp = filepath + ".tmp";
-  try {
-    writeFileSync(tmp, data);
-    renameSync(tmp, filepath);
-  } catch (err) {
-    log(`atomicWrite failed for ${filepath}: ${err}`);
-    try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
-    throw err;
-  }
-}
+const registryStore = new FileStore<SubAgentConfig[]>({ filePath: REGISTRY_FILE, defaultValue: [] });
+const stateStore = new FileStore<SubAgentState>({ filePath: STATE_FILE, defaultValue: { runningAgents: {} } });
+const historyStore = new FileStore<Record<string, SubAgentRun[]>>({ filePath: HISTORY_FILE, defaultValue: {} });
 
 // ── Registry (CRUD) ──
 
 export function loadSubAgents(): SubAgentConfig[] {
-  try {
-    if (existsSync(REGISTRY_FILE)) {
-      return JSON.parse(readFileSync(REGISTRY_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load sub-agents: ${err}`);
-  }
-  return [];
+  return registryStore.load();
 }
 
 export function saveSubAgents(agents: SubAgentConfig[]): void {
-  atomicWrite(REGISTRY_FILE, JSON.stringify(agents, null, 2));
+  registryStore.save(agents);
 }
 
 export function getSubAgent(id: string): SubAgentConfig | undefined {
@@ -206,16 +185,11 @@ export function getDueSubAgents(): SubAgentConfig[] {
 // ── Runtime State ──
 
 export function loadSubAgentState(): SubAgentState {
-  try {
-    if (existsSync(STATE_FILE)) {
-      return JSON.parse(readFileSync(STATE_FILE, "utf-8"));
-    }
-  } catch {}
-  return { runningAgents: {} };
+  return stateStore.load();
 }
 
 function saveSubAgentState(state: SubAgentState): void {
-  atomicWrite(STATE_FILE, JSON.stringify(state, null, 2));
+  stateStore.save(state);
 }
 
 export function markRunning(agentId: string, pid?: number): void {
@@ -248,18 +222,11 @@ export function resultFilePath(agentId: string): string {
 // ── History ──
 
 export function loadAllHistory(): Record<string, SubAgentRun[]> {
-  try {
-    if (existsSync(HISTORY_FILE)) {
-      return JSON.parse(readFileSync(HISTORY_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load sub-agent history: ${err}`);
-  }
-  return {};
+  return historyStore.load();
 }
 
 function saveAllHistory(history: Record<string, SubAgentRun[]>): void {
-  atomicWrite(HISTORY_FILE, JSON.stringify(history, null, 2));
+  historyStore.save(history);
 }
 
 export function loadSubAgentHistory(agentId: string): SubAgentRun[] {

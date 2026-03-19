@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "crypto";
 import { IncomingMessage, ServerResponse } from "http";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { ensureDir } from "../utils/file-store.js";
 import { dirname } from "path";
 import { createLogger } from "../logger.js";
 
@@ -35,8 +36,7 @@ function loadSessions(): void {
 
 function saveSessions(): void {
   try {
-    const dir = dirname(SESSIONS_FILE);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    ensureDir(dirname(SESSIONS_FILE));
     const entries = Array.from(activeSessions.entries());
     writeFileSync(SESSIONS_FILE, JSON.stringify(entries));
   } catch (e) {

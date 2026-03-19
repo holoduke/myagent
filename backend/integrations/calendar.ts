@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { FileStore } from "../utils/file-store.js";
 import { recordObservation } from "../observer.js";
 import { loadAccounts, createOAuth2Client } from "./gmail.js";
 import { isIntegrationEnabled } from "./integration-config.js";
@@ -18,28 +18,14 @@ interface CalendarState {
   };
 }
 
-function ensureDir(): void {
-  if (!existsSync(CALENDAR_DIR)) {
-    mkdirSync(CALENDAR_DIR, { recursive: true });
-  }
-}
+const stateStore = new FileStore<CalendarState>({ filePath: STATE_FILE, defaultValue: {} });
 
 function loadState(): CalendarState {
-  try {
-    if (existsSync(STATE_FILE)) {
-      return JSON.parse(readFileSync(STATE_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load calendar state: ${err}`);
-  }
-  return {};
+  return stateStore.load();
 }
 
 function saveState(state: CalendarState): void {
-  ensureDir();
-  const tmp = STATE_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(state, null, 2));
-  renameSync(tmp, STATE_FILE);
+  stateStore.save(state);
 }
 
 async function fetchUpcomingEvents(accountId: string): Promise<void> {

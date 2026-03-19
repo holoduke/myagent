@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("integration-config");
@@ -34,21 +34,9 @@ const DEFAULTS: IntegrationsConfig = {
   browser: true,
 };
 
-function ensureDir(): void {
-  const dir = "/data";
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-}
-
 export function getIntegrationsConfig(): IntegrationsConfig {
-  try {
-    if (existsSync(CONFIG_FILE)) {
-      const raw = JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
-      return { ...DEFAULTS, ...raw };
-    }
-  } catch (err) {
-    log(`Failed to load integrations config: ${err}`);
-  }
-  return { ...DEFAULTS };
+  const saved = safeReadJSON<Partial<IntegrationsConfig>>(CONFIG_FILE, {});
+  return { ...DEFAULTS, ...saved };
 }
 
 export function isIntegrationEnabled(key: IntegrationKey): boolean {
@@ -56,16 +44,14 @@ export function isIntegrationEnabled(key: IntegrationKey): boolean {
 }
 
 export function saveIntegrationsConfig(partial: Partial<IntegrationsConfig>): IntegrationsConfig {
-  ensureDir();
+  ensureDir("/data");
   const current = getIntegrationsConfig();
   for (const [k, v] of Object.entries(partial)) {
     if (INTEGRATION_KEYS.includes(k as IntegrationKey) && typeof v === "boolean") {
       current[k as IntegrationKey] = v;
     }
   }
-  const tmp = CONFIG_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(current, null, 2));
-  renameSync(tmp, CONFIG_FILE);
+  atomicWriteJSON(CONFIG_FILE, current);
   return current;
 }
 

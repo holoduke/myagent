@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("whitelist");
@@ -17,25 +17,13 @@ let whitelistCache: WhitelistedContact[] | null = null;
 
 function loadWhitelist(): WhitelistedContact[] {
   if (whitelistCache) return whitelistCache;
-  try {
-    if (existsSync(WHITELIST_FILE)) {
-      whitelistCache = JSON.parse(readFileSync(WHITELIST_FILE, "utf-8"));
-      return whitelistCache!;
-    }
-  } catch {
-    log("Failed to read whitelist, starting fresh");
-  }
-  whitelistCache = [];
+  whitelistCache = safeReadJSON<WhitelistedContact[]>(WHITELIST_FILE, []);
   return whitelistCache;
 }
 
 function saveWhitelist(contacts: WhitelistedContact[]): void {
-  if (!existsSync(BRAIN_DIR)) {
-    mkdirSync(BRAIN_DIR, { recursive: true });
-  }
-  const tmp = WHITELIST_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(contacts, null, 2));
-  renameSync(tmp, WHITELIST_FILE);
+  ensureDir(BRAIN_DIR);
+  atomicWriteJSON(WHITELIST_FILE, contacts);
   whitelistCache = contacts;
 }
 
