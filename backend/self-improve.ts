@@ -1,10 +1,12 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
-import { appendFileSync } from "fs";
 import { execSync } from "child_process";
 import { askClaude } from "./claude.js";
 import { MemoryGraph } from "./memory/graph.js";
 import { buildImprovementPrompt, buildRecoveryPrompt } from "./self-improve-prompt.js";
 import type { ImprovementTask } from "./self-improve-prompt.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("self-improve");
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
@@ -14,12 +16,6 @@ const SELF_MOD_MARKER = `${BRAIN_DIR}/self-mod-marker.json`;
 const LAST_GOOD_COMMIT_FILE = `${BRAIN_DIR}/last-good-commit`;
 const WORKER_TOOLS = "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch";
 const MAX_RECOVERY_ATTEMPTS = 3;
-
-function log(msg: string) {
-  const line = `[${new Date().toISOString()}] [self-improve] ${msg}`;
-  console.log(line);
-  try { appendFileSync(LOG_FILE, line + "\n"); } catch {}
-}
 
 // ── Result types ──
 

@@ -1,3 +1,7 @@
+import { createLogger } from "./logger.js";
+
+const log = createLogger("queue");
+
 type Task = () => Promise<unknown>;
 
 interface QueueEntry {
@@ -51,7 +55,7 @@ export class MessageQueue {
         const result = await task();
         resolve(result);
       } catch (err) {
-        console.error("[queue] Task failed:", err);
+        log.error(`Task failed: ${err}`);
         reject(err);
       }
     }
