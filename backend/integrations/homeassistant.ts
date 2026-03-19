@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { FileStore } from "../utils/file-store.js";
 import { recordObservation } from "../observer.js";
 import { isIntegrationEnabled } from "./integration-config.js";
 import { createLogger } from "../logger.js";
@@ -45,32 +45,15 @@ interface HAState {
   entities: Record<string, string>; // entity_id → last known state
 }
 
-// ── Directory & File Helpers ──
+// ── Persistence ──
 
-function ensureDir(): void {
-  if (!existsSync(HA_DIR)) {
-    mkdirSync(HA_DIR, { recursive: true });
-  }
-}
-
-function atomicWrite(path: string, data: string): void {
-  ensureDir();
-  const tmp = path + ".tmp";
-  writeFileSync(tmp, data);
-  renameSync(tmp, path);
-}
+const configStore = new FileStore<HAConfig | null>({ filePath: CONFIG_FILE, defaultValue: null });
+const haStateStore = new FileStore<HAState>({ filePath: STATE_FILE, defaultValue: { lastPoll: 0, entities: {} } });
 
 // ── Config Management ──
 
 function loadConfigFromFile(): HAConfig | null {
-  try {
-    if (existsSync(CONFIG_FILE)) {
-      return JSON.parse(readFileSync(CONFIG_FILE, "utf-8")) as HAConfig;
-    }
-  } catch (err) {
-    log(`Failed to load HA config: ${err}`);
-  }
-  return null;
+  return configStore.load();
 }
 
 /** Migrate env vars to config format (backward compat) */
@@ -95,7 +78,7 @@ export function loadConfig(): HAConfig | null {
 }
 
 export function saveConfig(config: HAConfig): HAConfig {
-  atomicWrite(CONFIG_FILE, JSON.stringify(config, null, 2));
+  configStore.save(config);
   log(`Config saved (mode: ${config.mode})`);
   return config;
 }
@@ -114,18 +97,11 @@ function getActiveConnection(config: HAConfig): { url: string; token: string } |
 // ── State Management ──
 
 function loadState(): HAState {
-  try {
-    if (existsSync(STATE_FILE)) {
-      return JSON.parse(readFileSync(STATE_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load HA state: ${err}`);
-  }
-  return { lastPoll: 0, entities: {} };
+  return haStateStore.load();
 }
 
 function saveState(state: HAState): void {
-  atomicWrite(STATE_FILE, JSON.stringify(state, null, 2));
+  haStateStore.save(state);
 }
 
 // ── Polling ──

@@ -10,7 +10,8 @@ import { Boom } from "@hapi/boom";
 import pino from "pino";
 // @ts-ignore - no types available
 import qrcode from "qrcode-terminal";
-import { readFileSync, writeFileSync, existsSync, renameSync } from "fs";
+import { readFileSync, existsSync } from "fs";
+import { safeReadJSON, atomicWriteJSON } from "../utils/file-store.js";
 import { createHash } from "crypto";
 import { EventEmitter } from "events";
 import { createLogger } from "../logger.js";
@@ -64,21 +65,17 @@ const contactStore = new Map<string, Contact>();
 
 function loadContacts(): void {
   if (!existsSync(CONTACTS_PATH)) return;
-  try {
-    const data = JSON.parse(readFileSync(CONTACTS_PATH, "utf-8")) as Contact[];
-    for (const c of data) {
-      contactStore.set(c.id, c);
-    }
+  const data = safeReadJSON<Contact[]>(CONTACTS_PATH, []);
+  for (const c of data) {
+    contactStore.set(c.id, c);
+  }
+  if (data.length > 0) {
     log.info(`Loaded ${contactStore.size} contacts from disk`);
-  } catch (err) {
-    log.error(`Failed to load contacts: ${err}`);
   }
 }
 
 function saveContacts(): void {
-  const tmp = CONTACTS_PATH + ".tmp";
-  writeFileSync(tmp, JSON.stringify(Array.from(contactStore.values()), null, 2));
-  renameSync(tmp, CONTACTS_PATH);
+  atomicWriteJSON(CONTACTS_PATH, Array.from(contactStore.values()));
 }
 
 /** Search contacts by name (case-insensitive partial match on name or notify). */

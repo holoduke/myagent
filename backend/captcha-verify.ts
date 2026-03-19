@@ -10,7 +10,7 @@
  *  5. Caller uses the answer to fill in the captcha field
  */
 
-import { readFileSync, writeFileSync, existsSync, renameSync, mkdirSync } from "fs";
+import { FileStore } from "./utils/file-store.js";
 import { randomUUID } from "crypto";
 import { createLogger } from "./logger.js";
 import { sendImage, sendMessage } from "./integrations/whatsapp.js";
@@ -43,26 +43,14 @@ const waiters = new Map<string, {
 
 // ── Persistence ──
 
-function ensureDir(): void {
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-}
+const pendingStore = new FileStore<CaptchaRequest[]>({ filePath: PENDING_FILE, defaultValue: [] });
 
 function loadPending(): CaptchaRequest[] {
-  try {
-    if (existsSync(PENDING_FILE)) {
-      return JSON.parse(readFileSync(PENDING_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to load pending captchas: ${err}`);
-  }
-  return [];
+  return pendingStore.load();
 }
 
 function savePending(items: CaptchaRequest[]): void {
-  ensureDir();
-  const tmp = PENDING_FILE + ".tmp";
-  writeFileSync(tmp, JSON.stringify(items, null, 2));
-  renameSync(tmp, PENDING_FILE);
+  pendingStore.save(items);
 }
 
 // ── Core API ──

@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "fs";
+import { ensureDir } from "../utils/file-store.js";
 import { join, basename } from "path";
 import type { ProviderProfile } from "./types.js";
 import { createLogger } from "../logger.js";
@@ -7,9 +8,9 @@ const log = createLogger("provider-store");
 
 const PROVIDERS_DIR = process.env.AGENTS_DIR || "/data/agents";
 
-function ensureDir(): void {
+function ensureProviderDir(): void {
   if (!existsSync(PROVIDERS_DIR)) {
-    mkdirSync(PROVIDERS_DIR, { recursive: true });
+    ensureDir(PROVIDERS_DIR);
     log(`Created providers directory: ${PROVIDERS_DIR}`);
   }
 }
@@ -40,7 +41,7 @@ export function maskSecrets(profile: ProviderProfile): ProviderProfile {
 }
 
 export function listProviders(): ProviderProfile[] {
-  ensureDir();
+  ensureProviderDir();
   const files = readdirSync(PROVIDERS_DIR).filter(f => f.endsWith(".json"));
   const providers: ProviderProfile[] = [];
   for (const file of files) {
@@ -55,7 +56,7 @@ export function listProviders(): ProviderProfile[] {
 }
 
 export function getProvider(id: string): ProviderProfile | null {
-  ensureDir();
+  ensureProviderDir();
   const path = profilePath(id);
   if (!existsSync(path)) return null;
   try {
@@ -66,7 +67,7 @@ export function getProvider(id: string): ProviderProfile | null {
 }
 
 export function saveProvider(profile: ProviderProfile): ProviderProfile {
-  ensureDir();
+  ensureProviderDir();
   profile.updatedAt = Date.now();
   writeFileSync(profilePath(profile.id), JSON.stringify(profile, null, 2));
   log(`Saved provider: ${profile.id} (${profile.name})`);
@@ -103,7 +104,7 @@ export function setDefault(id: string): boolean {
 }
 
 export function bootstrapDefaultProvider(): void {
-  ensureDir();
+  ensureProviderDir();
   const providers = listProviders();
   if (providers.length > 0) return;
 

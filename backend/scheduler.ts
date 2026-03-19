@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
+import { existsSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "./logger.js";
 import { isWhitelisted } from "./contact-whitelist.js";
@@ -39,10 +40,8 @@ let scheduleCache: ScheduledMessage[] | null = null;
 
 function loadSchedule(): ScheduledMessage[] {
   if (scheduleCache) return scheduleCache;
-  try {
-    if (existsSync(SCHEDULE_FILE)) {
-      const raw = JSON.parse(readFileSync(SCHEDULE_FILE, "utf-8"));
-      if (!Array.isArray(raw)) {
+  const raw = safeReadJSON<unknown>(SCHEDULE_FILE, []);
+  if (!Array.isArray(raw)) {
         log("Schedule file is not a JSON array, starting fresh");
         scheduleCache = [];
         return scheduleCache;
@@ -58,24 +57,14 @@ function loadSchedule(): ScheduledMessage[] {
       if (valid.length < raw.length) {
         log(`Filtered out ${raw.length - valid.length} invalid entry/entries from schedule (${valid.length} valid remaining)`);
       }
-      scheduleCache = valid;
-      return scheduleCache;
-    }
-  } catch (err) {
-    log(`Failed to read schedule, starting fresh: ${err}`);
-  }
-  scheduleCache = [];
+  scheduleCache = valid;
   return scheduleCache;
 }
 
 function saveSchedule(messages: ScheduledMessage[]): void {
   try {
-    if (!existsSync(BRAIN_DIR)) {
-      mkdirSync(BRAIN_DIR, { recursive: true });
-    }
-    const tmp = SCHEDULE_FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(messages, null, 2));
-    renameSync(tmp, SCHEDULE_FILE);
+    ensureDir(BRAIN_DIR);
+    atomicWriteJSON(SCHEDULE_FILE, messages);
     scheduleCache = messages;
   } catch (err) {
     throw new SchedulerError(`Failed to save schedule: ${err}`, {
@@ -233,16 +222,10 @@ let deliveryLogCache: DeliveryRecord[] | null = null;
 
 function loadDeliveryLog(): DeliveryRecord[] {
   if (deliveryLogCache) return deliveryLogCache;
-  try {
-    if (existsSync(DELIVERY_LOG_FILE)) {
-      const raw = JSON.parse(readFileSync(DELIVERY_LOG_FILE, "utf-8"));
-      if (Array.isArray(raw)) {
-        deliveryLogCache = raw;
-        return deliveryLogCache;
-      }
-    }
-  } catch (err) {
-    log(`Failed to load delivery log: ${err}`);
+  const raw = safeReadJSON<unknown>(DELIVERY_LOG_FILE, []);
+  if (Array.isArray(raw)) {
+    deliveryLogCache = raw;
+    return deliveryLogCache;
   }
   deliveryLogCache = [];
   return deliveryLogCache;
@@ -250,10 +233,8 @@ function loadDeliveryLog(): DeliveryRecord[] {
 
 function saveDeliveryLog(entries: DeliveryRecord[]): void {
   try {
-    if (!existsSync(BRAIN_DIR)) mkdirSync(BRAIN_DIR, { recursive: true });
-    const tmp = DELIVERY_LOG_FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(entries, null, 2));
-    renameSync(tmp, DELIVERY_LOG_FILE);
+    ensureDir(BRAIN_DIR);
+    atomicWriteJSON(DELIVERY_LOG_FILE, entries);
     deliveryLogCache = entries;
   } catch (err) {
     throw new SchedulerError(`Failed to save delivery log: ${err}`, {

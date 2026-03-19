@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
+import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { spawn, execSync } from "child_process";
 import { createLogger } from "./logger.js";
 import { askClaudeStreaming } from "./claude.js";
@@ -111,24 +112,13 @@ function defaultState(): BrainState {
 }
 
 function loadState(): BrainState {
-  try {
-    if (existsSync(STATE_FILE)) {
-      return { ...defaultState(), ...JSON.parse(readFileSync(STATE_FILE, "utf-8")) };
-    }
-  } catch (err) {
-    log(`Failed to read state, using defaults: ${err}`);
-  }
-  return defaultState();
+  return { ...defaultState(), ...safeReadJSON<Partial<BrainState>>(STATE_FILE, {}) };
 }
 
 function saveState(state: BrainState): void {
   try {
-    if (!existsSync(BRAIN_DIR)) {
-      mkdirSync(BRAIN_DIR, { recursive: true });
-    }
-    const tmp = STATE_FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(state, null, 2));
-    renameSync(tmp, STATE_FILE);
+    ensureDir(BRAIN_DIR);
+    atomicWriteJSON(STATE_FILE, state);
   } catch (err) {
     log(`Failed to save state: ${err}`);
   }

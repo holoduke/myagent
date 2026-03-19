@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync } from "fs";
+import { FileStore, ensureDir } from "../utils/file-store.js";
 import { execSync, spawn } from "child_process";
 import { randomBytes } from "crypto";
 import { createLogger } from "../logger.js";
@@ -35,9 +36,7 @@ export function ensureSSHKey(): void {
     return;
   }
 
-  if (!existsSync(SSH_DIR)) {
-    mkdirSync(SSH_DIR, { recursive: true });
-  }
+  ensureDir(SSH_DIR);
 
   try {
     execSync(`ssh-keygen -t ed25519 -f "${KEY_PATH}" -N "" -C "aria@agent"`, {
@@ -71,23 +70,15 @@ export function getSSHStatus(): SSHStatus {
   };
 }
 
+const targetsStore = new FileStore<SSHTarget[]>({ filePath: TARGETS_FILE, defaultValue: [] });
+
 /** Load targets from disk */
 export function getTargets(): SSHTarget[] {
-  try {
-    if (existsSync(TARGETS_FILE)) {
-      return JSON.parse(readFileSync(TARGETS_FILE, "utf-8"));
-    }
-  } catch (err) {
-    log(`Failed to read SSH targets: ${err}`);
-  }
-  return [];
+  return targetsStore.load();
 }
 
 function saveTargets(targets: SSHTarget[]): void {
-  if (!existsSync(SSH_DIR)) {
-    mkdirSync(SSH_DIR, { recursive: true });
-  }
-  writeFileSync(TARGETS_FILE, JSON.stringify(targets, null, 2));
+  targetsStore.save(targets);
 }
 
 /** Add a new SSH target */

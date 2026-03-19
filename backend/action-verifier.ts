@@ -12,7 +12,8 @@
  * - Rate limit circumvention
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, renameSync } from "fs";
+import { readFileSync, existsSync, appendFileSync } from "fs";
+import { ensureDir, atomicWriteFile } from "./utils/file-store.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { createLogger } from "./logger.js";
 
@@ -234,9 +235,7 @@ function verifySelfImprove(action: ActionContext, reasons: string[]): void {
 
 function auditLog(result: VerifyResult): void {
   try {
-    if (!existsSync(BRAIN_DIR)) {
-      mkdirSync(BRAIN_DIR, { recursive: true });
-    }
+    ensureDir(BRAIN_DIR);
 
     // Compact log entry — omit full message text for privacy, keep snippet
     const entry = {
@@ -266,9 +265,7 @@ export function rotateAuditLog(): void {
 
     // Keep the most recent half
     const keep = lines.slice(-Math.floor(MAX_AUDIT_LINES / 2));
-    const tmp = AUDIT_LOG_FILE + ".tmp";
-    writeFileSync(tmp, keep.join("\n") + "\n");
-    renameSync(tmp, AUDIT_LOG_FILE);
+    atomicWriteFile(AUDIT_LOG_FILE, keep.join("\n") + "\n");
     log(`Rotated audit log: ${lines.length} → ${keep.length} entries`);
   } catch (err) {
     log(`Failed to rotate audit log: ${err}`);

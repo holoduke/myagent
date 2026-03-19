@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
+import { readFileSync, existsSync, unlinkSync } from "fs";
+import { safeReadJSON, atomicWriteJSON } from "./utils/file-store.js";
 import { execSync } from "child_process";
 import { askClaude } from "./claude.js";
 import { MemoryGraph } from "./memory/graph.js";
@@ -52,7 +53,7 @@ function parseResult(raw: string): ImproveResult | null {
 
 function writeResult(result: ImproveResult): void {
   try {
-    writeFileSync(RESULT_FILE, JSON.stringify(result, null, 2));
+    atomicWriteJSON(RESULT_FILE, result);
     log(`Result written: success=${result.success}`);
   } catch (err) {
     log(`Failed to write result: ${err}`);
@@ -88,7 +89,11 @@ async function runImprove(): Promise<void> {
 
   let task: ImprovementTask;
   try {
-    task = JSON.parse(readFileSync(TASK_FILE, "utf-8"));
+    task = safeReadJSON<ImprovementTask>(TASK_FILE, null as unknown as ImprovementTask);
+    if (!task) {
+      log("Failed to read task file");
+      return;
+    }
   } catch (err) {
     log(`Failed to read task file: ${err}`);
     return;

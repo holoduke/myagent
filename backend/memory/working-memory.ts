@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import type { WorkingMemory, PendingFollowUp, ConversationThread, TemporalContext } from "./types.js";
 import type { Observation } from "../observer.js";
 import { getBrainConfig, getOwnerLocalTime, getOwnerLocalDate } from "../brain-config.js";
@@ -36,24 +36,13 @@ function defaultWorkingMemory(): WorkingMemory {
 }
 
 export function loadWorkingMemory(): WorkingMemory {
-  try {
-    if (existsSync(WM_FILE)) {
-      return { ...defaultWorkingMemory(), ...JSON.parse(readFileSync(WM_FILE, "utf-8")) };
-    }
-  } catch {
-    log("Failed to read working memory, using defaults");
-  }
-  return defaultWorkingMemory();
+  return { ...defaultWorkingMemory(), ...safeReadJSON<Partial<WorkingMemory>>(WM_FILE, {}) };
 }
 
 export function saveWorkingMemory(wm: WorkingMemory): void {
   try {
-    if (!existsSync(BRAIN_DIR)) {
-      mkdirSync(BRAIN_DIR, { recursive: true });
-    }
-    const tmp = WM_FILE + ".tmp";
-    writeFileSync(tmp, JSON.stringify(wm, null, 2));
-    renameSync(tmp, WM_FILE);
+    ensureDir(BRAIN_DIR);
+    atomicWriteJSON(WM_FILE, wm);
   } catch (err) {
     log(`Failed to save working memory: ${err}`);
   }

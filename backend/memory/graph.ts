@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { existsSync } from "fs";
+import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { randomBytes } from "crypto";
 import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode } from "./types.js";
 import { createLogger } from "../logger.js";
@@ -13,11 +14,7 @@ const ARCHIVE_FILE = `${GRAPH_DIR}/archive.json`;
 
 const MAX_ARCHIVE_NODES = 2000;
 
-function atomicWrite(filepath: string, data: string): void {
-  const tmp = filepath + ".tmp";
-  writeFileSync(tmp, data);
-  renameSync(tmp, filepath);
-}
+
 
 function genId(): string {
   return "n_" + randomBytes(4).toString("hex");
@@ -44,38 +41,18 @@ export class MemoryGraph {
   // ── Persistence ──
 
   load(): void {
-    if (!existsSync(GRAPH_DIR)) {
-      mkdirSync(GRAPH_DIR, { recursive: true });
+    ensureDir(GRAPH_DIR);
+
+    const nodesRaw = safeReadJSON<Record<string, MemoryNode>>(NODES_FILE, {});
+    for (const [id, node] of Object.entries(nodesRaw)) {
+      this.nodes.set(id, node);
     }
 
-    if (existsSync(NODES_FILE)) {
-      try {
-        const raw = JSON.parse(readFileSync(NODES_FILE, "utf-8")) as Record<string, MemoryNode>;
-        for (const [id, node] of Object.entries(raw)) {
-          this.nodes.set(id, node);
-        }
-      } catch {
-        log("Failed to parse nodes.json, starting fresh");
-      }
-    }
+    this.edges = safeReadJSON<MemoryEdge[]>(EDGES_FILE, []);
 
-    if (existsSync(EDGES_FILE)) {
-      try {
-        this.edges = JSON.parse(readFileSync(EDGES_FILE, "utf-8")) as MemoryEdge[];
-      } catch {
-        log("Failed to parse edges.json, starting fresh");
-      }
-    }
-
-    if (existsSync(ARCHIVE_FILE)) {
-      try {
-        const raw = JSON.parse(readFileSync(ARCHIVE_FILE, "utf-8")) as Record<string, ArchivedNode>;
-        for (const [id, node] of Object.entries(raw)) {
-          this.archive.set(id, node);
-        }
-      } catch {
-        log("Failed to parse archive.json, starting fresh");
-      }
+    const archiveRaw = safeReadJSON<Record<string, ArchivedNode>>(ARCHIVE_FILE, {});
+    for (const [id, node] of Object.entries(archiveRaw)) {
+      this.archive.set(id, node);
     }
 
     this.rebuildIndexes();
@@ -84,23 +61,21 @@ export class MemoryGraph {
   }
 
   save(): void {
-    if (!existsSync(GRAPH_DIR)) {
-      mkdirSync(GRAPH_DIR, { recursive: true });
-    }
+    ensureDir(GRAPH_DIR);
 
     const nodesObj: Record<string, MemoryNode> = {};
     for (const [id, node] of this.nodes) {
       nodesObj[id] = node;
     }
-    atomicWrite(NODES_FILE, JSON.stringify(nodesObj));
-    atomicWrite(EDGES_FILE, JSON.stringify(this.edges));
+    atomicWriteJSON(NODES_FILE, nodesObj, 0);
+    atomicWriteJSON(EDGES_FILE, this.edges, 0);
 
     // Save archive
     const archiveObj: Record<string, ArchivedNode> = {};
     for (const [id, node] of this.archive) {
       archiveObj[id] = node;
     }
-    atomicWrite(ARCHIVE_FILE, JSON.stringify(archiveObj));
+    atomicWriteJSON(ARCHIVE_FILE, archiveObj, 0);
   }
 
   private rebuildIndexes(): void {
