@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "
 import { randomUUID } from "node:crypto";
 import { createLogger } from "./logger.js";
 import { isWhitelisted } from "./contact-whitelist.js";
+import { SchedulerError } from "./brain-errors.js";
 
 const log = createLogger("scheduler");
 
@@ -77,7 +78,11 @@ function saveSchedule(messages: ScheduledMessage[]): void {
     renameSync(tmp, SCHEDULE_FILE);
     scheduleCache = messages;
   } catch (err) {
-    log(`Failed to save schedule: ${err}`);
+    throw new SchedulerError(`Failed to save schedule: ${err}`, {
+      cause: err,
+      transient: false,
+      metadata: { messageCount: messages.length },
+    });
   }
 }
 
@@ -248,7 +253,11 @@ function saveDeliveryLog(entries: DeliveryRecord[]): void {
     renameSync(tmp, DELIVERY_LOG_FILE);
     deliveryLogCache = entries;
   } catch (err) {
-    log(`Failed to save delivery log: ${err}`);
+    throw new SchedulerError(`Failed to save delivery log: ${err}`, {
+      cause: err,
+      transient: false,
+      metadata: { entryCount: entries.length },
+    });
   }
 }
 
