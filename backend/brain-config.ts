@@ -17,12 +17,14 @@ export interface BrainConfig {
   selfImproveEnabled: boolean;
   selfImproveAutoApprove: boolean;
   selfImproveMaxPerWeek: number;
+  urgencyInterruptThreshold: number;  // urgency score (0-1) that triggers an immediate think tick
   characterType: string;              // character preset name or "custom"
   characterCustomPrompt: string | null; // free-text personality override (used when characterType === "custom")
   activationSpreadFactor: number;        // decay per hop in spreading activation (0–1); higher = better transitive recall
   archiveRecallMin: number;              // minimum archive restores per consolidation cycle
   archiveRecallMax: number;              // maximum archive restores per consolidation cycle
   archiveRecallDivisor: number;          // archive size divisor for scaling (restores = archiveSize / divisor)
+  maxThinkContextNodes: number;          // base budget for think context node selection
 }
 
 export interface BrainPreset {
@@ -168,12 +170,14 @@ function envDefaults(): BrainConfig {
     selfImproveEnabled: process.env.SELF_IMPROVE_ENABLED !== "false",
     selfImproveAutoApprove: process.env.SELF_IMPROVE_AUTO_APPROVE === "true",
     selfImproveMaxPerWeek: Number(process.env.SELF_IMPROVE_MAX_PER_WEEK ?? 3),
+    urgencyInterruptThreshold: Number(process.env.BRAIN_URGENCY_INTERRUPT_THRESHOLD ?? 0.8),
     characterType: "default",
     characterCustomPrompt: null,
     activationSpreadFactor: 0.6,
     archiveRecallMin: 5,
     archiveRecallMax: 15,
     archiveRecallDivisor: 400,
+    maxThinkContextNodes: 35,
   };
 }
 

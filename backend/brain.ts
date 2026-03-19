@@ -19,7 +19,7 @@ import {
   selectContextForConsolidate,
   selectContextForReflect,
 } from "./memory/activation.js";
-import { scoreObservations, getPendingUrgency, clearPendingUrgency } from "./urgency.js";
+import { scoreObservations, getPendingUrgency, clearPendingUrgency, setUrgencyInterruptHandler } from "./urgency.js";
 import { GoalTracker } from "./goals.js";
 import { getDueRecurringTasks, markExecuted } from "./recurring.js";
 import type { RecurringTask } from "./recurring.js";
@@ -580,6 +580,10 @@ let lastPruneDate = "";
 let firstSuccessfulTickDone = false;
 const graph = new MemoryGraph();
 
+// ── Urgency Interrupt State ──
+let lastUrgencyInterruptTime = 0;
+const URGENCY_INTERRUPT_COOLDOWN = 60_000; // 60s — don't interrupt more than once per minute
+
 const SCHEDULER_POLL_INTERVAL = 10_000; // 10 seconds — fast poll for scheduled messages
 
 export function startBrainLoop(
@@ -596,6 +600,20 @@ export function startBrainLoop(
   ensureBrainDir();
   ensureSSHKey();
   const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
+
+  // Register urgency interrupt handler so high-urgency observations trigger an immediate tick
+  setUrgencyInterruptHandler((urgencyScore: number) => {
+    const now = Date.now();
+    if (now - lastUrgencyInterruptTime < URGENCY_INTERRUPT_COOLDOWN) {
+      log(`Urgency interrupt: suppressed (last interrupt ${Math.round((now - lastUrgencyInterruptTime) / 1000)}s ago, cooldown ${URGENCY_INTERRUPT_COOLDOWN / 1000}s)`);
+      return;
+    }
+    lastUrgencyInterruptTime = now;
+    log(`Urgency interrupt TRIGGERED: score ${urgencyScore.toFixed(2)} — scheduling immediate tick`);
+    tick(queue, sendMessage, ownerJid).catch((err) => {
+      log(`Urgency interrupt tick error: ${err}`);
+    });
+  }, cfg.urgencyInterruptThreshold);
 
   // Load graph from disk
   graph.load();
