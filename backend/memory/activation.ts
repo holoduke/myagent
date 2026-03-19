@@ -276,6 +276,56 @@ export function selectContextForThink(
       }
     }
   }
+  // Boost activation for nodes related to due follow-ups
+  const now = Date.now();
+  const FOLLOWUP_BOOST = 0.3;
+  for (const fu of wm.pendingFollowUps) {
+    if (fu.potentiallyResolved) continue;
+    if (!fu.dueAt || fu.dueAt > now) continue; // only due or overdue
+
+    // Extract keywords from the follow-up question + context
+    const fuKeywords = extractKeywordsFromText(fu.question + " " + fu.context);
+
+    // Find and boost person nodes matching targetPerson
+    if (fu.targetPerson) {
+      const personName = fu.targetPerson.toLowerCase();
+      for (const pNode of graph.findByType("person")) {
+        if (pNode.content.toLowerCase().includes(personName) ||
+            pNode.tags.some(t => t.toLowerCase().includes(personName))) {
+          const existing = activated.find(a => a.node.id === pNode.id);
+          if (existing) {
+            existing.activation += FOLLOWUP_BOOST;
+          } else {
+            activated.push({ node: pNode, activation: FOLLOWUP_BOOST });
+          }
+        }
+      }
+    }
+
+    // Find and boost topic-matching nodes
+    if (fuKeywords.length > 0) {
+      for (const node of graph.allNodes()) {
+        if (activated.some(a => a.node.id === node.id && a.activation >= FOLLOWUP_BOOST)) continue;
+        const contentLower = node.content.toLowerCase();
+        const tagsLower = node.tags.map(t => t.toLowerCase());
+        let hits = 0;
+        for (const kw of fuKeywords) {
+          if (contentLower.includes(kw)) hits++;
+          if (tagsLower.some(t => t.includes(kw))) hits++;
+        }
+        // Require at least 2 keyword hits to avoid noise
+        if (hits >= 2) {
+          const existing = activated.find(a => a.node.id === node.id);
+          if (existing) {
+            existing.activation += FOLLOWUP_BOOST;
+          } else {
+            activated.push({ node, activation: FOLLOWUP_BOOST });
+          }
+        }
+      }
+    }
+  }
+
   // Re-sort after boosting
   activated.sort((a, b) => b.activation - a.activation);
 
