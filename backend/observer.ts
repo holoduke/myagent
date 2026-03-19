@@ -1,6 +1,7 @@
 import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, openSync, fstatSync, readSync, closeSync } from "fs";
 import { createLogger } from "./logger.js";
 import { BrainError } from "./brain-errors.js";
+import { scoreAndMaybeInterrupt } from "./urgency.js";
 
 const log = createLogger("observer");
 
@@ -151,6 +152,9 @@ export function recordObservation(obs: Observation): void {
   try {
     ensureBrainDir();
     appendFileSync(OBS_FILE, JSON.stringify(obs) + "\n");
+
+    // Score urgency eagerly and trigger an immediate brain tick if critical
+    scoreAndMaybeInterrupt(obs);
   } catch (err) {
     throw new BrainError(`Failed to record observation: ${err}`, {
       phase: "observer",

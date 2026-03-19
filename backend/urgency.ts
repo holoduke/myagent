@@ -100,6 +100,20 @@ export function scoreUrgency(obs: Observation): number {
   return Math.min(score, 1.0);
 }
 
+// ── Urgency Interrupt Callback ──
+// Registered by brain.ts to trigger an immediate tick on high-urgency observations.
+// Avoids circular dependency: urgency.ts never imports brain.ts directly.
+let urgencyInterruptHandler: ((score: number) => void) | null = null;
+let urgencyInterruptThreshold = 0.8;
+
+export function setUrgencyInterruptHandler(
+  handler: (score: number) => void,
+  threshold: number,
+): void {
+  urgencyInterruptHandler = handler;
+  urgencyInterruptThreshold = threshold;
+}
+
 // ── Batch Scoring ──
 
 let pendingUrgency = 0;
@@ -117,6 +131,22 @@ export function scoreObservations(observations: Observation[]): void {
   }
 
   pendingUrgency = Math.max(pendingUrgency, maxUrgency);
+}
+
+/**
+ * Score a single observation and trigger an urgency interrupt if it exceeds the threshold.
+ * Called at observation-record time so high-urgency messages trigger an immediate brain tick
+ * instead of waiting for the next scheduled tick interval.
+ */
+export function scoreAndMaybeInterrupt(obs: Observation): void {
+  const urgency = scoreUrgency(obs);
+  obs.urgency = urgency;
+  pendingUrgency = Math.max(pendingUrgency, urgency);
+
+  if (urgency >= urgencyInterruptThreshold && urgencyInterruptHandler) {
+    log(`High urgency ${urgency.toFixed(2)} from ${obs.sender} — triggering interrupt`);
+    urgencyInterruptHandler(urgency);
+  }
 }
 
 export function getPendingUrgency(): number {
