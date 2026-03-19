@@ -1087,7 +1087,7 @@ async function thinkTick(
 
   // Boost activation for initiative signal related nodes
   const signalNodeIds = initiativeSignals.flatMap(s => s.relatedNodeIds);
-  const contextNodes = selectContextForThink(graph, wm, allObs, signalNodeIds);
+  const contextNodes = selectContextForThink(graph, wm, allObs, signalNodeIds, initiativeSignals.length);
 
   // Get goals section
   const goalTracker = new GoalTracker(graph);
