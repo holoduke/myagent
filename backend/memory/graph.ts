@@ -526,6 +526,122 @@ export class MemoryGraph {
     return Array.from(this.archive.values());
   }
 
+  // ── Auto-Correlation ──
+
+  /**
+   * Find existing nodes correlated to a new node by tag overlap and content keyword matching.
+   * Auto-creates topical edges between the new node and strongly correlated existing nodes.
+   * Also detects potential contradictions for person/fact nodes.
+   */
+  correlateNode(newNode: MemoryNode, maxEdges = 5): { correlated: number; contradictions: string[] } {
+    const contradictions: string[] = [];
+    const newTagsLower = new Set(newNode.tags.map(t => t.toLowerCase()));
+    const newContentLower = newNode.content.toLowerCase();
+
+    // Extract meaningful keywords from content (3+ chars, skip stop words)
+    const stopWords = new Set([
+      "the", "and", "for", "was", "are", "but", "not", "you", "all", "can",
+      "has", "her", "his", "one", "our", "out", "had", "she", "him", "how",
+      "its", "may", "who", "did", "get", "let", "say", "too", "use", "way",
+      "that", "this", "with", "have", "from", "they", "been", "said", "each",
+      "which", "their", "will", "other", "about", "than", "then", "them",
+      "these", "some", "when", "what", "into", "also", "just", "more",
+      "gillis", "confirmed", "day", "via", "whatsapp", "group",
+    ]);
+    const newKeywords = new Set(
+      newContentLower
+        .split(/[\s\-—,.:;!?()\[\]"'`/\\]+/)
+        .filter(w => w.length >= 3 && !stopWords.has(w) && !/^\d+$/.test(w))
+    );
+
+    // Score all existing nodes
+    const candidates: { id: string; score: number; matchType: "tag" | "content" | "both" }[] = [];
+
+    for (const [id, existing] of this.nodes) {
+      if (id === newNode.id) continue;
+
+      const existTagsLower = new Set(existing.tags.map(t => t.toLowerCase()));
+      const existContentLower = existing.content.toLowerCase();
+
+      // Tag overlap score
+      let tagOverlap = 0;
+      for (const tag of newTagsLower) {
+        if (existTagsLower.has(tag)) tagOverlap++;
+      }
+      const tagScore = newTagsLower.size > 0 ? tagOverlap / newTagsLower.size : 0;
+
+      // Content keyword overlap score
+      let keywordHits = 0;
+      for (const kw of newKeywords) {
+        if (existContentLower.includes(kw)) keywordHits++;
+      }
+      const contentScore = newKeywords.size > 0 ? keywordHits / newKeywords.size : 0;
+
+      // Combined score (tags weighted higher — they're more intentional)
+      const combined = tagScore * 0.6 + contentScore * 0.4;
+
+      // Minimum threshold to be considered correlated
+      if (combined < 0.15) continue;
+
+      // Already connected? Skip.
+      const alreadyLinked = this.edgesFrom(newNode.id).some(e => e.to === id)
+        || this.edgesTo(newNode.id).some(e => e.from === id);
+      if (alreadyLinked) continue;
+
+      const matchType = tagScore > 0 && contentScore > 0 ? "both"
+        : tagScore > 0 ? "tag" : "content";
+
+      candidates.push({ id, score: combined, matchType });
+
+      // Contradiction detection: same person or fact with conflicting info
+      if (combined > 0.3 && (newNode.type === "person" || newNode.type === "fact")
+        && existing.type === newNode.type) {
+        // Check for potential conflict markers (age, date, number mismatches)
+        const agePattern = /(\d+)\s*(?:years?\s*old|jaar|jr)/i;
+        const newAge = newContentLower.match(agePattern);
+        const existAge = existContentLower.match(agePattern);
+        if (newAge && existAge && newAge[1] !== existAge[1]) {
+          contradictions.push(
+            `Possible conflict: "${newNode.content.slice(0, 60)}..." says ${newAge[0]} but existing node ${id} says ${existAge[0]}`
+          );
+        }
+      }
+    }
+
+    // Sort by score, take top N
+    candidates.sort((a, b) => b.score - a.score);
+    const topCorrelations = candidates.slice(0, maxEdges);
+
+    // Create edges
+    const now = Date.now();
+    for (const match of topCorrelations) {
+      // Determine edge type based on node types
+      const existing = this.nodes.get(match.id)!;
+      let edgeType: MemoryEdge["type"] = "topical";
+      if (newNode.type === "person" && existing.type === "person") edgeType = "social";
+      if (newNode.type === "event" && existing.type === "event") edgeType = "temporal";
+      if (newNode.type === "emotion") edgeType = "emotional";
+
+      this.addEdge({
+        from: newNode.id,
+        to: match.id,
+        type: edgeType,
+        weight: Math.min(0.7, match.score), // cap at 0.7 — not as strong as explicit edges
+        createdAt: now,
+        lastReinforcedAt: now,
+      });
+    }
+
+    if (topCorrelations.length > 0) {
+      log(`Auto-correlated node ${newNode.id} → ${topCorrelations.length} edge(s) created [${topCorrelations.map(c => c.id + ":" + c.score.toFixed(2)).join(", ")}]`);
+    }
+    if (contradictions.length > 0) {
+      log(`⚠ Contradictions detected for ${newNode.id}: ${contradictions.join("; ")}`);
+    }
+
+    return { correlated: topCorrelations.length, contradictions };
+  }
+
   // ── Queries ──
 
   findByType(type: NodeType): MemoryNode[] {
@@ -582,7 +698,7 @@ export class MemoryGraph {
         switch (op.op) {
           case "add_node": {
             if (this.nodes.has(op.id)) { skipped++; break; }
-            this.addNode({
+            const newNode: MemoryNode = {
               id: op.id,
               type: op.type,
               content: op.content,
@@ -592,7 +708,10 @@ export class MemoryGraph {
               createdAt: now,
               lastAccessedAt: now,
               accessCount: 1,
-            });
+            };
+            this.addNode(newNode);
+            // Auto-correlate: find related nodes and create edges
+            this.correlateNode(newNode);
             applied++;
             break;
           }
