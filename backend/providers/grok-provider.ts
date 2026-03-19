@@ -1,6 +1,5 @@
-import { spawn } from "child_process";
-import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, GrokConfig } from "./types.js";
-import { splitMessage } from "./util.js";
+import type { AgentResult, ProviderAskOptions, GrokConfig } from "./types.js";
+import { BaseProvider } from "./base-provider.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("grok-provider");
@@ -11,7 +10,7 @@ interface HistoryEntry {
   content: string;
 }
 
-export class GrokProvider implements AIProvider {
+export class GrokProvider extends BaseProvider {
   readonly name = "grok";
   readonly supportsStreaming = false;
   readonly supportsSessions = false;
@@ -21,6 +20,7 @@ export class GrokProvider implements AIProvider {
   private readonly maxHistory = 10;
 
   constructor(config: GrokConfig = {}) {
+    super();
     this.config = config;
   }
 
@@ -46,12 +46,12 @@ export class GrokProvider implements AIProvider {
     return result;
   }
 
-  private runGrok(message: string, timeout: number): Promise<AgentResult> {
+  private async runGrok(message: string, timeout: number): Promise<AgentResult> {
     const model = this.config.model || "grok-4-latest";
     const apiKey = this.config.apiKey;
 
     if (!apiKey) {
-      return Promise.reject(new Error("Grok API key is required. Configure it in the agent profile."));
+      throw new Error("Grok API key is required. Configure it in the agent profile.");
     }
 
     // Prepend recent history for context
@@ -72,76 +72,43 @@ export class GrokProvider implements AIProvider {
       args.push("--max-tool-roundtrips", String(this.config.maxToolRounds));
     }
 
-    return new Promise((resolve, reject) => {
-      const startTime = Date.now();
+    const startTime = Date.now();
 
-      // Pass API key via env var to avoid exposing it in process list
-      const child = spawn("grok", args, {
-        env: { ...process.env, XAI_API_KEY: apiKey },
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-
-      let stdout = "";
-      let stderr = "";
-
-      child.stdout.on("data", (data: Buffer) => {
-        stdout += data.toString();
-      });
-
-      child.stderr.on("data", (data: Buffer) => {
-        stderr += data.toString();
-      });
-
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-        reject(new Error(`Grok timed out after ${timeout / 1000}s`));
-      }, timeout);
-
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        if (timedOut) return;
-        const durationMs = Date.now() - startTime;
-        log(`Exit code: ${code}`);
-        if (stderr) log(`stderr: ${stderr.slice(0, 500)}`);
-
-        if (code !== 0 && !stdout.trim()) {
-          reject(new Error(`Grok exited with code ${code}: ${stderr.slice(0, 500)}`));
-          return;
-        }
-
-        const text = stdout.trim() || "No response from Grok.";
-        log(`Result: ${text.slice(0, 200)}`);
-
-        // Only store real responses in history, not fallback text
-        if (stdout.trim()) {
-          this.history.push({ role: "user", content: message });
-          this.history.push({ role: "assistant", content: text });
-          if (this.history.length > this.maxHistory * 2) {
-            this.history = this.history.slice(-this.maxHistory * 2);
-          }
-        }
-
-        const stats: AgentStats = {
-          durationMs,
-          totalCostUsd: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          numTurns: 1,
-          provider: "grok",
-          model,
-        };
-
-        resolve({ messages: splitMessage(text), stats });
-      });
-
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-
-      child.stdin.end();
+    const { promise } = this.spawnWithTimeout({
+      command: "grok",
+      args,
+      env: { XAI_API_KEY: apiKey },
+      timeout,
     });
+
+    const { code, stdout, stderr } = await promise;
+    const durationMs = Date.now() - startTime;
+
+    log(`Exit code: ${code}`);
+    if (stderr) log(`stderr: ${stderr.slice(0, 500)}`);
+
+    if (code !== 0 && !stdout.trim()) {
+      throw new Error(`Grok exited with code ${code}: ${stderr.slice(0, 500)}`);
+    }
+
+    const text = stdout.trim() || "No response from Grok.";
+    log(`Result: ${text.slice(0, 200)}`);
+
+    // Only store real responses in history, not fallback text
+    if (stdout.trim()) {
+      this.history.push({ role: "user", content: message });
+      this.history.push({ role: "assistant", content: text });
+      if (this.history.length > this.maxHistory * 2) {
+        this.history = this.history.slice(-this.maxHistory * 2);
+      }
+    }
+
+    const stats = this.buildStats({
+      durationMs,
+      provider: "grok",
+      model,
+    });
+
+    return { messages: this.splitMessage(text), stats };
   }
 }

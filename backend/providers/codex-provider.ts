@@ -1,11 +1,10 @@
-import { spawn } from "child_process";
-import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, CodexConfig } from "./types.js";
-import { splitMessage } from "./util.js";
+import type { AgentResult, AgentStats, ProviderAskOptions, CodexConfig } from "./types.js";
+import { BaseProvider } from "./base-provider.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("codex-provider");
 
-export class CodexProvider implements AIProvider {
+export class CodexProvider extends BaseProvider {
   readonly name = "codex";
   readonly supportsStreaming = true;
   readonly supportsSessions = true;
@@ -14,6 +13,7 @@ export class CodexProvider implements AIProvider {
   private config: CodexConfig;
 
   constructor(config: CodexConfig = {}) {
+    super();
     this.config = config;
   }
 
@@ -67,11 +67,6 @@ export class CodexProvider implements AIProvider {
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
 
-      const child = spawn("codex", args, {
-        env: { ...process.env },
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-
       let fullText = "";
       let sessionId: string | undefined;
       let inputTokens = 0;
@@ -81,57 +76,59 @@ export class CodexProvider implements AIProvider {
       let buffer = "";
       let stderr = "";
 
-      child.stdout.on("data", (data: Buffer) => {
+      const { child, isTimedOut, clearTimer } = this.spawnWithTimeout({
+        command: "codex",
+        args,
+        timeout,
+        onTimeout: () => {
+          this.currentSessionId = null;
+          reject(new Error(`Codex timed out after ${timeout / 1000}s`));
+        },
+      });
+
+      // Override default stdout collection — we parse JSON lines
+      child.stdout!.removeAllListeners("data");
+      child.stderr!.removeAllListeners("data");
+
+      child.stdout!.on("data", (data: Buffer) => {
         buffer += data.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+        const { events, remaining } = this.parseJsonLines(buffer);
+        buffer = remaining;
 
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line);
-
-            if (event.type === "thread.started" && event.thread_id) {
-              sessionId = event.thread_id;
-              this.currentSessionId = sessionId ?? null;
-              log(`Thread started: ${sessionId}`);
-            } else if (event.type === "item.completed" && event.item?.type === "agent_message") {
-              const text = event.item.text || "";
+        for (const event of events as Record<string, unknown>[]) {
+          if (event.type === "thread.started" && event.thread_id) {
+            sessionId = event.thread_id as string;
+            this.currentSessionId = sessionId ?? null;
+            log(`Thread started: ${sessionId}`);
+          } else if (event.type === "item.completed") {
+            const item = event.item as Record<string, unknown> | undefined;
+            if (item?.type === "agent_message") {
+              const text = (item.text as string) || "";
               if (text) {
-                // Each agent_message is standalone — append to full text
                 if (fullText) fullText += "\n";
                 fullText += text;
                 if (streaming && onDelta) {
                   onDelta(text);
                 }
               }
-            } else if (event.type === "turn.completed" && event.usage) {
-              numTurns++;
-              inputTokens += event.usage.input_tokens || 0;
-              outputTokens += event.usage.output_tokens || 0;
-              cachedTokens += event.usage.cached_input_tokens || 0;
             }
-          } catch {
-            // Skip unparseable lines
+          } else if (event.type === "turn.completed" && event.usage) {
+            numTurns++;
+            const usage = event.usage as Record<string, number>;
+            inputTokens += usage.input_tokens || 0;
+            outputTokens += usage.output_tokens || 0;
+            cachedTokens += usage.cached_input_tokens || 0;
           }
         }
       });
 
-      child.stderr.on("data", (data: Buffer) => {
+      child.stderr!.on("data", (data: Buffer) => {
         stderr += data.toString();
       });
 
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-        this.currentSessionId = null;
-        reject(new Error(`Codex timed out after ${timeout / 1000}s`));
-      }, timeout);
-
       child.on("close", (code) => {
-        clearTimeout(timer);
-        if (timedOut) return;
+        clearTimer();
+        if (isTimedOut()) return;
         const durationMs = Date.now() - startTime;
         log(`Exit code: ${code}`);
         if (stderr) log(`stderr: ${stderr.slice(0, 500)}`);
@@ -145,26 +142,25 @@ export class CodexProvider implements AIProvider {
         const text = fullText || "No response from Codex.";
         log(`Result: ${text.slice(0, 200)}`);
 
-        const stats: AgentStats = {
+        const stats: AgentStats = this.buildStats({
           durationMs,
-          totalCostUsd: 0,
+          provider: "codex",
+          model,
           inputTokens,
           outputTokens,
           numTurns: numTurns || 1,
-          provider: "codex",
-          model,
           cacheReadTokens: cachedTokens,
-        };
+        });
 
-        resolve({ messages: splitMessage(text), sessionId, stats });
+        resolve({ messages: this.splitMessage(text), sessionId, stats });
       });
 
       child.on("error", (err) => {
-        clearTimeout(timer);
+        clearTimer();
         reject(err);
       });
 
-      child.stdin.end();
+      child.stdin!.end();
     });
   }
 }
