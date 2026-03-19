@@ -199,6 +199,37 @@ export function spreadingActivation(
   return results.slice(0, maxNodes);
 }
 
+// ── Dynamic Context Budget ──
+
+const DYNAMIC_BUDGET_CAP = 50;
+const BUDGET_PER_SIGNAL = 5;
+const MAX_SIGNAL_BONUS = 15;
+const URGENCY_BONUS_THRESHOLD = 0.6;
+const URGENCY_BONUS = 10;
+
+/**
+ * Calculate the dynamic context budget based on situation complexity.
+ * Starts from the configured base and adds more for initiative signals
+ * and high-urgency observations, capped at DYNAMIC_BUDGET_CAP.
+ */
+export function calculateContextBudget(
+  baseBudget: number,
+  signalCount: number,
+  maxObservationUrgency: number,
+): number {
+  let budget = baseBudget;
+
+  // Add budget for initiative signals (+5 each, up to +15)
+  budget += Math.min(signalCount * BUDGET_PER_SIGNAL, MAX_SIGNAL_BONUS);
+
+  // Add budget for high-urgency observations
+  if (maxObservationUrgency > URGENCY_BONUS_THRESHOLD) {
+    budget += URGENCY_BONUS;
+  }
+
+  return Math.min(budget, DYNAMIC_BUDGET_CAP);
+}
+
 // ── Context Selection ──
 
 export function selectContextForThink(
@@ -206,9 +237,15 @@ export function selectContextForThink(
   wm: WorkingMemory,
   observations: Observation[],
   boostNodeIds: string[] = [],
+  signalCount = 0,
 ): MemoryNode[] {
+  const cfg = getBrainConfig();
+  const baseBudget = cfg.maxThinkContextNodes;
+  const maxUrgency = observations.reduce((max, o) => Math.max(max, o.urgency ?? 0), 0);
+  const budget = calculateContextBudget(baseBudget, signalCount, maxUrgency);
+
   const keywords = extractKeywords(observations);
-  log(`Think context: ${keywords.length} keywords from ${observations.length} observations`);
+  log(`Think context: ${keywords.length} keywords from ${observations.length} observations, budget: ${budget} (base ${baseBudget}, signals ${signalCount}, maxUrgency ${maxUrgency.toFixed(2)})`);
 
   // Association-triggered archive recall: use spreading activation pattern to score cold storage
   if (keywords.length > 0 && graph.archiveSize > 0) {
@@ -365,8 +402,8 @@ export function selectContextForThink(
     ...wmNodes.slice(0, 5),
   ];
 
-  log(`Think context selected: ${result.length} nodes (${pinned.length} pinned, ${conceptNodes.length} concepts, ${activated.length} activated, ${wmNodes.length} from WM)`);
-  return result.slice(0, 35);
+  log(`Think context selected: ${result.length} nodes (${pinned.length} pinned, ${conceptNodes.length} concepts, ${activated.length} activated, ${wmNodes.length} from WM), budget: ${budget}`);
+  return result.slice(0, budget);
 }
 
 export function selectContextForConsolidate(graph: MemoryGraph): {
