@@ -20,6 +20,9 @@ export interface BrainConfig {
   characterType: string;              // character preset name or "custom"
   characterCustomPrompt: string | null; // free-text personality override (used when characterType === "custom")
   activationSpreadFactor: number;        // decay per hop in spreading activation (0–1); higher = better transitive recall
+  archiveRecallMin: number;              // minimum archive restores per consolidation cycle
+  archiveRecallMax: number;              // maximum archive restores per consolidation cycle
+  archiveRecallDivisor: number;          // archive size divisor for scaling (restores = archiveSize / divisor)
 }
 
 export interface BrainPreset {
@@ -168,6 +171,9 @@ function envDefaults(): BrainConfig {
     characterType: "default",
     characterCustomPrompt: null,
     activationSpreadFactor: 0.6,
+    archiveRecallMin: 5,
+    archiveRecallMax: 15,
+    archiveRecallDivisor: 400,
   };
 }
 

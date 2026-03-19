@@ -11,6 +11,7 @@ import {
   TIER_TAG_SIGNALS,
   TIER_CONTENT_SIGNALS,
 } from "./types.js";
+import { getBrainConfig } from "../brain-config.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("decay");
@@ -240,7 +241,6 @@ export function emergencyPrune(graph: MemoryGraph, softLimit: number, tierCache?
 
 // Activation threshold for archive rescan — archived nodes scoring above this are promoted
 const RESCAN_ACTIVATION_THRESHOLD = 0.15;
-const RESCAN_MAX_RESTORE = 3; // conservative — max restorations per cycle
 
 /**
  * Periodic archive rescan using spreading activation against cold storage.
@@ -332,8 +332,13 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
   // Step 5: Restore top candidates that exceed threshold
   candidates.sort((a, b) => b.score - a.score);
 
+  // Scale restore limit with archive size: larger archives get more restores per cycle
+  const cfg = getBrainConfig();
+  const scaledRestore = Math.floor(graph.archiveSize / cfg.archiveRecallDivisor);
+  const maxRestore = Math.min(cfg.archiveRecallMax, Math.max(cfg.archiveRecallMin, scaledRestore));
+
   let restored = 0;
-  for (const candidate of candidates.slice(0, RESCAN_MAX_RESTORE)) {
+  for (const candidate of candidates.slice(0, maxRestore)) {
     if (graph.restoreNode(candidate.id)) {
       restored++;
     }
