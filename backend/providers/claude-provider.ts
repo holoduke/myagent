@@ -1,8 +1,7 @@
-import { spawn } from "child_process";
 import { getSystemPrompt, getMessageMemoryContext, resetMemoryContextTracker } from "../system-prompt.js";
 import { ensureValidToken } from "../auth-refresh.js";
 import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, ClaudeConfig } from "./types.js";
-import { splitMessage } from "./util.js";
+import { BaseProvider } from "./base-provider.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("claude-provider");
@@ -13,7 +12,7 @@ interface ClaudeResponse {
   session_id?: string;
 }
 
-export class ClaudeProvider implements AIProvider {
+export class ClaudeProvider extends BaseProvider {
   readonly name = "claude";
   readonly supportsStreaming = true;
   readonly supportsSessions = true;
@@ -22,6 +21,7 @@ export class ClaudeProvider implements AIProvider {
   private config: ClaudeConfig;
 
   constructor(config: ClaudeConfig = {}) {
+    super();
     this.config = config;
   }
 
@@ -84,23 +84,52 @@ export class ClaudeProvider implements AIProvider {
     return result;
   }
 
+  // ---------------------------------------------------------------------------
+  // Shared helpers
+  // ---------------------------------------------------------------------------
+
+  private buildPrompt(message: string, noSession: boolean): string {
+    if (noSession) {
+      return message;
+    }
+    if (this.currentSessionId) {
+      // Resumed session: inject working memory update only if changed
+      const memCtx = getMessageMemoryContext();
+      return memCtx ? `${memCtx}${message}` : message;
+    }
+    // First message: full system prompt with initial memory snapshot
+    return `${getSystemPrompt()}\n\nUser message:\n${message}`;
+  }
+
+  private get claudeEnv(): Record<string, string> {
+    return {
+      ANTHROPIC_API_KEY: "",
+      CLAUDECODE: "",
+      HOME: process.env.CLAUDE_HOME || process.env.HOME || "/root",
+    };
+  }
+
+  private handleSessionError(stderr: string, noSession: boolean, context: string): void {
+    const isSessionError = stderr.includes("session") && (stderr.includes("not found") || stderr.includes("invalid") || stderr.includes("expired"));
+    if (!noSession && this.currentSessionId && isSessionError) {
+      log(`${context} session error detected, resetting session`);
+      this.currentSessionId = null;
+    } else if (!noSession && this.currentSessionId) {
+      log(`${context} transient error, session ${this.currentSessionId} preserved`);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Non-streaming execution
+  // ---------------------------------------------------------------------------
+
   private runClaude(
     message: string,
     options: { timeout: number; allowedTools: string; noSession?: boolean },
   ): Promise<AgentResult & { isAuthError?: boolean }> {
     const { timeout, allowedTools, noSession } = options;
 
-    let prompt: string;
-    if (noSession) {
-      prompt = message;
-    } else if (this.currentSessionId) {
-      // Resumed session: inject working memory update only if changed
-      const memCtx = getMessageMemoryContext();
-      prompt = memCtx ? `${memCtx}${message}` : message;
-    } else {
-      // First message: full system prompt with initial memory snapshot
-      prompt = `${getSystemPrompt()}\n\nUser message:\n${message}`;
-    }
+    const prompt = this.buildPrompt(message, noSession ?? false);
 
     const args = [
       "-p", prompt,
@@ -114,54 +143,23 @@ export class ClaudeProvider implements AIProvider {
     }
 
     return new Promise((resolve, reject) => {
-      const env = {
-        ...process.env,
-        ANTHROPIC_API_KEY: "",
-        CLAUDECODE: "",
-        HOME: process.env.CLAUDE_HOME || process.env.HOME || "/root",
-      };
-
-      const child = spawn("claude", args, {
-        env,
-        stdio: ["pipe", "pipe", "pipe"],
+      const { promise } = this.spawnWithTimeout({
+        command: "claude",
+        args,
+        env: this.claudeEnv,
+        timeout,
+        onTimeout: () => {
+          log(`Timeout: killed process (session ${this.currentSessionId || "none"} preserved)`);
+        },
       });
 
-      let stdout = "";
-      let stderr = "";
-
-      child.stdout.on("data", (data: Buffer) => {
-        stdout += data.toString();
-      });
-
-      child.stderr.on("data", (data: Buffer) => {
-        stderr += data.toString();
-      });
-
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-        // Don't reset session on timeout — the server-side session may still be valid
-        log(`Timeout: killed process (session ${this.currentSessionId || "none"} preserved)`);
-        reject(new Error(`Claude timed out after ${timeout / 1000}s`));
-      }, timeout);
-
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        if (timedOut) return;
+      promise.then(({ code, stdout, stderr }) => {
         log(`Exit code: ${code}`);
         log(`stdout (${stdout.length} chars): ${stdout.slice(0, 500)}`);
         if (stderr) log(`stderr: ${stderr.slice(0, 500)}`);
 
         if (code !== 0 && !stdout.trim()) {
-          // Only reset session for session-specific errors, not transient failures
-          const isSessionError = stderr.includes("session") && (stderr.includes("not found") || stderr.includes("invalid") || stderr.includes("expired"));
-          if (!noSession && this.currentSessionId && isSessionError) {
-            log("Session error detected, resetting session");
-            this.currentSessionId = null;
-          } else if (!noSession && this.currentSessionId) {
-            log(`Transient error (code ${code}), session ${this.currentSessionId} preserved`);
-          }
+          this.handleSessionError(stderr, noSession ?? false, "");
           reject(new Error(`Claude exited with code ${code}: ${stderr.slice(0, 500)}`));
           return;
         }
@@ -184,22 +182,19 @@ export class ClaudeProvider implements AIProvider {
           }
 
           log(`Parsed result: ${text.slice(0, 200)}`);
-          resolve({ messages: splitMessage(text), sessionId: response.session_id });
+          resolve({ messages: this.splitMessage(text), sessionId: response.session_id });
         } catch {
           const text = stdout.trim() || "No response from Claude.";
           log(`JSON parse failed, using raw: ${text.slice(0, 200)}`);
-          resolve({ messages: splitMessage(text) });
+          resolve({ messages: this.splitMessage(text) });
         }
-      });
-
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-
-      child.stdin.end();
+      }).catch(reject);
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // Streaming execution
+  // ---------------------------------------------------------------------------
 
   private runClaudeStreaming(
     message: string,
@@ -208,17 +203,7 @@ export class ClaudeProvider implements AIProvider {
   ): Promise<AgentResult & { isAuthError?: boolean }> {
     const { timeout, allowedTools, noSession } = options;
 
-    let prompt: string;
-    if (noSession) {
-      prompt = message;
-    } else if (this.currentSessionId) {
-      // Resumed session: inject working memory update only if changed
-      const memCtx = getMessageMemoryContext();
-      prompt = memCtx ? `${memCtx}${message}` : message;
-    } else {
-      // First message: full system prompt with initial memory snapshot
-      prompt = `${getSystemPrompt()}\n\nUser message:\n${message}`;
-    }
+    const prompt = this.buildPrompt(message, noSession ?? false);
 
     const args = [
       "-p", prompt,
@@ -234,18 +219,6 @@ export class ClaudeProvider implements AIProvider {
     }
 
     return new Promise((resolve, reject) => {
-      const env = {
-        ...process.env,
-        ANTHROPIC_API_KEY: "",
-        CLAUDECODE: "",
-        HOME: process.env.CLAUDE_HOME || process.env.HOME || "/root",
-      };
-
-      const child = spawn("claude", args, {
-        env,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-
       let fullText = "";
       let sentLength = 0;
       let sessionId: string | undefined;
@@ -254,44 +227,33 @@ export class ClaudeProvider implements AIProvider {
       let buffer = "";
       let stderr = "";
 
-      // Activity-based timeout: resets on each streaming event.
-      // Uses inactivity timeout (default: timeout value) — if no events arrive within
-      // the window, the process is killed. Active processes can run indefinitely.
-      let timedOut = false;
       const inactivityLimit = timeout;
-      let activityTimer = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-        log(`Streaming inactivity timeout (${inactivityLimit / 1000}s no activity, session ${this.currentSessionId || "none"} preserved)`);
-        reject(new Error(`Claude timed out after ${inactivityLimit / 1000}s of inactivity`));
-      }, inactivityLimit);
 
-      const resetActivityTimer = () => {
-        clearTimeout(activityTimer);
-        if (timedOut) return;
-        activityTimer = setTimeout(() => {
-          timedOut = true;
-          child.kill("SIGTERM");
+      const { child, resetTimer, clearTimer, isTimedOut } = this.spawnWithActivityTimeout({
+        command: "claude",
+        args,
+        env: this.claudeEnv,
+        timeout: inactivityLimit,
+        onTimeout: () => {
           log(`Streaming inactivity timeout (${inactivityLimit / 1000}s no activity, session ${this.currentSessionId || "none"} preserved)`);
           reject(new Error(`Claude timed out after ${inactivityLimit / 1000}s of inactivity`));
-        }, inactivityLimit);
-      };
+        },
+      });
 
-      child.stdout.on("data", (data: Buffer) => {
-        resetActivityTimer();
+      child.stdout!.on("data", (data: Buffer) => {
+        resetTimer();
         buffer += data.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+        const { events, remaining } = this.parseJsonLines(buffer);
+        buffer = remaining;
 
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line);
-
-            if (event.type === "assistant" && event.message?.content) {
-              for (const block of event.message.content) {
+        for (const event of events as Record<string, unknown>[]) {
+          if (event.type === "assistant") {
+            const msg = event.message as Record<string, unknown> | undefined;
+            const content = msg?.content as Array<Record<string, unknown>> | undefined;
+            if (content) {
+              for (const block of content) {
                 if (block.type === "text" && block.text) {
-                  const newText = block.text;
+                  const newText = block.text as string;
                   if (newText.length > sentLength) {
                     const delta = newText.slice(sentLength);
                     sentLength = newText.length;
@@ -300,51 +262,49 @@ export class ClaudeProvider implements AIProvider {
                   }
                 }
               }
-            } else if (event.type === "result") {
-              sessionId = event.session_id;
-              const resultText = event.result || "";
-              if (event.is_error && resultText.includes("authentication_error")) {
-                isAuthError = true;
-              } else if (!noSession && !event.is_error && sessionId) {
-                this.currentSessionId = sessionId;
-                log(`Session ID (streaming): ${this.currentSessionId}`);
-              }
-              if (resultText.length > sentLength) {
-                const delta = resultText.slice(sentLength);
-                sentLength = resultText.length;
-                fullText = resultText;
-                onDelta(delta);
-              } else if (!fullText && resultText) {
-                fullText = resultText;
-                onDelta(resultText);
-              }
-              const u = event.usage || {};
-              stats = {
-                durationMs: event.duration_ms || 0,
-                apiDurationMs: event.duration_api_ms || 0,
-                totalCostUsd: event.total_cost_usd || 0,
-                inputTokens: u.input_tokens || 0,
-                outputTokens: u.output_tokens || 0,
-                cacheReadTokens: u.cache_read_input_tokens || 0,
-                cacheCreationTokens: u.cache_creation_input_tokens || 0,
-                numTurns: event.num_turns || 0,
-                provider: "claude",
-              };
             }
-          } catch {
-            // Skip unparseable lines
+          } else if (event.type === "result") {
+            sessionId = event.session_id as string | undefined;
+            const resultText = (event.result as string) || "";
+            if ((event as Record<string, unknown>).is_error && resultText.includes("authentication_error")) {
+              isAuthError = true;
+            } else if (!noSession && !event.is_error && sessionId) {
+              this.currentSessionId = sessionId;
+              log(`Session ID (streaming): ${this.currentSessionId}`);
+            }
+            if (resultText.length > sentLength) {
+              const delta = resultText.slice(sentLength);
+              sentLength = resultText.length;
+              fullText = resultText;
+              onDelta(delta);
+            } else if (!fullText && resultText) {
+              fullText = resultText;
+              onDelta(resultText);
+            }
+            const u = (event.usage || {}) as Record<string, number>;
+            stats = this.buildStats({
+              durationMs: (event.duration_ms as number) || 0,
+              apiDurationMs: (event.duration_api_ms as number) || 0,
+              totalCostUsd: (event.total_cost_usd as number) || 0,
+              inputTokens: u.input_tokens || 0,
+              outputTokens: u.output_tokens || 0,
+              cacheReadTokens: u.cache_read_input_tokens || 0,
+              cacheCreationTokens: u.cache_creation_input_tokens || 0,
+              numTurns: (event.num_turns as number) || 0,
+              provider: "claude",
+            });
           }
         }
       });
 
-      child.stderr.on("data", (data: Buffer) => {
-        resetActivityTimer();
+      child.stderr!.on("data", (data: Buffer) => {
+        resetTimer();
         stderr += data.toString();
       });
 
       child.on("close", (code) => {
-        clearTimeout(activityTimer);
-        if (timedOut) return;
+        clearTimer();
+        if (isTimedOut()) return;
         log(`Streaming exit code: ${code}`);
         if (stderr) log(`Streaming stderr: ${stderr.slice(0, 500)}`);
 
@@ -354,14 +314,7 @@ export class ClaudeProvider implements AIProvider {
         }
 
         if (!fullText && code !== 0) {
-          // Only reset session for session-specific errors, not transient failures
-          const isSessionError = stderr.includes("session") && (stderr.includes("not found") || stderr.includes("invalid") || stderr.includes("expired"));
-          if (this.currentSessionId && isSessionError) {
-            log("Streaming session error detected, resetting session");
-            this.currentSessionId = null;
-          } else if (this.currentSessionId) {
-            log(`Streaming transient error (code ${code}), session ${this.currentSessionId} preserved`);
-          }
+          this.handleSessionError(stderr, noSession ?? false, "Streaming");
           reject(new Error(`Claude exited with code ${code}: ${stderr.slice(0, 500)}`));
           return;
         }
@@ -369,15 +322,13 @@ export class ClaudeProvider implements AIProvider {
         const text = fullText || "No response from Claude.";
         log(`Streaming result: ${text.slice(0, 200)}`);
         if (stats) log(`Stats: ${stats.durationMs}ms, $${stats.totalCostUsd.toFixed(4)}, ${stats.inputTokens}in/${stats.outputTokens}out`);
-        resolve({ messages: splitMessage(text), sessionId, stats });
+        resolve({ messages: this.splitMessage(text), sessionId, stats });
       });
 
       child.on("error", (err) => {
-        clearTimeout(activityTimer);
+        clearTimer();
         reject(err);
       });
-
-      child.stdin.end();
     });
   }
 }
