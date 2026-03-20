@@ -184,6 +184,12 @@ export function getDueMessages(): ScheduledMessage[] {
   const due = schedule.filter(m => m.deliverAt <= now && !inFlightIds.has(m.id));
   if (due.length === 0) return [];
 
+  // Mark ALL due messages as in-flight immediately to prevent race conditions.
+  // This must happen before any other processing (whitelist, etc.) to ensure
+  // a concurrent getDueMessages() call cannot return the same messages.
+  for (const m of due) inFlightIds.set(m.id, now);
+  saveInFlight();
+
   // Single-pass partition into allowed / blocked by whitelist status
   const allowed: ScheduledMessage[] = [];
   const blocked: ScheduledMessage[] = [];
@@ -197,16 +203,15 @@ export function getDueMessages(): ScheduledMessage[] {
     const blockedIds = new Set(blocked.map(m => m.id));
     const cleaned = schedule.filter(m => !blockedIds.has(m.id));
     saveSchedule(cleaned);
+    // Release blocked messages from in-flight (they've been removed from schedule)
+    for (const m of blocked) inFlightIds.delete(m.id);
+    saveInFlight();
   }
 
   if (allowed.length === 0) {
     if (due.length > 0) log(`All ${due.length} due message(s) were blocked by whitelist`);
     return [];
   }
-
-  // Mark as in-flight immediately so no other poll picks them up
-  for (const m of allowed) inFlightIds.set(m.id, now);
-  saveInFlight();
 
   log(`${allowed.length} message(s) due for delivery`);
   return allowed;

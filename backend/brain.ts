@@ -742,8 +742,10 @@ async function tick(
 
   // ── Circuit breaker: back off on consecutive failures ──
   if (state.consecutiveFailures >= CB_MAX_FAILURES) {
+    // Cap exponent to avoid Infinity when consecutiveFailures grows large (e.g. extended API outage)
+    const clampedExp = Math.min(state.consecutiveFailures, 30);
     const backoffMs = Math.min(
-      Math.pow(2, state.consecutiveFailures) * cfg.tickInterval,
+      Math.pow(2, clampedExp) * cfg.tickInterval,
       CB_MAX_BACKOFF,
     );
     const timeSinceLastTick = now - Math.max(state.lastThinkTick, state.lastConsolidateTick, state.lastReflectTick);
