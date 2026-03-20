@@ -9,6 +9,7 @@ const log = createLogger("scheduler");
 
 const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const SCHEDULE_FILE = `${BRAIN_DIR}/scheduled-messages.json`;
+const IN_FLIGHT_FILE = `${BRAIN_DIR}/scheduled-messages-inflight.json`;
 const DELIVERY_LOG_FILE = `${BRAIN_DIR}/delivery-log.json`;
 const DELIVERY_LOG_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 
@@ -104,6 +105,9 @@ export function getScheduledMessages(): ScheduledMessage[] {
   return loadSchedule();
 }
 
+const MAX_RETRIES = 5;
+const BACKOFF_DELAYS_MS = [2 * 60000, 10 * 60000, 30 * 60000, 60 * 60000, 120 * 60000]; // 2m, 10m, 30m, 1h, 2h
+
 /**
  * Check for due messages and return them.
  * Does NOT remove messages from the schedule — caller must use markDelivered()
@@ -112,18 +116,70 @@ export function getScheduledMessages(): ScheduledMessage[] {
 // In-flight message IDs with timestamps: prevents duplicate delivery and enables timeout cleanup
 const inFlightIds = new Map<string, number>();
 const IN_FLIGHT_TIMEOUT_MS = 6 * 60 * 1000; // 5min send timeout + 1min buffer
+// Max backoff (2h) + generous buffer for crash recovery staleness check
+const CRASH_RECOVERY_STALENESS_MS = BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1] + IN_FLIGHT_TIMEOUT_MS;
+
+interface InFlightEntry { id: string; startedAt: number; }
+
+function saveInFlight(): void {
+  try {
+    const entries: InFlightEntry[] = [];
+    for (const [id, startedAt] of inFlightIds) entries.push({ id, startedAt });
+    ensureDir(BRAIN_DIR);
+    atomicWriteJSON(IN_FLIGHT_FILE, entries);
+  } catch (err) {
+    log(`Warning: failed to persist in-flight state: ${err}`);
+  }
+}
+
+/**
+ * On startup, recover in-flight state from disk. Entries older than
+ * max-backoff + timeout buffer are considered stale (the process crashed
+ * during delivery) and are released so the scheduler can retry them.
+ */
+function recoverInFlight(): void {
+  if (!existsSync(IN_FLIGHT_FILE)) return;
+  const raw = safeReadJSON<unknown>(IN_FLIGHT_FILE, []);
+  if (!Array.isArray(raw)) return;
+  const now = Date.now();
+  let recovered = 0;
+  let stale = 0;
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.id !== "string" || typeof e.startedAt !== "number") continue;
+    if (now - e.startedAt > CRASH_RECOVERY_STALENESS_MS) {
+      // Too old — release for retry (message is still in schedule file)
+      stale++;
+    } else {
+      // Recent — keep as in-flight (delivery might still be happening in another process? unlikely but safe)
+      inFlightIds.set(e.id, e.startedAt);
+      recovered++;
+    }
+  }
+  if (stale > 0) log(`Crash recovery: released ${stale} stale in-flight message(s) for retry`);
+  if (recovered > 0) log(`Crash recovery: preserved ${recovered} recent in-flight message(s)`);
+  // Re-save cleaned state
+  saveInFlight();
+}
+
+// Run crash recovery on module load
+recoverInFlight();
 
 export function getDueMessages(): ScheduledMessage[] {
   const schedule = loadSchedule();
   const now = Date.now();
 
   // Sweep stale in-flight IDs so stuck messages can be retried
+  let swept = false;
   for (const [id, startedAt] of inFlightIds) {
     if (now - startedAt > IN_FLIGHT_TIMEOUT_MS) {
       log(`In-flight timeout: releasing stuck message ${id} (in-flight for ${Math.round((now - startedAt) / 1000)}s)`);
       inFlightIds.delete(id);
+      swept = true;
     }
   }
+  if (swept) saveInFlight();
 
   const due = schedule.filter(m => m.deliverAt <= now && !inFlightIds.has(m.id));
   if (due.length === 0) return [];
@@ -150,13 +206,11 @@ export function getDueMessages(): ScheduledMessage[] {
 
   // Mark as in-flight immediately so no other poll picks them up
   for (const m of allowed) inFlightIds.set(m.id, now);
+  saveInFlight();
 
   log(`${allowed.length} message(s) due for delivery`);
   return allowed;
 }
-
-const MAX_RETRIES = 5;
-const BACKOFF_DELAYS_MS = [2 * 60000, 10 * 60000, 30 * 60000, 60 * 60000, 120 * 60000]; // 2m, 10m, 30m, 1h, 2h
 
 /**
  * Remove successfully delivered messages from the schedule file.
@@ -169,6 +223,7 @@ export function markDelivered(ids: string[]): void {
   saveSchedule(remaining);
   // Clear in-flight tracking
   for (const id of ids) inFlightIds.delete(id);
+  saveInFlight();
   log(`Marked ${ids.length} message(s) as delivered, ${remaining.length} remaining`);
 }
 
@@ -201,6 +256,7 @@ export function markFailed(ids: string[]): string[] {
   saveSchedule(remaining);
   // Clear in-flight tracking for all failed messages (retried or dropped)
   for (const id of ids) inFlightIds.delete(id);
+  saveInFlight();
 
   if (droppedIds.length > 0) {
     log(`Dropped ${droppedIds.length} message(s) after exceeding ${MAX_RETRIES} retries`);
