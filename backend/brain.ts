@@ -1089,7 +1089,7 @@ async function thinkTick(
   const cfg = getBrainConfig();
 
   // Gather recent chat-sourced deliveries for dedup context
-  const DEDUP_WINDOW_MS = 30 * 60 * 1000;
+  const DEDUP_WINDOW_MS = 3 * 60 * 60 * 1000; // 3 hours — must cover scheduler max backoff (2h) + buffer
   const recentChatDeliveries = getRecentDeliveries(DEDUP_WINDOW_MS)
     .filter(d => d.source === "chat" || d.source === "email")
     .map(d => ({ jid: d.jid, messageSnippet: d.messageSnippet, timestamp: d.timestamp }));
@@ -1594,7 +1594,7 @@ async function deliverScheduledMessages(
   const failedIds: string[] = [];
 
   // Build set of JIDs that have recent chat-sourced deliveries (for dedup)
-  const DEDUP_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+  const DEDUP_WINDOW_MS = 3 * 60 * 60 * 1000; // 3 hours — must cover scheduler max backoff (2h) + buffer
   const recentDeliveries = getRecentDeliveries(DEDUP_WINDOW_MS);
   const recentChatJids = new Set(
     recentDeliveries.filter(d => d.source === "chat").map(d => d.jid),
