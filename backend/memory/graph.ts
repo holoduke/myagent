@@ -250,8 +250,9 @@ export class MemoryGraph {
     // Prevent self-loops
     if (edge.from === edge.to) return;
 
-    // Avoid duplicates
-    const exists = this.edges.some(e => e.from === edge.from && e.to === edge.to && e.type === edge.type);
+    // Avoid duplicates (O(1) lookup via edgesFromIdx instead of O(n) full scan)
+    const fromEdges = this.edgesFromIdx.get(edge.from) ?? [];
+    const exists = fromEdges.some(e => e.to === edge.to && e.type === edge.type);
     if (exists) return;
 
     // Clamp weight to [0, 1]
