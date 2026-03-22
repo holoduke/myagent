@@ -283,7 +283,10 @@ export class MemoryGraph {
   }
 
   updateEdge(from: string, to: string, updates: { weight?: number; type?: string }, filterType?: string): void {
-    const edge = this.edges.find(e => e.from === from && e.to === to && (!filterType || e.type === filterType));
+    // O(1) index lookup instead of O(n) full scan — only search edges from this node
+    const fromEdges = this.edgesFromIdx.get(from);
+    if (!fromEdges) return;
+    const edge = fromEdges.find(e => e.to === to && (!filterType || e.type === filterType));
     if (!edge) return;
     if (updates.weight !== undefined) edge.weight = Math.max(0, Math.min(1, updates.weight));
     if (updates.type !== undefined) edge.type = updates.type as MemoryEdge["type"];
@@ -753,8 +756,10 @@ export class MemoryGraph {
             break;
           }
           case "update_edge": {
-            const edge = this.edges.find(e => e.from === op.from && e.to === op.to && (!op.type || e.type === op.type));
-            if (!edge) { skipped++; break; }
+            // Use index to check existence instead of O(n) scan
+            const fromEdges = this.edgesFromIdx.get(op.from);
+            const hasEdge = fromEdges?.some(e => e.to === op.to && (!op.type || e.type === op.type));
+            if (!hasEdge) { skipped++; break; }
             this.updateEdge(op.from, op.to, { weight: op.weight, type: op.type }, op.type);
             applied++;
             break;
