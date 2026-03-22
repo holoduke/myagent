@@ -395,13 +395,17 @@ export class MemoryGraph {
     };
 
     // Collect all edges from merged nodes, rewire to merged node
+    // Use Set-based dedup (same pattern as validateGraph) for O(n) instead of O(n²)
+    const seenEdges = new Set<string>();
     const rewiredEdges: MemoryEdge[] = [];
     for (const id of survivors) {
       for (const edge of this.edgesFor(id)) {
         const from = survivors.includes(edge.from) ? mergedId : edge.from;
         const to = survivors.includes(edge.to) ? mergedId : edge.to;
         if (from === to) continue; // Self-loop
-        if (!rewiredEdges.some(e => e.from === from && e.to === to && e.type === edge.type)) {
+        const key = `${from}|${to}|${edge.type}`;
+        if (!seenEdges.has(key)) {
+          seenEdges.add(key);
           rewiredEdges.push({ ...edge, from, to });
         }
       }
