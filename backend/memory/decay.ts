@@ -48,13 +48,14 @@ export function classifyRetentionTier(node: MemoryNode, graph: MemoryGraph): Ret
   }
 
   // Connection-based promotion: if a node has social edges to core/important nodes,
-  // promote it one tier up from standard
+  // promote it one tier up from standard — but only if the neighbor is strong enough
   const edges = graph.edgesFor(node.id);
   for (const edge of edges) {
     if (edge.type !== "social") continue;
     const otherId = edge.from === node.id ? edge.to : edge.from;
     const other = graph.getNode(otherId);
     if (!other) continue;
+    if (other.strength < 0.3) continue; // skip weak/dying neighbors
     const otherTags = new Set(other.tags.map(t => t.toLowerCase().replace(/^#/, "")));
     const coreSignals = TIER_TAG_SIGNALS.core;
     for (const signal of coreSignals) {
@@ -334,7 +335,8 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
 
   // Scale restore limit with archive size: larger archives get more restores per cycle
   const cfg = getBrainConfig();
-  const scaledRestore = Math.floor(graph.archiveSize / cfg.archiveRecallDivisor);
+  const divisor = cfg.archiveRecallDivisor > 0 ? cfg.archiveRecallDivisor : 1;
+  const scaledRestore = Math.floor(graph.archiveSize / divisor);
   const maxRestore = Math.min(cfg.archiveRecallMax, Math.max(cfg.archiveRecallMin, scaledRestore));
 
   let restored = 0;
