@@ -85,6 +85,23 @@ function seedDefaults(ownerJid: string): RecurringTask[] {
   return defaults;
 }
 
+// ── Validation ──
+
+function validatePattern(pattern: RecurringTask["pattern"]): void {
+  for (const h of pattern.hours) {
+    if (h < 0 || h > 23 || !Number.isInteger(h)) {
+      throw new Error(`Invalid hour value ${h}: must be an integer 0-23`);
+    }
+  }
+  if (pattern.daysOfWeek) {
+    for (const d of pattern.daysOfWeek) {
+      if (d < 0 || d > 6 || !Number.isInteger(d)) {
+        throw new Error(`Invalid daysOfWeek value ${d}: must be an integer 0-6`);
+      }
+    }
+  }
+}
+
 // ── Scheduling Logic ──
 
 const MIN_RUN_INTERVAL = 50 * 60 * 1000; // 50 minutes minimum between runs
@@ -129,6 +146,8 @@ export function markExecuted(taskId: string): void {
     task.lastRunAt = Date.now();
     saveTasks(tasks);
     log(`Marked recurring task executed: ${task.label} (${taskId})`);
+  } else {
+    log(`WARN markExecuted called with unknown taskId: ${taskId}`);
   }
 }
 
@@ -139,6 +158,7 @@ export function getAllRecurringTasks(): RecurringTask[] {
 export function addRecurringTask(
   task: Omit<RecurringTask, "id" | "createdAt" | "lastRunAt">,
 ): RecurringTask {
+  validatePattern(task.pattern);
   const tasks = loadTasks();
   const newTask: RecurringTask = {
     ...task,
@@ -161,7 +181,10 @@ export function updateRecurringTask(
   if (!task) return null;
 
   if (updates.label !== undefined) task.label = updates.label;
-  if (updates.pattern !== undefined) task.pattern = updates.pattern;
+  if (updates.pattern !== undefined) {
+    validatePattern(updates.pattern);
+    task.pattern = updates.pattern;
+  }
   if (updates.action !== undefined) task.action = updates.action;
   if (updates.enabled !== undefined) task.enabled = updates.enabled;
 
