@@ -152,7 +152,7 @@ export type MemoryOperation =
   | { op: "update_edge"; from: string; to: string; weight?: number; type?: EdgeType }
   | { op: "merge_nodes"; ids: string[]; into: { content: string; tags: string[] } }
   | { op: "remove_node"; id: string }
-  | { op: "remove_edge"; from: string; to: string };
+  | { op: "remove_edge"; from: string; to: string; type?: EdgeType };
 
 // ── Goal Operations ──
 

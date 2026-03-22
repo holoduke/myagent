@@ -264,24 +264,25 @@ export class MemoryGraph {
     this.edgesToIdx.get(edge.to)!.push(edge);
   }
 
-  removeEdge(from: string, to: string): void {
-    this.edges = this.edges.filter(e => !(e.from === from && e.to === to));
+  removeEdge(from: string, to: string, type?: string): void {
+    const match = (e: MemoryEdge) => e.from === from && e.to === to && (!type || e.type === type);
+    this.edges = this.edges.filter(e => !match(e));
     const fromArr = this.edgesFromIdx.get(from);
     if (fromArr) {
-      const filtered = fromArr.filter(e => e.to !== to);
+      const filtered = fromArr.filter(e => !(e.to === to && (!type || e.type === type)));
       if (filtered.length === 0) this.edgesFromIdx.delete(from);
       else this.edgesFromIdx.set(from, filtered);
     }
     const toArr = this.edgesToIdx.get(to);
     if (toArr) {
-      const filtered = toArr.filter(e => e.from !== from);
+      const filtered = toArr.filter(e => !(e.from === from && (!type || e.type === type)));
       if (filtered.length === 0) this.edgesToIdx.delete(to);
       else this.edgesToIdx.set(to, filtered);
     }
   }
 
-  updateEdge(from: string, to: string, updates: { weight?: number; type?: string }): void {
-    const edge = this.edges.find(e => e.from === from && e.to === to);
+  updateEdge(from: string, to: string, updates: { weight?: number; type?: string }, filterType?: string): void {
+    const edge = this.edges.find(e => e.from === from && e.to === to && (!filterType || e.type === filterType));
     if (!edge) return;
     if (updates.weight !== undefined) edge.weight = Math.max(0, Math.min(1, updates.weight));
     if (updates.type !== undefined) edge.type = updates.type as MemoryEdge["type"];
@@ -751,9 +752,9 @@ export class MemoryGraph {
             break;
           }
           case "update_edge": {
-            const edge = this.edges.find(e => e.from === op.from && e.to === op.to);
+            const edge = this.edges.find(e => e.from === op.from && e.to === op.to && (!op.type || e.type === op.type));
             if (!edge) { skipped++; break; }
-            this.updateEdge(op.from, op.to, { weight: op.weight, type: op.type });
+            this.updateEdge(op.from, op.to, { weight: op.weight, type: op.type }, op.type);
             applied++;
             break;
           }
@@ -769,7 +770,7 @@ export class MemoryGraph {
             break;
           }
           case "remove_edge": {
-            this.removeEdge(op.from, op.to);
+            this.removeEdge(op.from, op.to, op.type);
             applied++;
             break;
           }
