@@ -1,3 +1,5 @@
+import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { dirname } from "path";
 import type { MemoryGraph } from "./graph.js";
 import type { MemoryNode, RetentionTier, WorkingMemory } from "./types.js";
 import { extractKeywordsFromText, spreadingActivation } from "./activation.js";
@@ -48,13 +50,14 @@ export function classifyRetentionTier(node: MemoryNode, graph: MemoryGraph): Ret
   }
 
   // Connection-based promotion: if a node has social edges to core/important nodes,
-  // promote it one tier up from standard
+  // promote it one tier up from standard — but only if the neighbor is strong enough
   const edges = graph.edgesFor(node.id);
   for (const edge of edges) {
     if (edge.type !== "social") continue;
     const otherId = edge.from === node.id ? edge.to : edge.from;
     const other = graph.getNode(otherId);
     if (!other) continue;
+    if (other.strength < 0.3) continue; // skip weak/dying neighbors
     const otherTags = new Set(other.tags.map(t => t.toLowerCase().replace(/^#/, "")));
     const coreSignals = TIER_TAG_SIGNALS.core;
     for (const signal of coreSignals) {
@@ -334,7 +337,8 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
 
   // Scale restore limit with archive size: larger archives get more restores per cycle
   const cfg = getBrainConfig();
-  const scaledRestore = Math.floor(graph.archiveSize / cfg.archiveRecallDivisor);
+  const divisor = cfg.archiveRecallDivisor > 0 ? cfg.archiveRecallDivisor : 1;
+  const scaledRestore = Math.floor(graph.archiveSize / divisor);
   const maxRestore = Math.min(cfg.archiveRecallMax, Math.max(cfg.archiveRecallMin, scaledRestore));
 
   let restored = 0;
@@ -349,6 +353,47 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
   }
 
   return restored;
+}
+
+// ── Consolidation Health Log ──
+
+const CONSOLIDATION_LOG_PATH = "/data/brain/consolidation-log.jsonl";
+const CONSOLIDATION_LOG_MAX_ENTRIES = 500;
+
+interface ConsolidationLogEntry {
+  timestamp: string;
+  nodeCount: number;
+  edgeCount: number;
+  archiveSize: number;
+  tierDistribution: Record<RetentionTier, number>;
+  nodesDecayed: number;
+  nodesPruned: number;
+  edgesDecayed: number;
+  edgesPruned: number;
+  orphansPruned: number;
+  emergencyPruned: number;
+  archiveRestored: number;
+}
+
+function appendConsolidationLog(entry: ConsolidationLogEntry): void {
+  try {
+    const dir = dirname(CONSOLIDATION_LOG_PATH);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+    appendFileSync(CONSOLIDATION_LOG_PATH, JSON.stringify(entry) + "\n");
+
+    // Rolling cap: trim to last CONSOLIDATION_LOG_MAX_ENTRIES lines
+    if (existsSync(CONSOLIDATION_LOG_PATH)) {
+      const content = readFileSync(CONSOLIDATION_LOG_PATH, "utf-8");
+      const lines = content.trimEnd().split("\n");
+      if (lines.length > CONSOLIDATION_LOG_MAX_ENTRIES) {
+        const trimmed = lines.slice(lines.length - CONSOLIDATION_LOG_MAX_ENTRIES);
+        writeFileSync(CONSOLIDATION_LOG_PATH, trimmed.join("\n") + "\n");
+      }
+    }
+  } catch (err) {
+    log(`Failed to write consolidation log: ${err}`);
+  }
 }
 
 /**
@@ -372,7 +417,13 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
   // Periodic archive rescan — check if any archived memories match current context
   const archiveRestored = wm ? rescanArchive(graph, wm) : 0;
 
-  return {
+  // Build tier distribution from cache
+  const tierDistribution: Record<RetentionTier, number> = { core: 0, important: 0, work: 0, standard: 0, ephemeral: 0 };
+  for (const tier of tierCache.values()) {
+    tierDistribution[tier]++;
+  }
+
+  const result = {
     nodesDecayed: nodeResult.decayed,
     nodesPruned: nodeResult.pruned,
     edgesDecayed: edgeResult.decayed,
@@ -381,4 +432,16 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
     emergencyPruned,
     archiveRestored,
   };
+
+  // Append health metrics to consolidation log
+  appendConsolidationLog({
+    timestamp: new Date().toISOString(),
+    nodeCount: graph.nodeCount,
+    edgeCount: graph.edgeCount,
+    archiveSize: graph.archiveSize,
+    tierDistribution,
+    ...result,
+  });
+
+  return result;
 }
