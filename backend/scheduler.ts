@@ -43,21 +43,21 @@ function loadSchedule(): ScheduledMessage[] {
   if (scheduleCache) return scheduleCache;
   const raw = safeReadJSON<unknown>(SCHEDULE_FILE, []);
   if (!Array.isArray(raw)) {
-        log("Schedule file is not a JSON array, starting fresh");
-        scheduleCache = [];
-        return scheduleCache;
-      }
-      const valid: ScheduledMessage[] = [];
-      for (const entry of raw) {
-        if (isValidScheduledMessage(entry)) {
-          valid.push(entry);
-        } else {
-          log(`Skipping invalid schedule entry: ${JSON.stringify(entry).slice(0, 200)}`);
-        }
-      }
-      if (valid.length < raw.length) {
-        log(`Filtered out ${raw.length - valid.length} invalid entry/entries from schedule (${valid.length} valid remaining)`);
-      }
+    log("Schedule file is not a JSON array, starting fresh");
+    scheduleCache = [];
+    return scheduleCache;
+  }
+  const valid: ScheduledMessage[] = [];
+  for (const entry of raw) {
+    if (isValidScheduledMessage(entry)) {
+      valid.push(entry);
+    } else {
+      log(`Skipping invalid schedule entry: ${JSON.stringify(entry).slice(0, 200)}`);
+    }
+  }
+  if (valid.length < raw.length) {
+    log(`Filtered out ${raw.length - valid.length} invalid entry/entries from schedule (${valid.length} valid remaining)`);
+  }
   scheduleCache = valid;
   return scheduleCache;
 }
