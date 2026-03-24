@@ -8,6 +8,7 @@ import { getBrainConfig, getCharacterPreset } from "./brain-config.js";
 import type { InitiativeSignal } from "./initiative.js";
 import { sanitizeForPrompt, detectInjection } from "./trust.js";
 import type { TrustLevel } from "./trust.js";
+import { extractCommitments, extractAndClassifyCommitments } from "./commitments.js";
 
 function resolveCharacter(): CharacterOverride | undefined {
   const cfg = getBrainConfig();
@@ -634,6 +635,53 @@ CONSOLIDATION GUIDELINES:
 Respond with ONLY the JSON object.`;
 }
 
+// ── Commitment Detection Helper ──
+
+function buildCommitmentsBlock(
+  recentMoltbookActivity?: string[],
+  recentOutgoingActivity?: { source: string; audience: string; text: string }[],
+): string {
+  const sections: string[] = [];
+
+  // Moltbook-specific section (backwards compat)
+  if (recentMoltbookActivity && recentMoltbookActivity.length > 0) {
+    const moltbookCommitments = recentMoltbookActivity.flatMap(text => extractAndClassifyCommitments(text));
+    const detectedSection = moltbookCommitments.length > 0
+      ? `\nDetected commitment language in Moltbook posts:\n${moltbookCommitments.map(c => `- [${c.weight}] "${c.commitment}" (pattern: ${c.pattern})`).join("\n")}\n`
+      : "";
+    sections.push(`Moltbook posts/comments:\n${detectedSection}${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}`);
+  }
+
+  // General outgoing activity (WhatsApp, email, brain messages)
+  if (recentOutgoingActivity && recentOutgoingActivity.length > 0) {
+    const otherCommitments = recentOutgoingActivity.flatMap(a => {
+      const classified = extractAndClassifyCommitments(a.text);
+      return classified.map(c => ({ ...c, source: a.source, audience: a.audience }));
+    });
+    if (otherCommitments.length > 0) {
+      sections.push(`Other outgoing commitments detected:\n${otherCommitments.map(c => `- [${c.weight}] "${c.commitment}" (${c.source} → ${c.audience})`).join("\n")}`);
+    }
+  }
+
+  if (sections.length === 0) return "";
+
+  return `
+═══ COMMITMENT REVIEW ═══
+
+Review ALL recent commitments you've made across all channels.
+The accountability system auto-creates goals for notable+ commitments, but you should verify:
+
+${sections.join("\n\n")}
+
+ACTION REQUIRED:
+1. Check each commitment — are any already fulfilled but not marked complete?
+2. Are any overdue? Should any be worked on now?
+3. For any non-trivial commitment not already tracked, create a goal via goalOps.
+4. Trivial commitments (quick lookups/checks) are filtered out automatically.
+5. Update progress on existing commitment-sourced goals.
+`;
+}
+
 // ── Reflect Prompt ──
 
 export interface ReflectContext {
@@ -658,6 +706,10 @@ export interface ReflectContext {
     pendingInQueue: number;
     autoApprove: boolean;
   };
+  /** Recent outgoing Moltbook posts/comments for commitment detection */
+  recentMoltbookActivity?: string[];
+  /** Recent outgoing messages across all channels for commitment detection */
+  recentOutgoingActivity?: { source: string; audience: string; text: string }[];
 }
 
 export function buildReflectPrompt(ctx: ReflectContext): string {
@@ -712,7 +764,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${goalsBlock}${initiativeBlock}
+${goalsBlock}${initiativeBlock}${buildCommitmentsBlock(ctx.recentMoltbookActivity, ctx.recentOutgoingActivity)}
 ═══ GRAPH STATS ═══
 Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
 By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(", ")}
@@ -729,6 +781,7 @@ This is deep reflection. Think about:
 - Your own evolution: how have your thoughts changed? What have you learned? What are your blind spots?
 - The future: what do you think will happen? What should ${ctx.ownerName} be aware of?
 - Goals: review active goals. Are any overdue? Should you create new ones? Update progress?
+- Public commitments: did you promise anything on Moltbook or other public platforms? Track it as a goal if not already tracked.
 - Plans: anything you want to track, watch for, or plan to say in the future?
 - Self-improvement: USE YOUR TOOLS to read source files (both backend backend/ and frontend frontend/) and identify concrete improvements. Propose them via the improvementProposals field.
 

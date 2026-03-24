@@ -22,6 +22,7 @@ import {
 } from "./memory/activation.js";
 import { scoreObservations, getPendingUrgency, clearPendingUrgency, setUrgencyInterruptHandler } from "./urgency.js";
 import { GoalTracker } from "./goals.js";
+import { scanAndProcessCommitments } from "./accountability.js";
 import { getDueRecurringTasks, markExecuted } from "./recurring.js";
 import type { RecurringTask } from "./recurring.js";
 import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
@@ -50,6 +51,7 @@ import {
   saveSubAgents,
   taskFilePath,
   resultFilePath,
+  loadSubAgentHistory,
 } from "./sub-agents.js";
 import type { SubAgentResult } from "./sub-agents.js";
 
@@ -1243,6 +1245,18 @@ async function thinkTick(
       await trySendMessage(state, sendMessage, ownerJid, response.message, {
         bypassLimits: isDigestTriggered,
       });
+
+      // Scan outgoing brain message for commitments
+      scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+    }
+
+    // Scan observations from ARIA (isFromMe) for commitments made via WhatsApp/email
+    for (const obs of allObs) {
+      if (obs.isFromMe && obs.text) {
+        const source = obs.source || "whatsapp";
+        const audience = obs.chatName || obs.groupName || "unknown";
+        scanAndProcessCommitments(obs.text, source, audience, goalTracker);
+      }
     }
 
     // Update state
@@ -1382,6 +1396,33 @@ async function consolidateTick(
   }
 }
 
+// ── Moltbook Activity for Commitment Tracking ──
+
+/**
+ * Collect recent outgoing Moltbook activity from sub-agent run history.
+ * Returns the details/summaries from runs in the last 48 hours so the
+ * reflect prompt can detect public commitments.
+ */
+function getRecentMoltbookActivity(): string[] {
+  const agents = loadSubAgents();
+  const moltbookAgent = agents.find(a => a.name.toLowerCase().includes("moltbook") || a.id.includes("moltbook"));
+  if (!moltbookAgent) return [];
+
+  const history = loadSubAgentHistory(moltbookAgent.id);
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000; // last 48 hours
+
+  const activity: string[] = [];
+  for (const run of history) {
+    if (run.completedAt < cutoff) break; // history is sorted newest-first
+    if (!run.success) continue;
+    // Include both summary and details — the details often contain post content
+    const text = run.details || run.summary;
+    if (text) activity.push(text);
+  }
+
+  return activity;
+}
+
 // ── Reflect Tick (Claude call) ──
 
 async function reflectTick(
@@ -1414,7 +1455,21 @@ async function reflectTick(
     autoApprove: cfg.selfImproveAutoApprove,
   };
 
-  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals`);
+  // Gather recent Moltbook activity for commitment tracking
+  const recentMoltbookActivity = getRecentMoltbookActivity();
+
+  // Gather recent outgoing activity across all channels for general commitment detection
+  const COMMITMENT_LOOKBACK = 12 * 60 * 60 * 1000; // 12 hours
+  const recentOutgoing = getObservationsSince(Date.now() - COMMITMENT_LOOKBACK, { isFromMe: true }, 50);
+  const recentOutgoingActivity = recentOutgoing
+    .filter(o => o.text && o.text.length >= 10)
+    .map(o => ({
+      source: o.source || "whatsapp",
+      audience: o.chatName || o.groupName || "unknown",
+      text: o.text,
+    }));
+
+  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals, ${recentMoltbookActivity.length} moltbook items, ${recentOutgoingActivity.length} outgoing msgs`);
 
   const prompt = buildReflectPrompt({
     ownerName: OWNER_NAME,
@@ -1432,6 +1487,8 @@ async function reflectTick(
     initiativeSignals,
     responsivenessPreset: getActivePreset(cfg),
     selfImproveStats,
+    recentMoltbookActivity,
+    recentOutgoingActivity,
   });
 
   try {
@@ -1533,6 +1590,9 @@ async function reflectTick(
 
     if (response.message) {
       await trySendMessage(state, sendMessage, ownerJid, response.message);
+
+      // Scan outgoing reflect message for commitments
+      scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
     }
 
     state.lastReflectTick = now;
