@@ -176,43 +176,21 @@ export function handleApiRoutes(
   }
 
   // ── Directives ──
-  if (pathname === "/api/directives" && req.method === "GET" && isAuthenticated(req)) {
-    const contactJid = url.searchParams.get("contactJid");
-    respondJson(res, 200, contactJid ? getDirectivesForContact(contactJid) : getDirectives());
-    return true;
-  }
-  if (pathname === "/api/directives" && req.method === "POST" && isAuthenticated(req)) {
-    try {
-      const body = await readBody(req);
-      const data = JSON.parse(body);
-      const result = addDirective(
-        data.contactJid,
-        data.contactName,
-        data.actionType as DirectiveActionType,
-        data.policy as DirectivePolicy,
-        data.note,
-      );
-      respondJson(res, 201, result);
-    } catch (err) {
-      respondJson(res, 400, { error: String(err) });
+  if (pathname === "/api/directives" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      const contactJid = url.searchParams.get("contactJid");
+      respondJson(res, 200, contactJid ? getDirectivesForContact(contactJid) : getDirectives());
+      return true;
     }
-    return true;
+    if (req.method === "POST") {
+      handleDirectiveAdd(req, res);
+      return true;
+    }
   }
   if (req.method === "PATCH" && isAuthenticated(req)) {
     const directiveMatch = pathname.match(/^\/api\/directives\/([^/]+)$/);
     if (directiveMatch) {
-      try {
-        const body = await readBody(req);
-        const updates = JSON.parse(body);
-        const result = updateDirective(directiveMatch[1], updates);
-        if (!result) {
-          respondJson(res, 404, { error: "Directive not found" });
-        } else {
-          respondJson(res, 200, result);
-        }
-      } catch (err) {
-        respondJson(res, 400, { error: String(err) });
-      }
+      handleDirectiveUpdate(req, res, directiveMatch[1]);
       return true;
     }
   }
@@ -238,26 +216,12 @@ export function handleApiRoutes(
   if (req.method === "POST" && isAuthenticated(req)) {
     const crApproveMatch = pathname.match(/^\/api\/contact-requests\/([^/]+)\/approve$/);
     if (crApproveMatch) {
-      try {
-        const body = await readBody(req);
-        const { note } = body ? JSON.parse(body) : {};
-        const result = approveContactRequest(crApproveMatch[1], note);
-        respondJson(res, 200, result);
-      } catch (err) {
-        respondJson(res, 400, { error: String(err) });
-      }
+      handleContactRequestApprove(req, res, crApproveMatch[1]);
       return true;
     }
     const crRejectMatch = pathname.match(/^\/api\/contact-requests\/([^/]+)\/reject$/);
     if (crRejectMatch) {
-      try {
-        const body = await readBody(req);
-        const { note } = body ? JSON.parse(body) : {};
-        const result = rejectContactRequest(crRejectMatch[1], note);
-        respondJson(res, 200, result);
-      } catch (err) {
-        respondJson(res, 400, { error: String(err) });
-      }
+      handleContactRequestReject(req, res, crRejectMatch[1]);
       return true;
     }
   }
@@ -1563,3 +1527,53 @@ const handleTwilioCall = apiHandler(async (_req, _res, data: Record<string, unkn
     return await makeSimpleCall(to, message, voice, language);
   }
 });
+
+// ── Directive handlers ──
+
+const handleDirectiveAdd = apiHandler(async (_req, _res, body: {
+  contactJid?: string;
+  contactName?: string;
+  actionType?: string;
+  policy?: string;
+  note?: string;
+}) => {
+  if (!body.contactJid || !body.contactName || !body.actionType || !body.policy) {
+    throw new ApiError(400, "contactJid, contactName, actionType, and policy are required");
+  }
+  return addDirective(
+    body.contactJid,
+    body.contactName,
+    body.actionType as DirectiveActionType,
+    body.policy as DirectivePolicy,
+    body.note,
+  );
+});
+
+function handleDirectiveUpdate(req: IncomingMessage, res: ServerResponse, id: string) {
+  const handler = apiHandler(async (_req, _res, body: {
+    policy?: DirectivePolicy;
+    enabled?: boolean;
+    note?: string;
+  }) => {
+    const result = updateDirective(id, body);
+    if (!result) throw new ApiError(404, "Directive not found");
+    return result;
+  });
+  handler(req, res);
+}
+
+// ── Contact request handlers ──
+
+function handleContactRequestApprove(req: IncomingMessage, res: ServerResponse, id: string) {
+  const handler = apiHandler(async (_req, _res, body: { note?: string }) => {
+    return approveContactRequest(id, body?.note);
+  });
+  handler(req, res);
+}
+
+function handleContactRequestReject(req: IncomingMessage, res: ServerResponse, id: string) {
+  const handler = apiHandler(async (_req, _res, body: { note?: string }) => {
+    return rejectContactRequest(id, body?.note);
+  });
+  handler(req, res);
+}

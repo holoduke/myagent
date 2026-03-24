@@ -10,6 +10,7 @@ import { detectActionableContent } from "./actionable.js";
 import type { ActionableSignal } from "./actionable.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { processObservation as trackActionable } from "./actionable-tracker.js";
+import { routeObservationToDirectives } from "./directive-router.js";
 
 const log = createLogger("observer");
 
@@ -195,6 +196,8 @@ export function recordObservation(obs: Observation): void {
       obs.actionableSignals = signals;
       log(`Detected ${signals.length} actionable signal(s) from whitelisted ${obs.sender}`);
       trackActionable(obs);
+      // Route through directive system for per-contact policy enforcement
+      routeObservationToDirectives(obs);
     }
   }
 
