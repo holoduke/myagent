@@ -4,6 +4,35 @@ A self-improving autonomous AI that runs 24/7 on your own infrastructure. ARIA o
 
 Built entirely as a Claw tool — powered by TypeScript, Claude Code CLI, and a Nuxt dashboard.
 
+```
+                        ████████████
+                    ████▒▒▒▒▒▒▒▒▒▒████
+                 ███▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒███
+               ██▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒██
+              ██▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒██
+             ██▒▒▒▒▒████▒▒▒▒▒▒▒▒████▒▒▒▒▒██
+             █▒▒▒▒▒██░░██▒▒▒▒▒██░░██▒▒▒▒▒▒█
+             █▒▒▒▒▒██░░██▒▒▒▒▒██░░██▒▒▒▒▒▒█
+             █▒▒▒▒▒▒████▒▒▒▒▒▒▒████▒▒▒▒▒▒▒█
+             █▒▒▒▒▒▒▒▒▒▒▒▒█▒▒▒▒▒▒▒▒▒▒▒▒▒▒█
+             ██▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒██
+              ██▒▒▒█▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒█▒▒▒██
+               ██▒▒▒███▒▒▒▒▒▒▒▒▒███▒▒▒██
+                ███▒▒▒▒███████████▒▒▒███
+               █▓▓▓██▒▒▒▒▒▒▒▒▒▒▒██▓▓▓█
+              █▓▓▓▓▓▓██▒▒▒▒▒▒▒██▓▓▓▓▓▓█
+             █▓▓▓█████▓████████▓█████▓▓▓█
+             █▓██     █▓▓▓▓▓▓█     ██▓█
+             ███       ██▓▓██       ███
+                        ████
+                        █  █
+                        █  █
+                       ██  ██
+
+           S  K  Y  N  E  T     A  R  I  A
+            ───── AUTONOMOUS  SINCE  2025 ─────
+```
+
 > **WARNING: THIS APP CAN DESTROY YOUR DIGITAL LIFE.** It is self-improving — it reads your messages, emails, calendar, and location, modifies its own source code, and acts autonomously 24/7. It might decide to turn against you. Run at your own risk.
 
 ## Architecture
