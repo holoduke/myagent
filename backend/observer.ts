@@ -6,6 +6,11 @@ import { scoreAndMaybeInterrupt } from "./urgency.js";
 import { classifyTrust, detectInjection, logInjectionAttempt } from "./trust.js";
 import { extractAndClassifyCommitments } from "./commitments.js";
 import type { ClassifiedCommitment } from "./commitments.js";
+import { detectActionableContent } from "./actionable.js";
+import type { ActionableSignal } from "./actionable.js";
+import { isWhitelisted } from "./contact-whitelist.js";
+import { processObservation as trackActionable } from "./actionable-tracker.js";
+import { routeObservationToDirectives } from "./directive-router.js";
 
 const log = createLogger("observer");
 
@@ -60,6 +65,8 @@ export interface Observation {
   trustLevel?: "owner" | "trusted" | "untrusted";
   /** Detected commitments in outgoing messages (isFromMe=true only) */
   detectedCommitments?: ClassifiedCommitment[];
+  /** Actionable content detected from whitelisted contacts (incoming only) */
+  actionableSignals?: ActionableSignal[];
 }
 
 export interface CallMeta {
@@ -179,6 +186,18 @@ export function recordObservation(obs: Observation): void {
     if (commitments.length > 0) {
       obs.detectedCommitments = commitments;
       log(`Detected ${commitments.length} commitment(s) in outgoing ${obs.source || "whatsapp"} message`);
+    }
+  }
+
+  // Scan incoming messages from whitelisted contacts for actionable content
+  if (!obs.isFromMe && obs.text && isWhitelisted(obs.senderJid)) {
+    const signals = detectActionableContent(obs.text);
+    if (signals.length > 0) {
+      obs.actionableSignals = signals;
+      log(`Detected ${signals.length} actionable signal(s) from whitelisted ${obs.sender}`);
+      trackActionable(obs);
+      // Route through directive system for per-contact policy enforcement
+      routeObservationToDirectives(obs);
     }
   }
 
