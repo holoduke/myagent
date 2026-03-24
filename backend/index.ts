@@ -18,6 +18,8 @@ import { handleGmailRoutes } from "./integrations/gmail-routes.js";
 import { startCalendarPolling, stopCalendarPolling } from "./integrations/calendar.js";
 import { startHAPolling, stopHAPolling } from "./integrations/homeassistant.js";
 import { startRSSPolling, stopRSSPolling } from "./integrations/rss.js";
+import { startSlackPolling, stopSlackPolling } from "./integrations/slack.js";
+import { handleSlackRoutes } from "./integrations/slack-routes.js";
 import { handleOwnTracksWebhook } from "./integrations/owntracks.js";
 import { initBrowser, closeBrowser } from "./integrations/browser.js";
 import { handleTwiml, handleTurn, handleStatus as handleTwilioStatus } from "./integrations/twilio.js";
@@ -49,6 +51,7 @@ async function main() {
   startCalendarPolling();
   startHAPolling();
   startRSSPolling();
+  startSlackPolling();
 
   // Initialize browser automation (lazy — launches on first task)
   initBrowser();
@@ -66,6 +69,9 @@ async function main() {
 
     // Gmail OAuth routes
     if (handleGmailRoutes(req, res)) return;
+
+    // Slack OAuth routes
+    if (handleSlackRoutes(req, res)) return;
 
     // Twilio webhooks (public endpoints — Twilio needs access without auth)
     if (req.url?.startsWith("/twilio/twiml") && req.method === "POST") {
@@ -349,6 +355,7 @@ function shutdown() {
   log.info("Shutting down...");
   stopBrainLoop();
   stopGmailPolling();
+  stopSlackPolling();
   stopCalendarPolling();
   stopHAPolling();
   stopRSSPolling();
@@ -364,6 +371,7 @@ process.on("uncaughtException", (err) => {
   // Continuing after uncaughtException leaves the process in undefined state.
   stopBrainLoop();
   stopGmailPolling();
+  stopSlackPolling();
   stopCalendarPolling();
   stopHAPolling();
   stopRSSPolling();

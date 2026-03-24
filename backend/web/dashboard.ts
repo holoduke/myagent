@@ -419,6 +419,12 @@ export function getDashboardHTML(): string {
       html += '<span style="font-size:13px;color:var(--text)">Gmail</span>';
       html += '<span style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-left:auto">' + (gmail.authenticated || 0) + '/' + (gmail.total || 0) + ' active</span>';
       html += '</div>';
+      const slack = d.slack || {};
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-top:8px">';
+      html += '<span class="status-dot ' + ((slack.authenticated || 0) > 0 ? 'ok' : 'warn') + '"></span>';
+      html += '<span style="font-size:13px;color:var(--text)">Slack</span>';
+      html += '<span style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-left:auto">' + (slack.authenticated || 0) + '/' + (slack.total || 0) + ' active</span>';
+      html += '</div>';
       html += '</div>';
 
       // Claude usage card
@@ -609,6 +615,29 @@ export function getDashboardHTML(): string {
         }
       } else {
         html += '<div style="color:var(--text-ghost);font-size:13px;padding:8px 0">No Gmail accounts configured</div>';
+      }
+      html += '</div>';
+
+      // Slack
+      const slackStatus = dash.slack || {};
+      const slackWorkspaces = dash.slackWorkspaces || [];
+      html += '<div class="intg-card"><div class="intg-header">';
+      html += '<svg viewBox="0 0 24 24" fill="none" stroke="#E01E5A" stroke-width="2" style="width:20px;height:20px"><path d="M14.5 2c-1.38 0-2.5 1.12-2.5 2.5V9h4.5C17.88 9 19 7.88 19 6.5S17.88 4 16.5 4H14.5V2z"/><path d="M2 14.5C2 15.88 3.12 17 4.5 17H9v-4.5C9 11.12 7.88 10 6.5 10S4 11.12 4 12.5H2z"/><path d="M9.5 22c1.38 0 2.5-1.12 2.5-2.5V15H7.5C6.12 15 5 16.12 5 17.5S6.12 20 7.5 20h2v2z"/><path d="M22 9.5c0-1.38-1.12-2.5-2.5-2.5H15v4.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V9.5z"/></svg>';
+      html += '<h3>Slack</h3>';
+      html += '<span class="intg-status ' + ((slackStatus.authenticated || 0) > 0 ? 'online' : 'pending') + '">' + (slackStatus.authenticated || 0) + '/' + (slackStatus.total || 0) + ' Active</span>';
+      html += '</div>';
+      if (slackWorkspaces.length) {
+        for (const ws of slackWorkspaces) {
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.03)">';
+          html += '<span class="status-dot ' + (ws.authenticated ? 'ok' : 'warn') + '" style="flex-shrink:0"></span>';
+          html += '<span style="font-size:13px;color:var(--text)">' + esc(ws.teamName) + '</span>';
+          if (ws.channelCount) html += '<span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">' + ws.channelCount + ' ch</span>';
+          if (!ws.authenticated) html += '<a href="/slack/auth/' + esc(ws.id) + '" class="btn" style="margin-left:auto;padding:4px 10px;font-size:11px">Authorize</a>';
+          else html += '<span style="font-family:var(--mono);font-size:10px;color:var(--text-muted);margin-left:auto">Last poll: ' + (ws.lastPoll ? timeAgo(ws.lastPoll) : 'never') + '</span>';
+          html += '</div>';
+        }
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:8px 0">No Slack workspaces configured</div>';
       }
       html += '</div>';
 

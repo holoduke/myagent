@@ -9,6 +9,7 @@ import { syncContacts, findContacts, getAllContacts, getWhatsAppStatus, sendImag
 import { getScheduledMessages } from "../scheduler.js";
 import { getWhitelist, addToWhitelist, removeFromWhitelist } from "../contact-whitelist.js";
 import { getAccountStatus, addAccount, removeAccount } from "../integrations/gmail.js";
+import { getWorkspaceStatus, addWorkspace as addSlackWorkspace, removeWorkspace as removeSlackWorkspace } from "../integrations/slack.js";
 import { getLatestQr } from "../integrations/whatsapp.js";
 import { getSSHStatus, getPublicKey, addTarget, removeTarget, testConnection } from "../integrations/ssh.js";
 import { getCalendarStatus, createEvent } from "../integrations/calendar.js";
@@ -179,6 +180,18 @@ export function handleApiRoutes(
   if (pathname === "/api/ssh/test" && req.method === "POST" && isAuthenticated(req)) {
     handleSSHTest(req, res);
     return true;
+  }
+
+  // ── Slack workspace CRUD ──
+  if (pathname === "/api/slack/workspaces" && isAuthenticated(req)) {
+    if (req.method === "POST") {
+      handleSlackAddWorkspace(req, res);
+      return true;
+    }
+    if (req.method === "DELETE") {
+      handleSlackRemoveWorkspace(req, res);
+      return true;
+    }
   }
 
   // ── Gmail account CRUD ──
@@ -680,6 +693,14 @@ function getDashboardData(queue: MessageQueue) {
       authenticated: gmailAccounts.filter(a => a.authenticated).length,
     },
     gmailAccounts,
+    slack: (() => {
+      const slackWorkspaces = getWorkspaceStatus();
+      return {
+        total: slackWorkspaces.length,
+        authenticated: slackWorkspaces.filter(w => w.authenticated).length,
+      };
+    })(),
+    slackWorkspaces: getWorkspaceStatus(),
     ssh,
     calendar: getCalendarStatus(),
     homeassistant: getHAStatus(),
@@ -936,6 +957,22 @@ const handleSSHRemoveTarget = apiHandler(async (_req, _res, body: { id?: string 
 const handleSSHTest = apiHandler(async (_req, _res, body: { id?: string }) => {
   if (!body.id) throw new ApiError(400, "id is required");
   return await testConnection(body.id);
+});
+
+// ── Slack handlers ──
+
+const handleSlackAddWorkspace = apiHandler(async (req, _res, body: { id?: string; teamName?: string; clientId?: string; clientSecret?: string; redirectUri?: string }) => {
+  if (!body.id || !body.teamName || !body.clientId || !body.clientSecret) {
+    throw new ApiError(400, "id, teamName, clientId, and clientSecret are required");
+  }
+  const uri = body.redirectUri || `${req.headers.origin || "http://localhost:3000"}/slack/callback`;
+  const workspace = addSlackWorkspace(body.id, body.teamName, body.clientId, body.clientSecret, uri);
+  return { success: true, workspace: { id: workspace.id, teamName: workspace.teamName } };
+});
+
+const handleSlackRemoveWorkspace = apiHandler(async (_req, _res, body: { id?: string }) => {
+  if (!body.id) throw new ApiError(400, "id is required");
+  return { success: removeSlackWorkspace(body.id) };
 });
 
 // ── Gmail handlers ──
