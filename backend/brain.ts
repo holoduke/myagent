@@ -29,6 +29,7 @@ import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThi
 import { ensureSSHKey } from "./integrations/ssh.js";
 import { verify, rotateAuditLog } from "./action-verifier.js";
 import type { ActionContext } from "./action-verifier.js";
+import { runDriftAudit, getLatestDriftReport, pruneBaselines } from "./drift-audit.js";
 import { BrainError, TickError, ProviderError, SchedulerError, wrapError } from "./brain-errors.js";
 import { getBrainConfig, getActivePreset, getOwnerLocalTime, getOwnerLocalDate } from "./brain-config.js";
 import {
@@ -1469,6 +1470,30 @@ async function reflectTick(
       text: o.text,
     }));
 
+  // Run weekly drift audit (non-blocking — if not due, returns null instantly)
+  let driftSummary: string | undefined;
+  try {
+    const driftReport = await runDriftAudit();
+    if (driftReport) {
+      driftSummary = `[DRIFT AUDIT] Direction: ${driftReport.directionSummary} | Surprise: ${driftReport.surpriseLevel} | ${driftReport.filesChanged.length} files changed | ${driftReport.recommendation}`;
+      log(`Drift audit completed: surprise=${driftReport.surpriseLevel}`);
+      // Notify owner if surprise level is medium or high
+      if ((driftReport.surpriseLevel === "medium" || driftReport.surpriseLevel === "high") && ownerJid) {
+        const alertMsg = `🔍 Weekly drift audit (surprise: ${driftReport.surpriseLevel})\n\n${driftReport.directionSummary}\n\n${driftReport.driftCharacterization}\n\nRecommendation: ${driftReport.recommendation}`;
+        try { await sendMessage(ownerJid, alertMsg); } catch {}
+      }
+      pruneBaselines();
+    } else {
+      // Surface latest existing report if available
+      const latest = getLatestDriftReport();
+      if (latest) {
+        driftSummary = `[LAST DRIFT AUDIT ${new Date(latest.generatedAt).toISOString().split("T")[0]}] Direction: ${latest.directionSummary} | Surprise: ${latest.surpriseLevel}`;
+      }
+    }
+  } catch (err) {
+    log(`Drift audit error (non-fatal): ${err}`);
+  }
+
   log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals, ${recentMoltbookActivity.length} moltbook items, ${recentOutgoingActivity.length} outgoing msgs`);
 
   const prompt = buildReflectPrompt({
@@ -1489,6 +1514,7 @@ async function reflectTick(
     selfImproveStats,
     recentMoltbookActivity,
     recentOutgoingActivity,
+    driftSummary,
   });
 
   try {
