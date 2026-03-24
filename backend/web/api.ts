@@ -7,9 +7,14 @@ import { MessageQueue } from "../queue.js";
 import { getHistory, addMessage, clearHistory, getUsageStats, getUsageData } from "../history.js";
 import { syncContacts, findContacts, getAllContacts, getWhatsAppStatus, sendImage } from "../integrations/whatsapp.js";
 import { getScheduledMessages } from "../scheduler.js";
-import { getWhitelist, addToWhitelist, removeFromWhitelist } from "../contact-whitelist.js";
+import { getWhitelist, addToWhitelist, removeFromWhitelist, updatePermissions } from "../contact-whitelist.js";
+import type { ContactPermissions } from "../contact-whitelist.js";
 import { getActionableRequests, approveRequest, rejectRequest, getPendingCount } from "../actionable-tracker.js";
 import type { ActionableRequestStatus } from "../actionable-tracker.js";
+import { getDirectives, getDirectivesForContact, addDirective, updateDirective, removeDirective } from "../directives.js";
+import type { DirectiveActionType, DirectivePolicy } from "../directives.js";
+import { getRequests as getContactRequests, approveRequest as approveContactRequest, rejectRequest as rejectContactRequest, getPendingRequestCount } from "../request-queue.js";
+import type { RequestStatus } from "../request-queue.js";
 import { getAccountStatus, addAccount, removeAccount } from "../integrations/gmail.js";
 import { getWorkspaceStatus, addWorkspace as addSlackWorkspace, removeWorkspace as removeSlackWorkspace } from "../integrations/slack.js";
 import { getLatestQr } from "../integrations/whatsapp.js";
@@ -162,6 +167,93 @@ export function handleApiRoutes(
     if (rejectMatch) {
       try {
         const result = rejectRequest(rejectMatch[1]);
+        respondJson(res, 200, result);
+      } catch (err) {
+        respondJson(res, 400, { error: String(err) });
+      }
+      return true;
+    }
+  }
+
+  // ── Directives ──
+  if (pathname === "/api/directives" && req.method === "GET" && isAuthenticated(req)) {
+    const contactJid = url.searchParams.get("contactJid");
+    respondJson(res, 200, contactJid ? getDirectivesForContact(contactJid) : getDirectives());
+    return true;
+  }
+  if (pathname === "/api/directives" && req.method === "POST" && isAuthenticated(req)) {
+    try {
+      const body = await readBody(req);
+      const data = JSON.parse(body);
+      const result = addDirective(
+        data.contactJid,
+        data.contactName,
+        data.actionType as DirectiveActionType,
+        data.policy as DirectivePolicy,
+        data.note,
+      );
+      respondJson(res, 201, result);
+    } catch (err) {
+      respondJson(res, 400, { error: String(err) });
+    }
+    return true;
+  }
+  if (req.method === "PATCH" && isAuthenticated(req)) {
+    const directiveMatch = pathname.match(/^\/api\/directives\/([^/]+)$/);
+    if (directiveMatch) {
+      try {
+        const body = await readBody(req);
+        const updates = JSON.parse(body);
+        const result = updateDirective(directiveMatch[1], updates);
+        if (!result) {
+          respondJson(res, 404, { error: "Directive not found" });
+        } else {
+          respondJson(res, 200, result);
+        }
+      } catch (err) {
+        respondJson(res, 400, { error: String(err) });
+      }
+      return true;
+    }
+  }
+  if (req.method === "DELETE" && isAuthenticated(req)) {
+    const directiveDeleteMatch = pathname.match(/^\/api\/directives\/([^/]+)$/);
+    if (directiveDeleteMatch) {
+      const removed = removeDirective(directiveDeleteMatch[1]);
+      respondJson(res, removed ? 200 : 404, { success: removed });
+      return true;
+    }
+  }
+
+  // ── Contact Request Queue ──
+  if (pathname === "/api/contact-requests" && req.method === "GET" && isAuthenticated(req)) {
+    const statusFilter = url.searchParams.get("status") as RequestStatus | null;
+    respondJson(res, 200, getContactRequests(statusFilter || undefined));
+    return true;
+  }
+  if (pathname === "/api/contact-requests/pending-count" && req.method === "GET" && isAuthenticated(req)) {
+    respondJson(res, 200, { count: getPendingRequestCount() });
+    return true;
+  }
+  if (req.method === "POST" && isAuthenticated(req)) {
+    const crApproveMatch = pathname.match(/^\/api\/contact-requests\/([^/]+)\/approve$/);
+    if (crApproveMatch) {
+      try {
+        const body = await readBody(req);
+        const { note } = body ? JSON.parse(body) : {};
+        const result = approveContactRequest(crApproveMatch[1], note);
+        respondJson(res, 200, result);
+      } catch (err) {
+        respondJson(res, 400, { error: String(err) });
+      }
+      return true;
+    }
+    const crRejectMatch = pathname.match(/^\/api\/contact-requests\/([^/]+)\/reject$/);
+    if (crRejectMatch) {
+      try {
+        const body = await readBody(req);
+        const { note } = body ? JSON.parse(body) : {};
+        const result = rejectContactRequest(crRejectMatch[1], note);
         respondJson(res, 200, result);
       } catch (err) {
         respondJson(res, 400, { error: String(err) });
@@ -974,6 +1066,13 @@ const handleWhitelistAdd = apiHandler(async (_req, _res, body: { jid?: string; n
 const handleWhitelistRemove = apiHandler(async (_req, _res, body: { jid?: string }) => {
   if (!body.jid) throw new ApiError(400, "jid is required");
   return { success: removeFromWhitelist(body.jid) };
+});
+
+const handleWhitelistPermissions = apiHandler(async (_req, _res, body: { jid?: string; permissions?: ContactPermissions | null }) => {
+  if (!body.jid) throw new ApiError(400, "jid is required");
+  const ok = updatePermissions(body.jid, body.permissions ?? null);
+  if (!ok) throw new ApiError(404, "Contact not found on whitelist");
+  return { success: true };
 });
 
 // ── SSH handlers ──
