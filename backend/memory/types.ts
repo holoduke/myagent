@@ -182,6 +182,24 @@ export interface ImprovementProposal {
   planNodeId: string;
 }
 
+/** A request flagged by the brain for owner confirmation */
+export interface RequestFlag {
+  /** Who sent the message */
+  senderName: string;
+  /** Sender's JID */
+  senderJid: string;
+  /** Original message text */
+  text: string;
+  /** Why the brain thinks this needs forwarding */
+  reason: string;
+  /** Detected categories */
+  categories: string[];
+  /** Was this from a group? */
+  isGroup?: boolean;
+  /** Group name if applicable */
+  groupName?: string;
+}
+
 export interface BrainResponse {
   operations: MemoryOperation[];
   message: string | null;
@@ -195,6 +213,8 @@ export interface BrainResponse {
   };
   goalOps?: GoalOperation[];
   improvementProposals?: ImprovementProposal[];
+  /** Requests from non-permissioned contacts that the brain judges worth forwarding */
+  requestFlags?: RequestFlag[];
 }
 
 // ── Retention Tiers ──

@@ -148,6 +148,52 @@ export function rejectRequest(id: string): ActionableRequest {
 }
 
 /**
+ * Create a pending request from a brain-flagged message.
+ * Used by the think tick when the brain judges a message from a
+ * non-permissioned contact needs owner attention.
+ */
+export function createFlaggedRequest(flag: {
+  senderName: string;
+  senderJid: string;
+  text: string;
+  reason: string;
+  categories: string[];
+  isGroup?: boolean;
+  groupName?: string;
+}): ActionableRequest {
+  const request: ActionableRequest = {
+    id: `areq_${randomUUID().slice(0, 8)}`,
+    timestamp: Date.now(),
+    senderJid: flag.senderJid,
+    senderName: flag.senderName,
+    isGroup: flag.isGroup || false,
+    groupName: flag.groupName,
+    text: flag.text,
+    signals: flag.categories.map(c => ({ category: c as any, snippet: flag.reason, pattern: "brain-flagged" })),
+    categories: flag.categories as any[],
+    status: "pending_confirmation",
+  };
+
+  const requests = load();
+
+  // Deduplicate: skip if same sender + similar text already pending
+  const isDupe = requests.some(r =>
+    r.status === "pending_confirmation" &&
+    r.senderJid === flag.senderJid &&
+    r.text === flag.text,
+  );
+  if (isDupe) {
+    log(`Skipped duplicate flagged request from ${flag.senderName}`);
+    return request;
+  }
+
+  requests.push(request);
+  save(requests);
+  log(`Brain-flagged request from ${flag.senderName}: "${flag.text.slice(0, 80)}" (${flag.reason})`);
+  return request;
+}
+
+/**
  * Count pending requests (useful for dashboard badge).
  */
 export function getPendingCount(): number {

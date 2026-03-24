@@ -8,7 +8,8 @@ import type { Observation } from "./observer.js";
 import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./brain-prompt.js";
 import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
-import type { MemoryOperation, BrainResponse, BrainState, GoalOperation } from "./memory/types.js";
+import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, RequestFlag } from "./memory/types.js";
+import { createFlaggedRequest } from "./actionable-tracker.js";
 import { getDueMessages, getScheduledMessages, markDelivered, markFailed, logDelivery, getRecentDeliveries } from "./scheduler.js";
 import { isWhatsAppConnected } from "./integrations/whatsapp.js";
 import { isWhitelisted } from "./contact-whitelist.js";
@@ -1258,6 +1259,14 @@ async function thinkTick(
         const audience = obs.chatName || obs.groupName || "unknown";
         scanAndProcessCommitments(obs.text, source, audience, goalTracker);
       }
+    }
+
+    // Process brain-flagged requests from non-permissioned contacts
+    if (response.requestFlags && response.requestFlags.length > 0) {
+      for (const flag of response.requestFlags) {
+        createFlaggedRequest(flag);
+      }
+      log(`Brain flagged ${response.requestFlags.length} request(s) for owner confirmation`);
     }
 
     // Update state
