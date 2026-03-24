@@ -11,7 +11,7 @@ const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const SCHEDULE_FILE = `${BRAIN_DIR}/scheduled-messages.json`;
 const IN_FLIGHT_FILE = `${BRAIN_DIR}/scheduled-messages-inflight.json`;
 const DELIVERY_LOG_FILE = `${BRAIN_DIR}/delivery-log.json`;
-const DELIVERY_LOG_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
+const DELIVERY_LOG_MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours – must exceed DEDUP_WINDOW_MS (3h) in brain.ts
 
 export interface ScheduledMessage {
   id: string;
