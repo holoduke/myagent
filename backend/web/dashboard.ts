@@ -4,6 +4,7 @@ const NAV_ITEMS = [
   { id: "overview", label: "Overview", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>` },
   { id: "chat", label: "Chat", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>` },
   { id: "memory", label: "Memory", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>` },
+  { id: "requests", label: "Requests", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>` },
   { id: "integrations", label: "Integrations", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>` },
   { id: "ai-providers", label: "AI Providers", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 014 4v1a1 1 0 001 1h1a4 4 0 010 8h-1a1 1 0 00-1 1v1a4 4 0 01-8 0v-1a1 1 0 00-1-1H6a4 4 0 010-8h1a1 1 0 001-1V6a4 4 0 014-4z"/><circle cx="12" cy="12" r="2"/></svg>` },
   { id: "settings", label: "Settings", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>` },
@@ -110,6 +111,14 @@ export function getDashboardHTML(): string {
       <div class="section" id="section-memory">
         <div class="section-header">Memory Explorer</div>
         <div id="memory-content">
+          <div style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Requests Section -->
+      <div class="section" id="section-requests">
+        <div class="section-header">Incoming Requests</div>
+        <div id="requests-content">
           <div style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
         </div>
       </div>
@@ -223,7 +232,7 @@ export function getDashboardHTML(): string {
 
     // ── Navigation ──
     function navigate(section, skipHash) {
-      const valid = ['overview','chat','memory','integrations','ai-providers','settings'];
+      const valid = ['overview','chat','memory','requests','integrations','ai-providers','settings'];
       if (!valid.includes(section)) section = 'overview';
       currentSection = section;
       if (!skipHash) location.hash = section;
@@ -245,6 +254,7 @@ export function getDashboardHTML(): string {
       if (section === 'overview') loadOverview();
       else if (section === 'chat' && !chatLoaded) { loadHistory(); chatLoaded = true; }
       else if (section === 'memory') loadMemory();
+      else if (section === 'requests') loadRequests();
       else if (section === 'integrations') loadIntegrations();
       else if (section === 'ai-providers') loadProviders();
       else if (section === 'settings') loadSettings();
@@ -540,6 +550,119 @@ export function getDashboardHTML(): string {
 
       if (!html) html = '<div style="color:var(--text-ghost);text-align:center;padding:40px">No memories yet</div>';
       document.getElementById('memory-content').innerHTML = html;
+    }
+
+    // ── Requests Section ──
+    async function loadRequests() {
+      try {
+        const res = await fetch('/api/actionable-requests', { headers: authHeaders() });
+        if (res.status === 401) { resetAuth(); return; }
+        const requests = await res.json();
+        renderRequests(requests);
+      } catch(e) {
+        document.getElementById('requests-content').innerHTML =
+          '<div class="card"><p style="color:var(--red)">Failed to load: ' + e.message + '</p></div>';
+      }
+    }
+
+    function renderRequests(requests) {
+      const pending = requests.filter(r => r.status === 'pending_confirmation');
+      const autoExec = requests.filter(r => r.status === 'auto_executed');
+      const resolved = requests.filter(r => r.status === 'approved' || r.status === 'rejected');
+
+      let html = '';
+
+      // Pending confirmation
+      html += '<div class="card"><h2 style="display:flex;align-items:center;gap:8px">';
+      html += '<svg viewBox="0 0 24 24" fill="none" stroke="var(--yellow)" stroke-width="2" style="width:18px;height:18px"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>';
+      html += 'Awaiting Confirmation';
+      if (pending.length > 0) html += '<span style="background:var(--yellow);color:#000;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:700;margin-left:4px">' + pending.length + '</span>';
+      html += '</h2>';
+      if (pending.length === 0) {
+        html += '<p style="color:var(--text-ghost);font-size:13px">No pending requests</p>';
+      } else {
+        pending.forEach(r => { html += renderRequestItem(r, true); });
+      }
+      html += '</div>';
+
+      // Auto-executed
+      html += '<div class="card"><h2 style="display:flex;align-items:center;gap:8px">';
+      html += '<svg viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" style="width:18px;height:18px"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+      html += 'Auto-Executed';
+      if (autoExec.length > 0) html += '<span style="font-size:11px;color:var(--text-muted);margin-left:4px">' + autoExec.length + '</span>';
+      html += '</h2>';
+      if (autoExec.length === 0) {
+        html += '<p style="color:var(--text-ghost);font-size:13px">No auto-executed requests yet</p>';
+      } else {
+        autoExec.slice(-20).reverse().forEach(r => { html += renderRequestItem(r, false); });
+      }
+      html += '</div>';
+
+      // Resolved (approved/rejected)
+      if (resolved.length > 0) {
+        html += '<div class="card"><h2 style="display:flex;align-items:center;gap:8px">';
+        html += '<svg viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" style="width:18px;height:18px"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>';
+        html += 'Resolved';
+        html += '<span style="font-size:11px;color:var(--text-muted);margin-left:4px">' + resolved.length + '</span>';
+        html += '</h2>';
+        resolved.slice(-20).reverse().forEach(r => { html += renderRequestItem(r, false); });
+        html += '</div>';
+      }
+
+      document.getElementById('requests-content').innerHTML = html;
+    }
+
+    function renderRequestItem(r, showActions) {
+      const date = new Date(r.timestamp);
+      const time = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const day = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const cats = (r.categories || []).map(c =>
+        '<span class="type-badge" style="font-size:10px;padding:1px 6px">' + c + '</span>'
+      ).join(' ');
+      const statusColors = {
+        pending_confirmation: 'var(--yellow)',
+        auto_executed: 'var(--green)',
+        approved: 'var(--cyan)',
+        rejected: 'var(--red)',
+      };
+      const statusLabel = r.status.replace('_', ' ');
+      const ctx = r.isGroup ? ' in ' + (r.groupName || '?') : '';
+
+      let html = '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;background:var(--bg-surface)">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+      html += '<div style="display:flex;align-items:center;gap:8px">';
+      html += '<span style="font-weight:600;color:var(--text);font-size:13px">' + (r.senderName || 'Unknown') + '</span>';
+      html += '<span style="color:var(--text-ghost);font-size:11px">' + ctx + '</span>';
+      html += '</div>';
+      html += '<div style="display:flex;align-items:center;gap:8px">';
+      html += '<span style="color:' + (statusColors[r.status] || 'var(--text-muted)') + ';font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">' + statusLabel + '</span>';
+      html += '<span style="color:var(--text-ghost);font-size:11px;font-family:var(--mono)">' + day + ' ' + time + '</span>';
+      html += '</div></div>';
+      html += '<div style="color:var(--text-dim);font-size:13px;margin-bottom:8px;line-height:1.4;font-style:italic">"' + (r.text || '').slice(0, 200) + '"</div>';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+      html += '<div>' + cats + '</div>';
+      if (showActions) {
+        html += '<div style="display:flex;gap:6px">';
+        html += '<button onclick="approveRequest(\'' + r.id + '\')" style="background:var(--green);color:#000;border:none;padding:4px 12px;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer">Approve</button>';
+        html += '<button onclick="rejectRequest(\'' + r.id + '\')" style="background:var(--red);color:#fff;border:none;padding:4px 12px;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer">Reject</button>';
+        html += '</div>';
+      }
+      html += '</div></div>';
+      return html;
+    }
+
+    async function approveRequest(id) {
+      try {
+        await fetch('/api/actionable-requests/' + id + '/approve', { method: 'POST', headers: authHeaders() });
+        loadRequests();
+      } catch(e) { alert('Failed: ' + e.message); }
+    }
+
+    async function rejectRequest(id) {
+      try {
+        await fetch('/api/actionable-requests/' + id + '/reject', { method: 'POST', headers: authHeaders() });
+        loadRequests();
+      } catch(e) { alert('Failed: ' + e.message); }
     }
 
     // ── Integrations Section ──
