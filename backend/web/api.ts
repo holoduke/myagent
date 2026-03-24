@@ -8,6 +8,8 @@ import { getHistory, addMessage, clearHistory, getUsageStats, getUsageData } fro
 import { syncContacts, findContacts, getAllContacts, getWhatsAppStatus, sendImage } from "../integrations/whatsapp.js";
 import { getScheduledMessages } from "../scheduler.js";
 import { getWhitelist, addToWhitelist, removeFromWhitelist } from "../contact-whitelist.js";
+import { getActionableRequests, approveRequest, rejectRequest, getPendingCount } from "../actionable-tracker.js";
+import type { ActionableRequestStatus } from "../actionable-tracker.js";
 import { getAccountStatus, addAccount, removeAccount } from "../integrations/gmail.js";
 import { getWorkspaceStatus, addWorkspace as addSlackWorkspace, removeWorkspace as removeSlackWorkspace } from "../integrations/slack.js";
 import { getLatestQr } from "../integrations/whatsapp.js";
@@ -131,6 +133,39 @@ export function handleApiRoutes(
     }
     if (req.method === "DELETE") {
       handleWhitelistRemove(req, res);
+      return true;
+    }
+  }
+
+  // ── Actionable Requests ──
+  if (pathname === "/api/actionable-requests" && req.method === "GET" && isAuthenticated(req)) {
+    const statusFilter = url.searchParams.get("status") as ActionableRequestStatus | null;
+    respondJson(res, 200, getActionableRequests(statusFilter || undefined));
+    return true;
+  }
+  if (pathname === "/api/actionable-requests/pending-count" && req.method === "GET" && isAuthenticated(req)) {
+    respondJson(res, 200, { count: getPendingCount() });
+    return true;
+  }
+  if (req.method === "POST" && isAuthenticated(req)) {
+    const approveMatch = pathname.match(/^\/api\/actionable-requests\/([^/]+)\/approve$/);
+    if (approveMatch) {
+      try {
+        const result = approveRequest(approveMatch[1]);
+        respondJson(res, 200, result);
+      } catch (err) {
+        respondJson(res, 400, { error: String(err) });
+      }
+      return true;
+    }
+    const rejectMatch = pathname.match(/^\/api\/actionable-requests\/([^/]+)\/reject$/);
+    if (rejectMatch) {
+      try {
+        const result = rejectRequest(rejectMatch[1]);
+        respondJson(res, 200, result);
+      } catch (err) {
+        respondJson(res, 400, { error: String(err) });
+      }
       return true;
     }
   }
