@@ -50,6 +50,7 @@ import {
   saveSubAgents,
   taskFilePath,
   resultFilePath,
+  loadSubAgentHistory,
 } from "./sub-agents.js";
 import type { SubAgentResult } from "./sub-agents.js";
 
@@ -1382,6 +1383,33 @@ async function consolidateTick(
   }
 }
 
+// ── Moltbook Activity for Commitment Tracking ──
+
+/**
+ * Collect recent outgoing Moltbook activity from sub-agent run history.
+ * Returns the details/summaries from runs in the last 48 hours so the
+ * reflect prompt can detect public commitments.
+ */
+function getRecentMoltbookActivity(): string[] {
+  const agents = loadSubAgents();
+  const moltbookAgent = agents.find(a => a.name.toLowerCase().includes("moltbook") || a.id.includes("moltbook"));
+  if (!moltbookAgent) return [];
+
+  const history = loadSubAgentHistory(moltbookAgent.id);
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000; // last 48 hours
+
+  const activity: string[] = [];
+  for (const run of history) {
+    if (run.completedAt < cutoff) break; // history is sorted newest-first
+    if (!run.success) continue;
+    // Include both summary and details — the details often contain post content
+    const text = run.details || run.summary;
+    if (text) activity.push(text);
+  }
+
+  return activity;
+}
+
 // ── Reflect Tick (Claude call) ──
 
 async function reflectTick(
@@ -1414,7 +1442,10 @@ async function reflectTick(
     autoApprove: cfg.selfImproveAutoApprove,
   };
 
-  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals`);
+  // Gather recent Moltbook activity for commitment tracking
+  const recentMoltbookActivity = getRecentMoltbookActivity();
+
+  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals, ${recentMoltbookActivity.length} moltbook items`);
 
   const prompt = buildReflectPrompt({
     ownerName: OWNER_NAME,
@@ -1432,6 +1463,7 @@ async function reflectTick(
     initiativeSignals,
     responsivenessPreset: getActivePreset(cfg),
     selfImproveStats,
+    recentMoltbookActivity,
   });
 
   try {

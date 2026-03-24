@@ -8,6 +8,7 @@ import { getBrainConfig, getCharacterPreset } from "./brain-config.js";
 import type { InitiativeSignal } from "./initiative.js";
 import { sanitizeForPrompt, detectInjection } from "./trust.js";
 import type { TrustLevel } from "./trust.js";
+import { extractCommitments } from "./commitments.js";
 
 function resolveCharacter(): CharacterOverride | undefined {
   const cfg = getBrainConfig();
@@ -634,6 +635,38 @@ CONSOLIDATION GUIDELINES:
 Respond with ONLY the JSON object.`;
 }
 
+// ── Commitment Detection Helper ──
+
+function buildCommitmentsBlock(recentMoltbookActivity?: string[]): string {
+  if (!recentMoltbookActivity || recentMoltbookActivity.length === 0) return "";
+
+  const allCommitments = recentMoltbookActivity.flatMap(text => extractCommitments(text));
+
+  const detectedSection = allCommitments.length > 0
+    ? `\nDetected commitment language in recent posts:\n${allCommitments.map(c => `- "${c.text}" (pattern: ${c.pattern})`).join("\n")}\n`
+    : "";
+
+  return `
+═══ PUBLIC COMMITMENTS ═══
+
+Review your recent Moltbook activity below for any promises or commitments you made publicly.
+${detectedSection}
+Recent outgoing Moltbook posts/comments:
+${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}
+
+ACTION REQUIRED:
+1. Check each post/comment for commitments (e.g. "I will", "I'm planning to", "next time I'll", "I should build").
+2. For any non-trivial commitment not already tracked, create a goal via goalOps with:
+   - title: the commitment summary
+   - description: what was promised and where (Moltbook post/comment)
+   - priority: 2 (default) or 1 if time-sensitive
+   - checkpoints: concrete steps to fulfill the commitment
+   - createdBy: "brain"
+3. Review existing goals tagged as public commitments — are any unfulfilled? Update progress or complete them.
+4. If a commitment was already fulfilled, mark the corresponding goal as complete.
+`;
+}
+
 // ── Reflect Prompt ──
 
 export interface ReflectContext {
@@ -658,6 +691,8 @@ export interface ReflectContext {
     pendingInQueue: number;
     autoApprove: boolean;
   };
+  /** Recent outgoing Moltbook posts/comments for commitment detection */
+  recentMoltbookActivity?: string[];
 }
 
 export function buildReflectPrompt(ctx: ReflectContext): string {
@@ -712,7 +747,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${goalsBlock}${initiativeBlock}
+${goalsBlock}${initiativeBlock}${buildCommitmentsBlock(ctx.recentMoltbookActivity)}
 ═══ GRAPH STATS ═══
 Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
 By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(", ")}
@@ -729,6 +764,7 @@ This is deep reflection. Think about:
 - Your own evolution: how have your thoughts changed? What have you learned? What are your blind spots?
 - The future: what do you think will happen? What should ${ctx.ownerName} be aware of?
 - Goals: review active goals. Are any overdue? Should you create new ones? Update progress?
+- Public commitments: did you promise anything on Moltbook or other public platforms? Track it as a goal if not already tracked.
 - Plans: anything you want to track, watch for, or plan to say in the future?
 - Self-improvement: USE YOUR TOOLS to read source files (both backend backend/ and frontend frontend/) and identify concrete improvements. Propose them via the improvementProposals field.
 
