@@ -7,6 +7,7 @@ const CONFIG_FILE = "/data/integrations-config.json";
 const INTEGRATION_KEYS = [
   "whatsapp",
   "gmail",
+  "slack",
   "ssh",
   "scheduled",
   "calendar",
@@ -24,6 +25,7 @@ export type IntegrationsConfig = Record<IntegrationKey, boolean>;
 const DEFAULTS: IntegrationsConfig = {
   whatsapp: true,
   gmail: true,
+  slack: true,
   ssh: true,
   scheduled: true,
   calendar: true,

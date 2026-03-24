@@ -47,11 +47,12 @@ export interface Observation {
   text: string;
   chatJid?: string;
   chatName?: string;
-  source?: "whatsapp" | "gmail" | "calendar" | "homeassistant" | "rss" | "owntracks" | "twilio" | "browser";
+  source?: "whatsapp" | "gmail" | "slack" | "calendar" | "homeassistant" | "rss" | "owntracks" | "twilio" | "browser";
   emailMeta?: EmailMeta;
   calendarMeta?: CalendarMeta;
   locationMeta?: LocationMeta;
   callMeta?: CallMeta;
+  slackMeta?: SlackMeta;
   urgency?: number;
   /** Trust classification — set at intake, used for prompt sanitization */
   trustLevel?: "owner" | "trusted" | "untrusted";
@@ -63,6 +64,14 @@ export interface CallMeta {
   from: string;
   mode: "simple" | "agent";
   duration?: number;
+}
+
+export interface SlackMeta {
+  workspaceId: string;
+  channelId: string;
+  channelName: string;
+  userId: string;
+  messageTs: string;
 }
 
 export interface ObservationFilter {
@@ -130,6 +139,7 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) {
 function getObservationKey(obs: Observation): string {
   if (obs.emailMeta?.messageId) return `email:${obs.emailMeta.messageId}`;
   if (obs.calendarMeta?.eventId) return `cal:${obs.calendarMeta.eventId}`;
+  if (obs.slackMeta?.messageTs) return `slack:${obs.slackMeta.workspaceId}:${obs.slackMeta.channelId}:${obs.slackMeta.messageTs}`;
   // For WhatsApp/other: hash by sender + timestamp + first 80 chars
   return `${obs.source || "wa"}:${obs.senderJid}:${obs.timestamp}:${obs.text.slice(0, 80)}`;
 }
