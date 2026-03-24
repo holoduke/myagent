@@ -241,9 +241,19 @@ export interface AriaStatus {
   timestamp: number
 }
 
+export interface ContactPermissions {
+  acceptCommands: boolean
+  autoActions: string[]
+  confirmActions: string[]
+  defaultMode: 'confirm' | 'ignore'
+}
+
 export interface WhitelistContact {
   jid: string
   name: string
+  addedAt?: number
+  note?: string
+  permissions?: ContactPermissions
 }
 
 export interface ScheduledMessage {

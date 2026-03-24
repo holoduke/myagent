@@ -126,6 +126,12 @@ export function handleApiRoutes(
     return true;
   }
 
+  // ── Whitelist Permissions ──
+  if (pathname === "/api/whitelist/permissions" && req.method === "PUT" && isAuthenticated(req)) {
+    handleWhitelistPermissions(req, res);
+    return true;
+  }
+
   // ── Whitelist CRUD ──
   if (pathname === "/api/whitelist" && isAuthenticated(req)) {
     if (req.method === "GET") {
