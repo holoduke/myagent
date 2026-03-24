@@ -703,12 +703,27 @@ export function getDashboardHTML(): string {
       html += '</div>';
 
       // Contact whitelist (WhatsApp)
-      html += '<h4 style="margin:16px 0 8px;color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:1px">Contact Whitelist</h4>';
+      html += '<h4 style="margin:16px 0 8px;color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:1px">Contact Whitelist &amp; Permissions</h4>';
       if (whitelist.length) {
         for (const c of whitelist) {
-          html += '<div class="wl-item">';
-          html += '<div><span class="wl-name">' + esc(c.name) + '</span><span class="wl-jid">' + esc(c.jid) + '</span></div>';
+          const p = c.permissions;
+          const hasPerms = p && p.acceptCommands;
+          html += '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;background:var(--bg-surface)">';
+          // Header row: name, jid, actions
+          html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:' + (hasPerms ? '10' : '0') + 'px">';
+          html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
+          html += '<span style="font-weight:600;color:var(--text);font-size:13px">' + esc(c.name) + '</span>';
+          html += '<span style="color:var(--text-ghost);font-size:11px;font-family:var(--mono)">' + esc(c.jid) + '</span>';
+          if (hasPerms) html += '<span style="font-size:10px;padding:1px 6px;border-radius:10px;background:rgba(0,229,255,0.1);color:var(--cyan);border:1px solid rgba(0,229,255,0.2)">commands enabled</span>';
+          html += '</div>';
+          html += '<div style="display:flex;align-items:center;gap:6px">';
+          html += '<button style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;font-family:var(--mono)" onclick="togglePermissions(\'' + esc(c.jid) + '\',' + (hasPerms ? 'false' : 'true') + ')">' + (hasPerms ? 'disable' : 'enable') + '</button>';
           html += '<button class="wl-rm" onclick="removeWhitelist(\'' + esc(c.jid) + '\')">Remove</button>';
+          html += '</div></div>';
+          // Permission editor (only shown when commands enabled)
+          if (hasPerms) {
+            html += renderPermEditor(c.jid, p);
+          }
           html += '</div>';
         }
       } else {
@@ -1014,6 +1029,84 @@ export function getDashboardHTML(): string {
           body: JSON.stringify({ jid })
         });
         loadIntegrations();
+      } catch {}
+    }
+
+    // ── Permission management ──
+    const PERM_CATS = ['event','invitation','logistics','request','deadline','action_item'];
+
+    function renderPermEditor(jid, perms) {
+      const auto = perms.autoActions || [];
+      const confirm = perms.confirmActions || [];
+      const defMode = perms.defaultMode || 'confirm';
+      const j = esc(jid);
+      let h = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">';
+      for (const cat of PERM_CATS) {
+        const mode = auto.includes(cat) ? 'auto' : confirm.includes(cat) ? 'confirm' : defMode;
+        const col = mode === 'auto' ? 'var(--green)' : 'var(--yellow)';
+        h += '<button data-jid="' + j + '" data-cat="' + cat + '" data-mode="' + mode + '" onclick="cyclePerm(this)" ';
+        h += 'style="display:flex;align-items:center;gap:5px;background:var(--bg-elevated);border:1px solid ' + col + ';color:var(--text);padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-family:var(--mono);transition:all 0.15s">';
+        h += '<span style="width:6px;height:6px;border-radius:50%;background:' + col + '"></span>';
+        h += cat + ' <span style="color:' + col + ';font-weight:600">' + mode + '</span></button>';
+      }
+      h += '</div>';
+      h += '<div style="display:flex;align-items:center;gap:8px">';
+      h += '<span style="color:var(--text-ghost);font-size:11px">Default for unlisted:</span>';
+      h += '<select data-jid="' + j + '" id="def-' + j + '" onchange="savePerms(\'' + j + '\')" ';
+      h += 'style="background:var(--bg-elevated);border:1px solid var(--border);color:var(--text);padding:3px 8px;border-radius:4px;font-size:11px;font-family:var(--mono)">';
+      h += '<option value="confirm"' + (defMode === 'confirm' ? ' selected' : '') + '>confirm</option>';
+      h += '<option value="ignore"' + (defMode === 'ignore' ? ' selected' : '') + '>ignore</option>';
+      h += '</select>';
+      h += '<span style="color:var(--text-ghost);font-size:10px;margin-left:8px">click category to toggle auto/confirm</span>';
+      h += '</div>';
+      return h;
+    }
+
+    function cyclePerm(btn) {
+      const next = btn.dataset.mode === 'auto' ? 'confirm' : 'auto';
+      btn.dataset.mode = next;
+      const col = next === 'auto' ? 'var(--green)' : 'var(--yellow)';
+      btn.style.borderColor = col;
+      const spans = btn.querySelectorAll('span');
+      spans[0].style.background = col;
+      spans[1].style.color = col;
+      spans[1].textContent = next;
+      savePerms(btn.dataset.jid);
+    }
+
+    async function togglePermissions(jid, enable) {
+      const perms = enable ? {
+        acceptCommands: true,
+        autoActions: ['event','logistics'],
+        confirmActions: ['request','deadline','action_item'],
+        defaultMode: 'confirm'
+      } : null;
+      try {
+        await fetch('/api/whitelist/permissions', {
+          method: 'PUT', headers: jsonHeaders(),
+          body: JSON.stringify({ jid, permissions: perms })
+        });
+        loadIntegrations();
+      } catch {}
+    }
+
+    async function savePerms(jid) {
+      const btns = document.querySelectorAll('button[data-jid="' + jid + '"][data-cat]');
+      const autoActions = [], confirmActions = [];
+      btns.forEach(b => {
+        if (b.dataset.mode === 'auto') autoActions.push(b.dataset.cat);
+        else confirmActions.push(b.dataset.cat);
+      });
+      const defSel = document.getElementById('def-' + jid);
+      const permissions = {
+        acceptCommands: true, autoActions, confirmActions,
+        defaultMode: defSel ? defSel.value : 'confirm'
+      };
+      try {
+        await fetch('/api/whitelist/permissions', {
+          method: 'PUT', headers: jsonHeaders(),
+          body: JSON.stringify({ jid, permissions })
+        });
       } catch {}
     }
 
