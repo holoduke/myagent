@@ -8,7 +8,7 @@ import type { Observation } from "./observer.js";
 import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./brain-prompt.js";
 import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
-import type { MemoryOperation, BrainResponse, BrainState, GoalOperation } from "./memory/types.js";
+import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, ImprovementProposal } from "./memory/types.js";
 import { getDueMessages, getScheduledMessages, markDelivered, markFailed, logDelivery, getRecentDeliveries } from "./scheduler.js";
 import { isWhatsAppConnected } from "./integrations/whatsapp.js";
 import { isWhitelisted } from "./contact-whitelist.js";
@@ -31,6 +31,7 @@ import { verify, rotateAuditLog } from "./action-verifier.js";
 import type { ActionContext } from "./action-verifier.js";
 import { BrainError, TickError, ProviderError, SchedulerError, wrapError } from "./brain-errors.js";
 import { getBrainConfig, getActivePreset, getOwnerLocalTime, getOwnerLocalDate } from "./brain-config.js";
+import type { BrainConfig } from "./brain-config.js";
 import {
   loadQueue,
   enqueue,
@@ -1060,6 +1061,58 @@ async function handleRecurringTasks(
   }
 }
 
+// ── Shared: enqueue improvement proposals ──
+
+function enqueueImprovementProposals(
+  proposals: ImprovementProposal[],
+  source: string,
+  cfg: BrainConfig,
+): number {
+  if (!proposals.length || !cfg.selfImproveEnabled) return 0;
+
+  const weeklyRemaining = cfg.selfImproveMaxPerWeek - getWeeklyCompletedCount();
+  const currentPending = loadQueue().items.filter(
+    i => i.status === "pending" || i.status === "approved" || i.status === "running",
+  ).length;
+  const canEnqueue = Math.max(0, weeklyRemaining - currentPending);
+  let enqueued = 0;
+
+  for (const proposal of proposals.slice(0, canEnqueue)) {
+    if (!proposal.description || !proposal.rationale) {
+      log(`Skipping invalid ${source} improvement proposal: missing description or rationale`);
+      continue;
+    }
+    const improveVerify = verify({
+      type: "self_improve",
+      source,
+      proposalDescription: proposal.description,
+      metadata: { files: proposal.files },
+    });
+    if (improveVerify.verdict === "blocked") {
+      log(`${source} self-improve proposal BLOCKED by verifier: ${improveVerify.reasons.join("; ")}`);
+      continue;
+    }
+    const task = {
+      type: "improvement" as const,
+      description: proposal.description,
+      rationale: proposal.rationale,
+      files: Array.isArray(proposal.files) ? proposal.files : [],
+      memoryContext: Array.isArray(proposal.memoryContext) ? proposal.memoryContext : [],
+      planNodeId: proposal.planNodeId || "",
+      createdAt: Date.now(),
+    };
+    enqueueApproved(task);
+    log(`${source}: enqueued improvement proposal (pre-approved): ${proposal.description.slice(0, 80)}`);
+    enqueued++;
+  }
+
+  if (proposals.length > canEnqueue) {
+    log(`Dropped ${proposals.length - canEnqueue} ${source} proposals (weekly budget/queue limit)`);
+  }
+
+  return enqueued;
+}
+
 // ── Think Tick (Claude call) ──
 
 async function thinkTick(
@@ -1205,38 +1258,8 @@ async function thinkTick(
     }
 
     // Enqueue self-improvement proposals from think ticks
-    if (response.improvementProposals && response.improvementProposals.length > 0 && cfg.selfImproveEnabled) {
-      const weeklyRemaining = cfg.selfImproveMaxPerWeek - getWeeklyCompletedCount();
-      const currentPending = loadQueue().items.filter(i => i.status === "pending" || i.status === "approved" || i.status === "running").length;
-      const canEnqueue = Math.max(0, weeklyRemaining - currentPending);
-
-      for (const proposal of response.improvementProposals.slice(0, canEnqueue)) {
-        if (!proposal.description || !proposal.rationale) {
-          log(`Skipping invalid think improvement proposal: missing description or rationale`);
-          continue;
-        }
-        const improveVerify = verify({
-          type: "self_improve",
-          source: "think",
-          proposalDescription: proposal.description,
-          metadata: { files: proposal.files },
-        });
-        if (improveVerify.verdict === "blocked") {
-          log(`Think self-improve proposal BLOCKED by verifier: ${improveVerify.reasons.join("; ")}`);
-          continue;
-        }
-        const task = {
-          type: "improvement" as const,
-          description: proposal.description,
-          rationale: proposal.rationale,
-          files: Array.isArray(proposal.files) ? proposal.files : [],
-          memoryContext: Array.isArray(proposal.memoryContext) ? proposal.memoryContext : [],
-          planNodeId: proposal.planNodeId || "",
-          createdAt: Date.now(),
-        };
-        enqueueApproved(task);
-        log(`Think: enqueued improvement proposal (pre-approved): ${proposal.description.slice(0, 80)}`);
-      }
+    if (response.improvementProposals?.length) {
+      enqueueImprovementProposals(response.improvementProposals, "think", cfg);
     }
 
     // Handle message — briefings (digest-triggered thinks) bypass rate limits
@@ -1543,44 +1566,8 @@ async function reflectTick(
     }
 
     // Enqueue self-improvement proposals
-    if (response.improvementProposals && response.improvementProposals.length > 0 && cfg.selfImproveEnabled) {
-      const weeklyRemaining = cfg.selfImproveMaxPerWeek - getWeeklyCompletedCount();
-      const currentPending = loadQueue().items.filter(i => i.status === "pending" || i.status === "approved" || i.status === "running").length;
-      const canEnqueue = Math.max(0, weeklyRemaining - currentPending);
-
-      for (const proposal of response.improvementProposals.slice(0, canEnqueue)) {
-        if (!proposal.description || !proposal.rationale) {
-          log(`Skipping invalid improvement proposal: missing description or rationale`);
-          continue;
-        }
-        const improveVerify = verify({
-          type: "self_improve",
-          source: "reflect",
-          proposalDescription: proposal.description,
-          metadata: { files: proposal.files },
-        });
-        if (improveVerify.verdict === "blocked") {
-          log(`Self-improve proposal BLOCKED by verifier: ${improveVerify.reasons.join("; ")}`);
-          continue;
-        }
-        const task = {
-          type: "improvement" as const,
-          description: proposal.description,
-          rationale: proposal.rationale,
-          files: Array.isArray(proposal.files) ? proposal.files : [],
-          memoryContext: Array.isArray(proposal.memoryContext) ? proposal.memoryContext : [],
-          planNodeId: proposal.planNodeId || "",
-          createdAt: Date.now(),
-        };
-        // Brain-originated proposals are pre-approved — they've already been
-        // through the brain's deliberation. No need for selfImproveAutoApprove.
-        enqueueApproved(task);
-        log(`Enqueued improvement proposal (pre-approved): ${proposal.description.slice(0, 80)}`);
-      }
-
-      if (response.improvementProposals.length > canEnqueue) {
-        log(`Dropped ${response.improvementProposals.length - canEnqueue} proposals (weekly budget/queue limit)`);
-      }
+    if (response.improvementProposals?.length) {
+      enqueueImprovementProposals(response.improvementProposals, "reflect", cfg);
     }
 
     if (response.workingMemory) {
