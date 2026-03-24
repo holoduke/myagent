@@ -634,11 +634,20 @@ export function getDashboardHTML(): string {
           if (ws.channelCount) html += '<span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">' + ws.channelCount + ' ch</span>';
           if (!ws.authenticated) html += '<a href="/slack/auth/' + esc(ws.id) + '" class="btn" style="margin-left:auto;padding:4px 10px;font-size:11px">Authorize</a>';
           else html += '<span style="font-family:var(--mono);font-size:10px;color:var(--text-muted);margin-left:auto">Last poll: ' + (ws.lastPoll ? timeAgo(ws.lastPoll) : 'never') + '</span>';
+          html += '<button class="wl-rm" onclick="removeSlackWorkspace(\'' + esc(ws.id) + '\')" title="Remove workspace">Remove</button>';
           html += '</div>';
         }
       } else {
         html += '<div style="color:var(--text-ghost);font-size:13px;padding:8px 0">No Slack workspaces configured</div>';
       }
+      html += '<h4 style="margin:16px 0 8px;color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:1px">Add Workspace</h4>';
+      html += '<div class="wl-add-form">';
+      html += '<input type="text" id="slack-id" placeholder="Workspace ID (e.g. newstory)">';
+      html += '<input type="text" id="slack-team" placeholder="Team name">';
+      html += '<input type="text" id="slack-client-id" placeholder="Client ID">';
+      html += '<input type="text" id="slack-client-secret" placeholder="Client Secret">';
+      html += '<button class="btn primary" onclick="addSlackWorkspace()">Add</button>';
+      html += '</div>';
       html += '</div>';
 
       // Scheduled messages
@@ -880,6 +889,35 @@ export function getDashboardHTML(): string {
           method: 'DELETE',
           headers: jsonHeaders(),
           body: JSON.stringify({ jid })
+        });
+        loadIntegrations();
+      } catch {}
+    }
+
+    // ── Slack workspace management ──
+    async function addSlackWorkspace() {
+      const id = document.getElementById('slack-id')?.value?.trim();
+      const teamName = document.getElementById('slack-team')?.value?.trim();
+      const clientId = document.getElementById('slack-client-id')?.value?.trim();
+      const clientSecret = document.getElementById('slack-client-secret')?.value?.trim();
+      if (!id || !teamName || !clientId || !clientSecret) return;
+      try {
+        await fetch('/api/slack/workspaces', {
+          method: 'POST',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ id, teamName, clientId, clientSecret })
+        });
+        loadIntegrations();
+      } catch {}
+    }
+
+    async function removeSlackWorkspace(id) {
+      if (!confirm('Remove workspace "' + id + '"?')) return;
+      try {
+        await fetch('/api/slack/workspaces', {
+          method: 'DELETE',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ id })
         });
         loadIntegrations();
       } catch {}
