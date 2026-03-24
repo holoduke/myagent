@@ -10,6 +10,7 @@ import { sanitizeForPrompt, detectInjection } from "./trust.js";
 import type { TrustLevel } from "./trust.js";
 import { extractCommitments, extractAndClassifyCommitments } from "./commitments.js";
 import type { ActionableSignal } from "./actionable.js";
+import { formatPermissionRules, getActionMode } from "./contact-whitelist.js";
 
 function resolveCharacter(): CharacterOverride | undefined {
   const cfg = getBrainConfig();
@@ -121,14 +122,18 @@ function formatActionableFlags(observations: Observation[], ownerName: string): 
   if (flagged.length === 0) return "";
 
   const lines = flagged.map(obs => {
-    const categories = [...new Set(obs.actionableSignals!.map(s => s.category))].join(", ");
+    const signalDetails = obs.actionableSignals!.map(s => {
+      const mode = getActionMode(obs.senderJid, s.category);
+      return `${s.category}[${mode}]`;
+    });
+    const categories = [...new Set(signalDetails)].join(", ");
     const time = formatTime(obs.timestamp);
     const who = obs.sender || "Unknown";
     const context = obs.isGroup ? ` in "${obs.groupName || "?"}"` : " (DM)";
-    return `  [${time}] ${who}${context}: "${obs.text.slice(0, 150)}" → detected: ${categories}`;
+    return `  [${time}] ${who}${context}: "${obs.text.slice(0, 150)}" → ${categories}`;
   });
 
-  return `\n═══ ACTIONABLE FLAGS (whitelisted contacts) ═══\n\nThe following messages from whitelisted contacts contain potentially actionable content (events, invitations, logistics, requests, deadlines). Consider flagging these to ${ownerName} even if you would normally stay silent.\n\n${lines.join("\n")}\n`;
+  return `\n═══ ACTIONABLE FLAGS (whitelisted contacts) ═══\n\nThe following messages contain actionable content. Action modes per category:\n- [auto] = act on it silently (e.g. track the event, note the logistics)\n- [confirm] = flag to ${ownerName} and wait for confirmation before acting\n- [ignore] = observe only, do not act\n\n${lines.join("\n")}\n`;
 }
 
 function formatObservations(observations: Observation[]): string {
@@ -507,7 +512,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatActionableFlags(ctx.observations, ctx.ownerName)}
+${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}
 ═══ ACTIVATED MEMORIES ═══
 ${serializeNodesForPrompt(ctx.contextNodes, ctx.graph)}
 
