@@ -74,6 +74,24 @@ export function getWhitelist(): WhitelistedContact[] {
 }
 
 /**
+ * Update permissions for a whitelisted contact.
+ * Pass null to remove permissions (revert to observe-only).
+ */
+export function updatePermissions(jid: string, permissions: ContactPermissions | null): boolean {
+  const contacts = loadWhitelist();
+  const contact = contacts.find(c => c.jid === jid);
+  if (!contact) return false;
+  if (permissions) {
+    contact.permissions = permissions;
+  } else {
+    delete contact.permissions;
+  }
+  saveWhitelist(contacts);
+  log(`Updated permissions for ${contact.name} (${jid}): ${permissions ? JSON.stringify(permissions) : "removed"}`);
+  return true;
+}
+
+/**
  * Get permissions for a specific JID. Returns undefined if not whitelisted
  * or if no permissions are configured (observe-only).
  */
