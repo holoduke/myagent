@@ -1,8 +1,9 @@
 /**
- * Commitment extraction utility.
+ * Commitment extraction and classification utility.
  *
- * Detects commitment-like language in text (e.g. Moltbook posts/comments)
- * so the reflect tick can remind the brain to track public promises as goals.
+ * General-purpose accountability layer: detects commitment-like language in
+ * ALL outgoing content — Moltbook, WhatsApp, email, brain-generated messages.
+ * Classifies commitments by weight so only notable+ ones get tracked as goals.
  */
 
 export interface ExtractedCommitment {
@@ -12,8 +13,19 @@ export interface ExtractedCommitment {
   pattern: string;
 }
 
+export type CommitmentWeight = "trivial" | "notable" | "significant";
+
+export interface ClassifiedCommitment {
+  /** The commitment text */
+  commitment: string;
+  /** Weight classification */
+  weight: CommitmentWeight;
+  /** The pattern that matched */
+  pattern: string;
+}
+
 /**
- * Patterns that indicate a public commitment or promise.
+ * Patterns that indicate a commitment or promise.
  * Each regex is designed to match a single sentence/clause.
  */
 const COMMITMENT_PATTERNS: { regex: RegExp; label: string }[] = [
@@ -33,6 +45,27 @@ const COMMITMENT_PATTERNS: { regex: RegExp; label: string }[] = [
   { regex: /\bexpect me to\b[^.!?\n]{3,}/gi, label: "expect me to" },
   { regex: /\bworking on\b[^.!?\n]{5,}/gi, label: "working on" },
   { regex: /\bstay tuned\b[^.!?\n]{0,}/gi, label: "stay tuned" },
+  { regex: /\blet me\b[^.!?\n]{5,}/gi, label: "let me" },
+  { regex: /\bI'll look into\b[^.!?\n]{3,}/gi, label: "I'll look into" },
+  { regex: /\bI'll check\b[^.!?\n]{3,}/gi, label: "I'll check" },
+  { regex: /\bI should\b[^.!?\n]{5,}/gi, label: "I should" },
+];
+
+/**
+ * Patterns indicating significant (public/visible) commitments.
+ * These get elevated weight because they're visible to others.
+ */
+const SIGNIFICANT_KEYWORDS = [
+  "build", "create", "implement", "ship", "launch", "release",
+  "feature", "integration", "promise", "committed", "deploy",
+];
+
+/**
+ * Patterns indicating trivial commitments (quick lookups, checks).
+ */
+const TRIVIAL_KEYWORDS = [
+  "look into", "check", "look at", "see if", "see whether",
+  "think about", "consider", "look up",
 ];
 
 /**
@@ -59,6 +92,54 @@ export function extractCommitments(text: string): ExtractedCommitment[] {
   }
 
   return results;
+}
+
+/**
+ * Classify a single commitment by weight.
+ * - trivial: quick lookups/checks (under ~8 words after trigger, or trivial keywords)
+ * - notable: tasks requiring follow-up
+ * - significant: features/promises with public visibility or substantial scope
+ */
+export function classifyCommitment(commitmentText: string): ClassifiedCommitment {
+  const lower = commitmentText.toLowerCase();
+
+  // Detect pattern
+  let matchedPattern = "unknown";
+  for (const { regex, label } of COMMITMENT_PATTERNS) {
+    regex.lastIndex = 0;
+    if (regex.test(commitmentText)) {
+      matchedPattern = label;
+      break;
+    }
+  }
+
+  // Check for significant keywords first
+  const hasSignificant = SIGNIFICANT_KEYWORDS.some(kw => lower.includes(kw));
+  if (hasSignificant) {
+    return { commitment: commitmentText, weight: "significant", pattern: matchedPattern };
+  }
+
+  // Check for trivial keywords
+  const hasTrivial = TRIVIAL_KEYWORDS.some(kw => lower.includes(kw));
+  // Also treat very short commitments as trivial (fewer than 8 words after trigger)
+  const wordCount = commitmentText.split(/\s+/).length;
+  if (hasTrivial || wordCount < 6) {
+    return { commitment: commitmentText, weight: "trivial", pattern: matchedPattern };
+  }
+
+  // Default: notable
+  return { commitment: commitmentText, weight: "notable", pattern: matchedPattern };
+}
+
+/**
+ * Extract and classify all commitments from text.
+ * Returns only notable and significant commitments (trivial ones are filtered out).
+ */
+export function extractAndClassifyCommitments(text: string): ClassifiedCommitment[] {
+  const raw = extractCommitments(text);
+  return raw
+    .map(c => classifyCommitment(c.text))
+    .filter(c => c.weight !== "trivial");
 }
 
 /**

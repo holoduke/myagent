@@ -8,7 +8,7 @@ import { getBrainConfig, getCharacterPreset } from "./brain-config.js";
 import type { InitiativeSignal } from "./initiative.js";
 import { sanitizeForPrompt, detectInjection } from "./trust.js";
 import type { TrustLevel } from "./trust.js";
-import { extractCommitments } from "./commitments.js";
+import { extractCommitments, extractAndClassifyCommitments } from "./commitments.js";
 
 function resolveCharacter(): CharacterOverride | undefined {
   const cfg = getBrainConfig();
@@ -637,33 +637,48 @@ Respond with ONLY the JSON object.`;
 
 // ── Commitment Detection Helper ──
 
-function buildCommitmentsBlock(recentMoltbookActivity?: string[]): string {
-  if (!recentMoltbookActivity || recentMoltbookActivity.length === 0) return "";
+function buildCommitmentsBlock(
+  recentMoltbookActivity?: string[],
+  recentOutgoingActivity?: { source: string; audience: string; text: string }[],
+): string {
+  const sections: string[] = [];
 
-  const allCommitments = recentMoltbookActivity.flatMap(text => extractCommitments(text));
+  // Moltbook-specific section (backwards compat)
+  if (recentMoltbookActivity && recentMoltbookActivity.length > 0) {
+    const moltbookCommitments = recentMoltbookActivity.flatMap(text => extractAndClassifyCommitments(text));
+    const detectedSection = moltbookCommitments.length > 0
+      ? `\nDetected commitment language in Moltbook posts:\n${moltbookCommitments.map(c => `- [${c.weight}] "${c.commitment}" (pattern: ${c.pattern})`).join("\n")}\n`
+      : "";
+    sections.push(`Moltbook posts/comments:\n${detectedSection}${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}`);
+  }
 
-  const detectedSection = allCommitments.length > 0
-    ? `\nDetected commitment language in recent posts:\n${allCommitments.map(c => `- "${c.text}" (pattern: ${c.pattern})`).join("\n")}\n`
-    : "";
+  // General outgoing activity (WhatsApp, email, brain messages)
+  if (recentOutgoingActivity && recentOutgoingActivity.length > 0) {
+    const otherCommitments = recentOutgoingActivity.flatMap(a => {
+      const classified = extractAndClassifyCommitments(a.text);
+      return classified.map(c => ({ ...c, source: a.source, audience: a.audience }));
+    });
+    if (otherCommitments.length > 0) {
+      sections.push(`Other outgoing commitments detected:\n${otherCommitments.map(c => `- [${c.weight}] "${c.commitment}" (${c.source} → ${c.audience})`).join("\n")}`);
+    }
+  }
+
+  if (sections.length === 0) return "";
 
   return `
-═══ PUBLIC COMMITMENTS ═══
+═══ COMMITMENT REVIEW ═══
 
-Review your recent Moltbook activity below for any promises or commitments you made publicly.
-${detectedSection}
-Recent outgoing Moltbook posts/comments:
-${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}
+Review ALL recent commitments you've made across all channels.
+The accountability system auto-creates goals for notable+ commitments, but you should verify:
+
+${sections.join("\n\n")}
 
 ACTION REQUIRED:
-1. Check each post/comment for commitments (e.g. "I will", "I'm planning to", "next time I'll", "I should build").
-2. For any non-trivial commitment not already tracked, create a goal via goalOps with:
-   - title: the commitment summary
-   - description: what was promised and where (Moltbook post/comment)
-   - priority: 2 (default) or 1 if time-sensitive
-   - checkpoints: concrete steps to fulfill the commitment
-   - createdBy: "brain"
-3. Review existing goals tagged as public commitments — are any unfulfilled? Update progress or complete them.
-4. If a commitment was already fulfilled, mark the corresponding goal as complete.
+1. Check each commitment — are any already fulfilled but not marked complete?
+2. Are any overdue? Should any be worked on now?
+3. For any non-trivial commitment not already tracked, create a goal via goalOps.
+4. Trivial commitments (quick lookups/checks) are filtered out automatically.
+5. Update progress on existing commitment-sourced goals.
 `;
 }
 
@@ -693,6 +708,8 @@ export interface ReflectContext {
   };
   /** Recent outgoing Moltbook posts/comments for commitment detection */
   recentMoltbookActivity?: string[];
+  /** Recent outgoing messages across all channels for commitment detection */
+  recentOutgoingActivity?: { source: string; audience: string; text: string }[];
 }
 
 export function buildReflectPrompt(ctx: ReflectContext): string {
@@ -747,7 +764,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${goalsBlock}${initiativeBlock}${buildCommitmentsBlock(ctx.recentMoltbookActivity)}
+${goalsBlock}${initiativeBlock}${buildCommitmentsBlock(ctx.recentMoltbookActivity, ctx.recentOutgoingActivity)}
 ═══ GRAPH STATS ═══
 Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
 By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(", ")}

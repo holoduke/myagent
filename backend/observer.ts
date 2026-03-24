@@ -4,6 +4,8 @@ import { createLogger } from "./logger.js";
 import { BrainError } from "./brain-errors.js";
 import { scoreAndMaybeInterrupt } from "./urgency.js";
 import { classifyTrust, detectInjection, logInjectionAttempt } from "./trust.js";
+import { extractAndClassifyCommitments } from "./commitments.js";
+import type { ClassifiedCommitment } from "./commitments.js";
 
 const log = createLogger("observer");
 
@@ -56,6 +58,8 @@ export interface Observation {
   urgency?: number;
   /** Trust classification — set at intake, used for prompt sanitization */
   trustLevel?: "owner" | "trusted" | "untrusted";
+  /** Detected commitments in outgoing messages (isFromMe=true only) */
+  detectedCommitments?: ClassifiedCommitment[];
 }
 
 export interface CallMeta {
@@ -166,6 +170,15 @@ export function recordObservation(obs: Observation): void {
     const detection = detectInjection(obs.text);
     if (detection.detected) {
       logInjectionAttempt(obs, detection);
+    }
+  }
+
+  // Scan outgoing messages for commitments
+  if (obs.isFromMe && obs.text) {
+    const commitments = extractAndClassifyCommitments(obs.text);
+    if (commitments.length > 0) {
+      obs.detectedCommitments = commitments;
+      log(`Detected ${commitments.length} commitment(s) in outgoing ${obs.source || "whatsapp"} message`);
     }
   }
 
