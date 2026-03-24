@@ -710,6 +710,8 @@ export interface ReflectContext {
   recentMoltbookActivity?: string[];
   /** Recent outgoing messages across all channels for commitment detection */
   recentOutgoingActivity?: { source: string; audience: string; text: string }[];
+  /** Weekly drift audit summary, if available */
+  driftSummary?: string;
 }
 
 export function buildReflectPrompt(ctx: ReflectContext): string {
@@ -727,6 +729,10 @@ export function buildReflectPrompt(ctx: ReflectContext): string {
         const priority = s.priority >= 0.7 ? "HIGH" : s.priority >= 0.4 ? "MEDIUM" : "LOW";
         return `[${priority}] ${s.description}${s.suggestedAction ? `\n  → Suggested: ${s.suggestedAction}` : ""}`;
       }).join("\n\n")}\n`
+    : "";
+
+  const driftBlock = ctx.driftSummary
+    ? `\n═══ DRIFT AUDIT ═══\n${ctx.driftSummary}\nFull reports: /data/brain/drift-reports/\n`
     : "";
 
   const siStats = ctx.selfImproveStats;
@@ -772,6 +778,7 @@ By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(",
 ═══ STRONGEST MEMORIES ═══
 ${serializeNodesForPrompt(ctx.strongestNodes, ctx.graph)}
 ${selfImproveBlock}
+${driftBlock}
 ${OPERATION_INSTRUCTIONS}
 ═══ WHAT TO DO ═══
 
