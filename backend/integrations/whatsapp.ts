@@ -48,8 +48,32 @@ let isConnected = false;
 let reconnectAttempt = 0;
 const MAX_RECONNECT_DELAY = 60_000; // 60s max
 const BASE_RECONNECT_DELAY = 5_000; // 5s base
-const processedMessages = new Set<string>();
-const sentMessages = new Set<string>();
+// Message dedup caches with TTL (timestamp-tracked Maps + periodic sweep)
+const MESSAGE_DEDUP_TTL = 5 * 60 * 1000; // 5 minutes
+const MAX_DEDUP_CACHE_SIZE = 10_000;
+const DEDUP_SWEEP_INTERVAL = 60 * 1000; // sweep every 60s
+const processedMessages = new Map<string, number>(); // msgId → timestamp
+const sentMessages = new Map<string, number>(); // dedupKey → timestamp
+
+function sweepDedupCache(cache: Map<string, number>, ttl: number, maxSize: number): void {
+  const now = Date.now();
+  for (const [key, ts] of cache) {
+    if (now - ts > ttl) cache.delete(key);
+  }
+  // Safety cap: if still over max, remove oldest entries
+  if (cache.size > maxSize) {
+    const sorted = [...cache.entries()].sort((a, b) => a[1] - b[1]);
+    const toRemove = cache.size - maxSize;
+    for (let i = 0; i < toRemove; i++) {
+      cache.delete(sorted[i][0]);
+    }
+  }
+}
+
+setInterval(() => {
+  sweepDedupCache(processedMessages, MESSAGE_DEDUP_TTL, MAX_DEDUP_CACHE_SIZE);
+  sweepDedupCache(sentMessages, MESSAGE_DEDUP_TTL, MAX_DEDUP_CACHE_SIZE);
+}, DEDUP_SWEEP_INTERVAL).unref();
 
 // Group name cache with TTL to prevent unbounded memory growth
 const GROUP_CACHE_TTL = 60 * 60 * 1000; // 1 hour
@@ -280,8 +304,7 @@ export async function startWhatsApp(
         continue;
       }
       if (msgId) {
-        processedMessages.add(msgId);
-        setTimeout(() => processedMessages.delete(msgId), 5 * 60 * 1000);
+        processedMessages.set(msgId, Date.now());
       }
 
       // --- Observation: fire for ALL messages (groups, contacts, own) ---
@@ -402,8 +425,7 @@ export async function sendMessage(jid: string, text: string): Promise<void> {
     log.debug(`Outgoing dedup skip: already sent to ${jid} (hash=${hash})`);
     return;
   }
-  sentMessages.add(dedupKey);
-  setTimeout(() => sentMessages.delete(dedupKey), 5 * 60 * 1000);
+  sentMessages.set(dedupKey, Date.now());
 
   await sock.sendMessage(jid, { text });
 }
