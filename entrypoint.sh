@@ -22,9 +22,13 @@ fi
 
 # ── Boot counter for crash recovery ──
 # The counter tracks consecutive crashes. A clean deploy resets it via DEPLOY_ID.
+# Only counts boots within a 10-minute window to avoid false alarms from
+# routine restarts that happen hours apart.
 BOOT_COUNTER_FILE="/data/brain/boot-counter"
+BOOT_TIMESTAMP_FILE="/data/brain/boot-timestamp"
 DEPLOY_ID_FILE="/data/brain/deploy-id"
 BOOT_COUNT=0
+CRASH_WINDOW=600  # 10 minutes — boots outside this window reset the counter
 
 # Detect fresh deployment by comparing image/commit ID
 CURRENT_DEPLOY="${COOLIFY_RESOURCE_UUID:-unknown}-$(date -r /app/package.json +%s 2>/dev/null || echo 'na')"
@@ -41,10 +45,21 @@ else
   if [ -f "$BOOT_COUNTER_FILE" ]; then
     BOOT_COUNT=$(cat "$BOOT_COUNTER_FILE" 2>/dev/null || echo "0")
   fi
+  # Reset counter if last boot was outside the crash window
+  if [ -f "$BOOT_TIMESTAMP_FILE" ]; then
+    LAST_BOOT_TS=$(cat "$BOOT_TIMESTAMP_FILE" 2>/dev/null || echo "0")
+    NOW_TS=$(date +%s)
+    ELAPSED=$((NOW_TS - LAST_BOOT_TS))
+    if [ "$ELAPSED" -gt "$CRASH_WINDOW" ]; then
+      echo "[entrypoint] Last boot was ${ELAPSED}s ago (>${CRASH_WINDOW}s), resetting counter (was $BOOT_COUNT)"
+      BOOT_COUNT=0
+    fi
+  fi
 fi
 
 BOOT_COUNT=$((BOOT_COUNT + 1))
 echo "$BOOT_COUNT" > "$BOOT_COUNTER_FILE"
+date +%s > "$BOOT_TIMESTAMP_FILE"
 
 echo "[entrypoint] Boot count: $BOOT_COUNT (deploy: ${CURRENT_DEPLOY})"
 
@@ -58,6 +73,6 @@ if [ "$BOOT_COUNT" -gt 2 ]; then
 fi
 
 # Start the agent (reset boot counter on clean exit via trap)
-trap 'echo "0" > "$BOOT_COUNTER_FILE"; exit 0' SIGTERM
+trap 'echo "0" > "$BOOT_COUNTER_FILE"; rm -f "$BOOT_TIMESTAMP_FILE"; exit 0' SIGTERM
 
 exec npx tsx backend/index.ts
