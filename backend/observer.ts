@@ -9,6 +9,7 @@ import type { ClassifiedCommitment } from "./commitments.js";
 import { detectActionableContent } from "./actionable.js";
 import type { ActionableSignal } from "./actionable.js";
 import { isWhitelisted } from "./contact-whitelist.js";
+import { processObservation as trackActionable } from "./actionable-tracker.js";
 
 const log = createLogger("observer");
 
@@ -193,6 +194,7 @@ export function recordObservation(obs: Observation): void {
     if (signals.length > 0) {
       obs.actionableSignals = signals;
       log(`Detected ${signals.length} actionable signal(s) from whitelisted ${obs.sender}`);
+      trackActionable(obs);
     }
   }
 
