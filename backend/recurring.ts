@@ -28,8 +28,32 @@ export interface RecurringTask {
 
 const store = new FileStore<RecurringTask[]>({ filePath: RECURRING_FILE, defaultValue: [] });
 
+function isValidTask(task: unknown): task is RecurringTask {
+  if (typeof task !== "object" || task === null) return false;
+  const t = task as Record<string, unknown>;
+  if (typeof t.id !== "string" || typeof t.enabled !== "boolean") return false;
+  if (typeof t.pattern !== "object" || t.pattern === null) return false;
+  const p = t.pattern as Record<string, unknown>;
+  if (!Array.isArray(p.hours) || p.hours.length === 0) return false;
+  if (!p.hours.every((h: unknown) => typeof h === "number" && Number.isInteger(h) && h >= 0 && h <= 23)) return false;
+  if (p.daysOfWeek !== undefined) {
+    if (!Array.isArray(p.daysOfWeek)) return false;
+    if (!p.daysOfWeek.every((d: unknown) => typeof d === "number" && Number.isInteger(d) && d >= 0 && d <= 6)) return false;
+  }
+  return true;
+}
+
 function loadTasks(): RecurringTask[] {
-  return store.load();
+  const raw = store.load();
+  const valid: RecurringTask[] = [];
+  for (const entry of raw) {
+    if (isValidTask(entry)) {
+      valid.push(entry);
+    } else {
+      log(`WARN Skipping invalid recurring task on load: ${JSON.stringify(entry)}`);
+    }
+  }
+  return valid;
 }
 
 function saveTasks(tasks: RecurringTask[]): void {
