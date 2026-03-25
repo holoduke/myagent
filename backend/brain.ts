@@ -44,7 +44,6 @@ import {
   completeItem,
   failItem,
   getWeeklyCompletedCount,
-  findOverlappingTask,
 } from "./self-improve-queue.js";
 import {
   getDueSubAgents,
@@ -1090,14 +1089,6 @@ function enqueueImprovementProposals(
       log(`Skipping invalid ${source} improvement proposal: missing description or rationale`);
       continue;
     }
-    // Check for overlap with recent/queued tasks touching the same files
-    const proposalFiles = Array.isArray(proposal.files) ? proposal.files : [];
-    const overlap = findOverlappingTask(proposalFiles);
-    if (overlap) {
-      log(`${source}: skipping overlapping proposal "${proposal.description.slice(0, 60)}" — overlaps with ${overlap}`);
-      continue;
-    }
-
     const improveVerify = verify({
       type: "self_improve",
       source,
