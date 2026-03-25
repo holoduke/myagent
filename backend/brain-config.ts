@@ -176,7 +176,7 @@ function envDefaults(): BrainConfig {
     urgencyInterruptThreshold: Number(process.env.BRAIN_URGENCY_INTERRUPT_THRESHOLD ?? 0.8),
     characterType: "default",
     characterCustomPrompt: null,
-    detectionMode: "hybrid",
+    detectionMode: "prompt",
     detectionPrompt: null,
     activationSpreadFactor: 0.6,
     archiveRecallMin: 5,
