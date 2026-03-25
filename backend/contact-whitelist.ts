@@ -29,6 +29,8 @@ export interface WhitelistedContact {
   name: string;
   addedAt: number;
   note?: string;
+  /** Alternative JIDs for this contact (e.g. LID JIDs alongside phone JIDs) */
+  aliases?: string[];
   /** Permission rules — if absent, contact is observe-only (no commands accepted) */
   permissions?: ContactPermissions;
 }
@@ -48,10 +50,15 @@ function saveWhitelist(contacts: WhitelistedContact[]): void {
   whitelistCache = contacts;
 }
 
+/** Check if a JID matches a contact (primary jid or aliases) */
+function matchesContact(contact: WhitelistedContact, jid: string): boolean {
+  return contact.jid === jid || (contact.aliases?.includes(jid) ?? false);
+}
+
 export function isWhitelisted(jid: string): boolean {
   const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
   if (jid === ownerJid) return true;
-  return loadWhitelist().some(c => c.jid === jid);
+  return loadWhitelist().some(c => matchesContact(c, jid));
 }
 
 export function addToWhitelist(jid: string, name: string): void {
@@ -96,7 +103,7 @@ export function updatePermissions(jid: string, permissions: ContactPermissions |
  * or if no permissions are configured (observe-only).
  */
 export function getPermissions(jid: string): ContactPermissions | undefined {
-  const contact = loadWhitelist().find(c => c.jid === jid);
+  const contact = loadWhitelist().find(c => matchesContact(c, jid));
   return contact?.permissions;
 }
 
@@ -104,7 +111,7 @@ export function getPermissions(jid: string): ContactPermissions | undefined {
  * Get the contact entry for a JID (includes name and permissions).
  */
 export function getContact(jid: string): WhitelistedContact | undefined {
-  return loadWhitelist().find(c => c.jid === jid);
+  return loadWhitelist().find(c => matchesContact(c, jid));
 }
 
 /**
