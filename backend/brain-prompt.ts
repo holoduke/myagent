@@ -623,7 +623,8 @@ THINKING GUIDELINES:
 ${ctx.selfImproveStats?.enabled ? `
 SELF-IMPROVEMENT (optional during think ticks):
 Budget: ${ctx.selfImproveStats.completedThisWeek}/${ctx.selfImproveStats.maxPerWeek} used this week. Pending: ${ctx.selfImproveStats.pendingInQueue}.
-If you notice a bug, edge case, or improvement opportunity while processing observations, you can propose it via "improvementProposals" in your response. Same format as reflect ticks: description, rationale, files, memoryContext. Keep your primary focus on observations — improvements are a bonus here.` : ""}
+If you notice a bug, edge case, or improvement opportunity while processing observations, you can propose it via "improvementProposals" in your response. Same format as reflect ticks: description, rationale, files, memoryContext. Keep your primary focus on observations — improvements are a bonus here.
+DEDUP: Do not propose tasks that overlap with already-queued (${ctx.selfImproveStats.pendingInQueue} pending) or recently-completed work. If something similar was already proposed — skip it.` : ""}
 
 Respond with ONLY the JSON object.`;
 }
@@ -823,7 +824,9 @@ Read your own source code (backend/) to find concrete things to improve. Think a
 To propose an improvement, add it to the "improvementProposals" array in your response.
 Each proposal needs: description (what to change), rationale (why), files (which source files), memoryContext (relevant node IDs).
 A separate worker process will implement each approved proposal on a feature branch and create a PR.
-DO NOT edit code directly during this tick — only propose via the JSON field.` : `
+DO NOT edit code directly during this tick — only propose via the JSON field.
+
+DEDUP: Before proposing, mentally check the pending queue and recent history above. Do NOT propose tasks that overlap significantly with already-queued or recently-completed work (same files, same intent). If you already proposed something similar recently — skip it or build on it instead of duplicating.` : `
 ═══ SELF-IMPROVEMENT STATUS ═══
 Self-improvement is DISABLED. Skip code improvement proposals.`;
 
