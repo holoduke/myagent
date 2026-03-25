@@ -13,6 +13,8 @@ import { processObservation as trackActionable } from "./actionable-tracker.js";
 import { routeObservationToDirectives } from "./directive-router.js";
 import { detectWithPrompt } from "./prompt-detector.js";
 import type { PromptDetectionResult } from "./prompt-detector.js";
+import { classifyIntent } from "./intent-classifier.js";
+import type { IntentClassification } from "./intent-classifier.js";
 import { getBrainConfig } from "./brain-config.js";
 
 const log = createLogger("observer");
@@ -72,6 +74,8 @@ export interface Observation {
   actionableSignals?: ActionableSignal[];
   /** Structured event data from prompt-based detection */
   promptDetectionResult?: PromptDetectionResult;
+  /** Intent classification for incoming messages */
+  intentClassification?: IntentClassification;
 }
 
 export interface CallMeta {
@@ -183,6 +187,16 @@ export function recordObservation(obs: Observation): void {
     if (detection.detected) {
       logInjectionAttempt(obs, detection);
     }
+  }
+
+  // Classify intent for incoming messages (async — enriches observation after recording)
+  if (!obs.isFromMe && obs.text) {
+    classifyIntent(obs.text, obs.sender, obs.isGroup).then(result => {
+      obs.intentClassification = result;
+      log(`Intent classified: ${result.intent} (${result.confidence.toFixed(2)}, ${result.method}) for "${obs.text.slice(0, 60)}" from ${obs.sender}`);
+    }).catch(err => {
+      log(`Intent classification error for ${obs.sender}: ${err}`);
+    });
   }
 
   // Scan outgoing messages for commitments
