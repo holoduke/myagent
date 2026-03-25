@@ -126,11 +126,54 @@ export function processObservation(obs: Observation): void {
  */
 function parseTimeFromSignals(signals: ActionableSignal[]): [number, number] | null {
   for (const s of signals) {
-    // Match "om 14:30", "at 14:30", "om 9.00", "at 9.00"
-    const m = s.snippet.match(/(?:om|at)\s+(\d{1,2})[.:](\d{2})/i);
+    // Match "om 14:30", "at 14:30", "rond 16:00", "ongeveer 13:00", or bare "16:00"
+    const m = s.snippet.match(/(?:(?:om|at|rond|ongeveer|omstreeks)\s+)?(\d{1,2})[.:](\d{2})/i);
     if (m) return [parseInt(m[1], 10), parseInt(m[2], 10)];
   }
   return null;
+}
+
+/**
+ * Compute Dutch public holidays for a given year.
+ * Easter-based holidays use the Anonymous Gregorian algorithm.
+ */
+function computeDutchHolidays(year: number): { key: string; date: Date }[] {
+  // Anonymous Gregorian Easter algorithm
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31) - 1; // 0-indexed
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  const easter = new Date(year, month, day);
+
+  const addDays = (base: Date, days: number): Date => {
+    const d = new Date(base);
+    d.setDate(d.getDate() + days);
+    return d;
+  };
+
+  return [
+    { key: "new_years_day", date: new Date(year, 0, 1) },
+    { key: "easter_sunday", date: easter },
+    { key: "easter_monday", date: addDays(easter, 1) },
+    { key: "kings_day", date: new Date(year, 3, 27) },
+    { key: "liberation_day", date: new Date(year, 4, 5) },
+    { key: "ascension", date: addDays(easter, 39) },
+    { key: "whit_sunday", date: addDays(easter, 49) },
+    { key: "whit_monday", date: addDays(easter, 50) },
+    { key: "christmas_day", date: new Date(year, 11, 25) },
+    { key: "boxing_day", date: new Date(year, 11, 26) },
+    { key: "new_years_eve", date: new Date(year, 11, 31) },
+  ];
 }
 
 /**
@@ -176,6 +219,52 @@ function parseDateFromSignals(signals: ActionableSignal[]): Date | null {
       return d;
     }
 
+    // Dutch holidays (calculate for current/next year)
+    const holidays = computeDutchHolidays(now.getFullYear());
+    // If all dates are in the past, also check next year
+    const nextYearHolidays = computeDutchHolidays(now.getFullYear() + 1);
+    const allHolidays = [...holidays, ...nextYearHolidays];
+
+    const holidayMap: Record<string, string[]> = {
+      "eerste paasdag": ["easter_sunday"],
+      "1e paasdag": ["easter_sunday"],
+      "pasen": ["easter_sunday"],
+      "tweede paasdag": ["easter_monday"],
+      "2e paasdag": ["easter_monday"],
+      "paaszondag": ["easter_sunday"],
+      "paasmaandag": ["easter_monday"],
+      "koningsdag": ["kings_day"],
+      "bevrijdingsdag": ["liberation_day"],
+      "hemelvaart": ["ascension"],
+      "hemelvaartsdag": ["ascension"],
+      "eerste pinksterdag": ["whit_sunday"],
+      "1e pinksterdag": ["whit_sunday"],
+      "pinksteren": ["whit_sunday"],
+      "tweede pinksterdag": ["whit_monday"],
+      "2e pinksterdag": ["whit_monday"],
+      "kerst": ["christmas_day"],
+      "eerste kerstdag": ["christmas_day"],
+      "1e kerstdag": ["christmas_day"],
+      "tweede kerstdag": ["boxing_day"],
+      "2e kerstdag": ["boxing_day"],
+      "oud en nieuw": ["new_years_eve"],
+      "oudejaarsavond": ["new_years_eve"],
+      "nieuwjaar": ["new_years_day"],
+      "nieuwjaarsdag": ["new_years_day"],
+    };
+
+    for (const [name, keys] of Object.entries(holidayMap)) {
+      if (lower.includes(name)) {
+        for (const key of keys) {
+          const holiday = allHolidays.find(h => h.key === key && h.date >= now);
+          if (holiday) return holiday.date;
+        }
+        // Fallback: return earliest matching even if past
+        const fallback = allHolidays.find(h => keys.includes(h.key));
+        if (fallback) return fallback.date;
+      }
+    }
+
     // Explicit date: "on 15 march", "op 15 maart"
     const monthMap: Record<string, number> = {
       january: 0, januari: 0, february: 1, februari: 1, march: 2, maart: 2,
@@ -198,9 +287,57 @@ function parseDateFromSignals(signals: ActionableSignal[]): Date | null {
   return null;
 }
 
+interface ParsedEvent {
+  date: Date;
+  hours: number;
+  minutes: number;
+  summary: string;
+}
+
 /**
- * Attempt to create a calendar event for an auto_executed event request.
- * Updates the request record with the resulting eventId.
+ * Extract multiple events from a message.
+ * Splits on "en" / "and" boundaries when different dates are detected,
+ * or falls back to single-event parsing from signal snippets.
+ */
+function extractMultipleEvents(text: string, signals: ActionableSignal[]): ParsedEvent[] {
+  // Try splitting the text on " en " / " and " to find separate event clauses
+  const clauses = text.split(/\s+(?:en|and)\s+/i);
+
+  if (clauses.length > 1) {
+    const events: ParsedEvent[] = [];
+    for (const clause of clauses) {
+      const clauseSignals: ActionableSignal[] = [{ category: "event", snippet: clause, pattern: "clause" }];
+      const date = parseDateFromSignals(clauseSignals);
+      if (date) {
+        const time = parseTimeFromSignals(clauseSignals);
+        events.push({
+          date,
+          hours: time ? time[0] : 10,
+          minutes: time ? time[1] : 0,
+          summary: clause.trim().slice(0, 80),
+        });
+      }
+    }
+    if (events.length > 0) return events;
+  }
+
+  // Fallback: single event from signals
+  const targetDate = parseDateFromSignals(signals);
+  if (!targetDate) return [];
+
+  const time = parseTimeFromSignals(signals);
+  return [{
+    date: targetDate,
+    hours: time ? time[0] : 10,
+    minutes: time ? time[1] : 0,
+    summary: signals[0]?.snippet || text.slice(0, 60),
+  }];
+}
+
+/**
+ * Attempt to create calendar event(s) for an auto_executed event request.
+ * Supports multiple events in a single message.
+ * Updates the request record with the resulting eventId(s).
  */
 async function executeEventCreation(request: ActionableRequest, obs: Observation): Promise<void> {
   // Find the first authenticated calendar account
@@ -212,44 +349,48 @@ async function executeEventCreation(request: ActionableRequest, obs: Observation
   }
 
   const eventSignals = request.signals.filter(s => s.category === "event");
-  const targetDate = parseDateFromSignals(eventSignals);
-  if (!targetDate) {
-    log(`Could not parse date from signals for ${request.id} — skipping event creation`);
+
+  // Try to extract multiple events from the full message text
+  const events = extractMultipleEvents(obs.text, eventSignals);
+
+  if (events.length === 0) {
+    log(`Could not parse any events from signals for ${request.id} — skipping event creation`);
     return;
   }
 
-  const time = parseTimeFromSignals(eventSignals);
-  const hours = time ? time[0] : 10; // default 10:00 if no time found
-  const minutes = time ? time[1] : 0;
+  const eventIds: string[] = [];
 
-  const startDate = new Date(targetDate);
-  startDate.setHours(hours, minutes, 0, 0);
+  for (const evt of events) {
+    const startDate = new Date(evt.date);
+    startDate.setHours(evt.hours, evt.minutes, 0, 0);
+    const endDate = new Date(startDate);
+    endDate.setHours(endDate.getHours() + 1); // default 1h duration
 
-  const endDate = new Date(startDate);
-  endDate.setHours(endDate.getHours() + 1); // default 1h duration
+    const summary = `${obs.sender}: ${evt.summary}`.slice(0, 120);
 
-  // Build summary from sender + first event snippet
-  const snippet = eventSignals[0]?.snippet || obs.text.slice(0, 60);
-  const summary = `${obs.sender}: ${snippet}`.slice(0, 120);
+    const result = await createEvent(
+      account.id,
+      summary,
+      startDate.toISOString(),
+      endDate.toISOString(),
+    );
 
-  const result = await createEvent(
-    account.id,
-    summary,
-    startDate.toISOString(),
-    endDate.toISOString(),
-  );
+    if (result.success && result.eventId) {
+      eventIds.push(result.eventId);
+      log(`Auto-created calendar event ${result.eventId} for request ${request.id}: ${summary}`);
+    } else {
+      log(`Calendar event creation failed for ${request.id}: ${result.error}`);
+    }
+  }
 
-  if (result.success && result.eventId) {
-    // Update the request record with the created eventId
+  // Update the request record with the created eventId(s)
+  if (eventIds.length > 0) {
     const requests = load();
     const tracked = requests.find(r => r.id === request.id);
     if (tracked) {
-      tracked.eventId = result.eventId;
+      tracked.eventId = eventIds.join(",");
       save(requests);
     }
-    log(`Auto-created calendar event ${result.eventId} for request ${request.id}`);
-  } else {
-    log(`Calendar event creation failed for ${request.id}: ${result.error}`);
   }
 }
 

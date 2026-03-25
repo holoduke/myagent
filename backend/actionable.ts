@@ -43,9 +43,12 @@ const ACTIONABLE_PATTERNS: PatternDef[] = [
   { regex: /\b(?:op|on)\s+(?:maandag|dinsdag|woensdag|donderdag|vrijdag|zaterdag|zondag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b[^.!?\n]*/gi, label: "day mention", category: "event" },
   { regex: /\b(?:morgen|overmorgen|tomorrow|day after tomorrow)\b[^.!?\n]*/gi, label: "relative date", category: "event" },
   { regex: /\b(?:volgende week|next week|komend weekend|this weekend|volgend weekend|next weekend)\b[^.!?\n]*/gi, label: "relative week", category: "event" },
+  { regex: /\b(?:eerste|tweede|1e|2e)?\s*(?:paasdag|pinksterdag|kerstdag)\b[^.!?\n]*/gi, label: "holiday mention", category: "event" },
+  { regex: /\b(?:pasen|pinksteren|kerst|koningsdag|bevrijdingsdag|hemelvaart(?:sdag)?|nieuwjaar(?:sdag)?|oud en nieuw|oudejaarsavond)\b[^.!?\n]*/gi, label: "holiday mention", category: "event" },
   { regex: /\b(?:feestje|verjaardag|birthday|party|bruiloft|wedding|ceremonie|ceremony|borrel|drinks|etentje|dinner|lunch)\b[^.!?\n]*/gi, label: "event type", category: "event" },
   { regex: /\bom\s+\d{1,2}[.:]\d{2}\b/gi, label: "time mention (NL)", category: "event" },
   { regex: /\bat\s+\d{1,2}[.:]\d{2}\b/gi, label: "time mention (EN)", category: "event" },
+  { regex: /\b(?:rond|ongeveer|omstreeks|around)\s+\d{1,2}[.:]\d{2}\b/gi, label: "time mention (approximate)", category: "event" },
 
   // ── Invitations ──
   { regex: /\b(?:kom je|ga je mee|zin om|heb je zin|wil je komen|ben je erbij)\b[^.!?\n]*/gi, label: "invitation (NL)", category: "invitation" },
