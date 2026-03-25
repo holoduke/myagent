@@ -9,6 +9,7 @@ const log = createLogger("calendar");
 
 const CALENDAR_DIR = "/data/calendar";
 const STATE_FILE = `${CALENDAR_DIR}/state.json`;
+const CONFIG_FILE = `${CALENDAR_DIR}/config.json`;
 const POLL_INTERVAL = Number(process.env.CALENDAR_POLL_INTERVAL ?? 300000);
 const ENABLED = process.env.CALENDAR_ENABLED !== "false";
 
@@ -18,7 +19,18 @@ interface CalendarState {
   };
 }
 
+export interface CalendarConfigEntry {
+  id: string;
+  name: string;
+  tag: "private" | "work" | null;
+}
+
+export interface CalendarConfig {
+  calendars: CalendarConfigEntry[];
+}
+
 const stateStore = new FileStore<CalendarState>({ filePath: STATE_FILE, defaultValue: {} });
+const configStore = new FileStore<CalendarConfig>({ filePath: CONFIG_FILE, defaultValue: { calendars: [] } });
 
 function loadState(): CalendarState {
   return stateStore.load();
@@ -90,6 +102,43 @@ async function fetchUpcomingEvents(accountId: string): Promise<void> {
   }
 }
 
+// ── Calendar config management ──
+
+export function loadCalendarConfig(): CalendarConfig {
+  return configStore.load();
+}
+
+export function saveCalendarConfig(config: CalendarConfig): void {
+  configStore.save(config);
+}
+
+export function getCalendarByTag(tag: string): CalendarConfigEntry | undefined {
+  const config = loadCalendarConfig();
+  return config.calendars.find(c => c.tag === tag);
+}
+
+export async function listCalendars(accountId: string): Promise<Array<{ id: string; name: string }>> {
+  const accounts = loadAccounts();
+  const account = accounts.find(a => a.id === accountId);
+  if (!account || (!account.tokens?.refresh_token && !account.tokens?.access_token)) {
+    return [];
+  }
+
+  const auth = createOAuth2Client(account);
+  const calendar = google.calendar({ version: "v3", auth });
+
+  try {
+    const res = await calendar.calendarList.list();
+    const items = res.data.items || [];
+    return items
+      .filter(item => item.id && item.summary)
+      .map(item => ({ id: item.id!, name: item.summary! }));
+  } catch (err: any) {
+    log(`Failed to list calendars for ${accountId}: ${err.message || err}`);
+    return [];
+  }
+}
+
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 export function startCalendarPolling(): void {
@@ -144,6 +193,7 @@ export async function createEvent(
   startDateTime: string,
   endDateTime: string,
   location?: string,
+  calendarId?: string,
 ): Promise<{ success: boolean; eventId?: string; error?: string }> {
   const accounts = loadAccounts();
   const account = accounts.find(a => a.id === accountId);
@@ -151,12 +201,19 @@ export async function createEvent(
     return { success: false, error: "Account not found or not authenticated" };
   }
 
+  // Resolve calendar ID: explicit > tag "private" > "primary"
+  let targetCalendarId = calendarId;
+  if (!targetCalendarId) {
+    const privateCalendar = getCalendarByTag("private");
+    targetCalendarId = privateCalendar?.id || "primary";
+  }
+
   const auth = createOAuth2Client(account);
   const calendar = google.calendar({ version: "v3", auth });
 
   try {
     const res = await calendar.events.insert({
-      calendarId: "primary",
+      calendarId: targetCalendarId,
       requestBody: {
         summary,
         start: { dateTime: startDateTime },

@@ -96,6 +96,16 @@ export interface CalendarStatus {
   nextEventCount: number
 }
 
+export interface CalendarConfigEntry {
+  id: string
+  name: string
+  tag: 'private' | 'work' | null
+}
+
+export interface CalendarConfig {
+  calendars: CalendarConfigEntry[]
+}
+
 export interface HomeAssistantStatus {
   enabled: boolean
   connected: boolean

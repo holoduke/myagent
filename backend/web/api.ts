@@ -19,7 +19,8 @@ import { getAccountStatus, addAccount, removeAccount } from "../integrations/gma
 import { getWorkspaceStatus, addWorkspace as addSlackWorkspace, removeWorkspace as removeSlackWorkspace } from "../integrations/slack.js";
 import { getLatestQr } from "../integrations/whatsapp.js";
 import { getSSHStatus, getPublicKey, addTarget, removeTarget, testConnection } from "../integrations/ssh.js";
-import { getCalendarStatus, createEvent } from "../integrations/calendar.js";
+import { getCalendarStatus, createEvent, listCalendars, loadCalendarConfig, saveCalendarConfig } from "../integrations/calendar.js";
+import type { CalendarConfigEntry } from "../integrations/calendar.js";
 import { getHAStatus, saveConfig, restartHAPolling, testHAConnection } from "../integrations/homeassistant.js";
 import type { HAConfig, HAConnectionMode } from "../integrations/homeassistant.js";
 import { getRSSStatus, addFeed, removeFeed } from "../integrations/rss.js";
@@ -319,6 +320,24 @@ export function handleApiRoutes(
   if (pathname === "/api/calendar/events" && req.method === "POST" && isAuthenticated(req)) {
     handleCalendarCreateEvent(req, res);
     return true;
+  }
+
+  // ── Calendar list (Google calendars from account) ──
+  if (pathname === "/api/calendar/calendars" && req.method === "GET" && isAuthenticated(req)) {
+    handleCalendarList(req, res);
+    return true;
+  }
+
+  // ── Calendar config (tag assignments) ──
+  if (pathname === "/api/calendar/config" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      respondJson(res, 200, loadCalendarConfig());
+      return true;
+    }
+    if (req.method === "POST") {
+      handleCalendarConfigSave(req, res);
+      return true;
+    }
   }
 
   // ── Home Assistant config CRUD ──
@@ -1095,14 +1114,41 @@ const handleGmailRemoveAccount = apiHandler(async (_req, _res, body: { id?: stri
   return { success: removeAccount(body.id) };
 });
 
-// ── Calendar handler ──
+// ── Calendar handlers ──
 
-const handleCalendarCreateEvent = apiHandler(async (_req, res, body: { accountId?: string; summary?: string; startDateTime?: string; endDateTime?: string; location?: string }) => {
+const handleCalendarCreateEvent = apiHandler(async (_req, res, body: { accountId?: string; summary?: string; startDateTime?: string; endDateTime?: string; location?: string; calendarId?: string }) => {
   if (!body.accountId || !body.summary || !body.startDateTime || !body.endDateTime) {
     throw new ApiError(400, "Missing required fields: accountId, summary, startDateTime, endDateTime");
   }
-  const result = await createEvent(body.accountId, body.summary, body.startDateTime, body.endDateTime, body.location);
+  const result = await createEvent(body.accountId, body.summary, body.startDateTime, body.endDateTime, body.location, body.calendarId);
   respondJson(res, result.success ? 200 : 500, result);
+});
+
+const handleCalendarList = apiGetHandler(async (req, _res) => {
+  const url = new URL(req.url || "/", "http://localhost");
+  const accountId = url.searchParams.get("accountId");
+  if (!accountId) {
+    throw new ApiError(400, "accountId query parameter is required");
+  }
+  const calendars = await listCalendars(accountId);
+  return { calendars };
+});
+
+const handleCalendarConfigSave = apiHandler(async (_req, _res, body: { calendars?: CalendarConfigEntry[] }) => {
+  if (!body.calendars || !Array.isArray(body.calendars)) {
+    throw new ApiError(400, "calendars array is required");
+  }
+  const validTags = new Set(["private", "work", null]);
+  for (const cal of body.calendars) {
+    if (!cal.id || !cal.name) {
+      throw new ApiError(400, "Each calendar must have id and name");
+    }
+    if (!validTags.has(cal.tag)) {
+      throw new ApiError(400, `Invalid tag "${cal.tag}" — must be "private", "work", or null`);
+    }
+  }
+  saveCalendarConfig({ calendars: body.calendars });
+  return { success: true };
 });
 
 // ── RSS handlers ──
