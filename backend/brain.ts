@@ -11,7 +11,7 @@ import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, ImprovementProposal, RequestFlag } from "./memory/types.js";
 import { createFlaggedRequest } from "./actionable-tracker.js";
-import { getDueMessages, getScheduledMessages, markDelivered, markFailed, logDelivery, getRecentDeliveries } from "./scheduler.js";
+import { getDueMessages, getScheduledMessages, markDelivered, markFailed, logDelivery, getRecentDeliveries, DEDUP_WINDOW_MS } from "./scheduler.js";
 import { isWhatsAppConnected } from "./integrations/whatsapp.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { MAX_NODES_SOFT } from "./memory/types.js";
@@ -1158,7 +1158,6 @@ async function thinkTick(
   const cfg = getBrainConfig();
 
   // Gather recent chat-sourced deliveries for dedup context
-  const DEDUP_WINDOW_MS = 3 * 60 * 60 * 1000; // 3 hours — must cover scheduler max backoff (2h) + buffer
   const recentChatDeliveries = getRecentDeliveries(DEDUP_WINDOW_MS)
     .filter(d => d.source === "chat" || d.source === "email")
     .map(d => ({ jid: d.jid, messageSnippet: d.messageSnippet, timestamp: d.timestamp }));
@@ -1688,7 +1687,6 @@ async function deliverScheduledMessages(
   const failedIds: string[] = [];
 
   // Build set of JIDs that have recent chat-sourced deliveries (for dedup)
-  const DEDUP_WINDOW_MS = 3 * 60 * 60 * 1000; // 3 hours — must cover scheduler max backoff (2h) + buffer
   const recentDeliveries = getRecentDeliveries(DEDUP_WINDOW_MS);
   const recentChatJids = new Set(
     recentDeliveries.filter(d => d.source === "chat").map(d => d.jid),
