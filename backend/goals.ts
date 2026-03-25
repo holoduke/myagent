@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import type { MemoryGraph } from "./memory/graph.js";
 import type { GoalData, GoalOperation, WorkingGoalRef } from "./memory/types.js";
 import { createLogger } from "./logger.js";
@@ -62,7 +63,7 @@ export class GoalTracker {
       try {
         switch (op.op) {
           case "create_goal": {
-            const id = `n_${Math.random().toString(16).slice(2, 10)}`;
+            const id = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
             const data: GoalData = {
               title: op.title,
               description: op.description,

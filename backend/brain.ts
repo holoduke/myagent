@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { spawn, execSync } from "child_process";
@@ -286,7 +287,7 @@ function pickUpImproveResult(state: BrainState): void {
 
     // Create meta node from result
     if (result.metaNodeContent) {
-      const id = `n_${Math.random().toString(16).slice(2, 10)}`;
+      const id = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
       graph.addNode({
         id,
         type: "meta",
@@ -894,7 +895,7 @@ async function tick(
     if (selfModChanges) {
       log(`Self-modification detected:\n${selfModChanges}`);
       writeSelfModMarker(selfModChanges);
-      const id = `n_${Math.random().toString(16).slice(2, 10)}`;
+      const id = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
       graph.addNode({
         id,
         type: "meta",

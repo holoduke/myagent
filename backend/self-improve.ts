@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { readFileSync, existsSync, unlinkSync } from "fs";
 import { safeReadJSON, atomicWriteJSON } from "./utils/file-store.js";
 import { execSync } from "child_process";
@@ -61,7 +62,7 @@ function writeResult(result: ImproveResult): void {
 }
 
 function addMetaNode(graph: MemoryGraph, content: string, tags: string[]): void {
-  const id = `n_${Math.random().toString(16).slice(2, 10)}`;
+  const id = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
   graph.addNode({
     id,
     type: "meta",
