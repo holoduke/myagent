@@ -95,7 +95,7 @@ export class GoalTracker {
             const data = parseGoalData(node.content);
             if (!data) { log(`Could not parse goal data from ${op.nodeId}`); break; }
 
-            if (op.progress !== undefined) data.progress = op.progress;
+            if (op.progress !== undefined) data.progress = Math.max(0, Math.min(100, op.progress));
             if (op.status !== undefined) data.status = op.status;
             if (op.checkpoints !== undefined) data.checkpoints = op.checkpoints;
             data.lastCheckedAt = Date.now();
