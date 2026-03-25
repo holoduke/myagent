@@ -281,11 +281,33 @@ export interface DeliveryRecord {
 // Write-through in-memory cache for delivery log
 let deliveryLogCache: DeliveryRecord[] | null = null;
 
+function isDeliveryRecord(entry: unknown): entry is DeliveryRecord {
+  if (typeof entry !== "object" || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    typeof e.jid === "string" &&
+    typeof e.source === "string" &&
+    typeof e.timestamp === "number" &&
+    typeof e.messageSnippet === "string"
+  );
+}
+
 function loadDeliveryLog(): DeliveryRecord[] {
   if (deliveryLogCache) return deliveryLogCache;
   const raw = safeReadJSON<unknown>(DELIVERY_LOG_FILE, []);
   if (Array.isArray(raw)) {
-    deliveryLogCache = raw;
+    const valid: DeliveryRecord[] = [];
+    for (const entry of raw) {
+      if (isDeliveryRecord(entry)) {
+        valid.push(entry);
+      } else {
+        log.warn(`Discarding malformed delivery log entry: ${JSON.stringify(entry)}`);
+      }
+    }
+    if (valid.length < raw.length) {
+      log.warn(`Filtered ${raw.length - valid.length} malformed entries from delivery log`);
+    }
+    deliveryLogCache = valid;
     return deliveryLogCache;
   }
   deliveryLogCache = [];
