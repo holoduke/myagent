@@ -68,7 +68,7 @@
       </UiModal>
 
       <UiModal :open="activeModal === 'calendar'" title="Google Calendar" @close="activeModal = null">
-        <IntegrationsCalendarCard :calendar="calendarData" />
+        <IntegrationsCalendarCard :calendar="calendarData" @reload="load" />
       </UiModal>
 
       <UiModal :open="activeModal === 'homeassistant'" title="Home Assistant" @close="activeModal = null">
