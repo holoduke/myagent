@@ -668,23 +668,27 @@ export function getDashboardHTML(): string {
     // ── Integrations Section ──
     async function loadIntegrations() {
       try {
-        const [dashRes, schedRes, wlRes] = await Promise.all([
+        const [dashRes, schedRes, wlRes, calConfigRes, calStatusRes] = await Promise.all([
           fetch('/api/dashboard', { headers: authHeaders() }),
           fetch('/api/scheduled', { headers: authHeaders() }),
           fetch('/api/whitelist', { headers: authHeaders() }),
+          fetch('/api/calendar/config', { headers: authHeaders() }),
+          fetch('/api/calendar/status', { headers: authHeaders() }),
         ]);
         if (dashRes.status === 401) { resetAuth(); return; }
         const dash = await dashRes.json();
         const scheduled = await schedRes.json();
         const whitelist = await wlRes.json();
-        renderIntegrations(dash, scheduled, whitelist);
+        const calConfig = calConfigRes.ok ? await calConfigRes.json() : { calendars: [] };
+        const calStatus = calStatusRes.ok ? await calStatusRes.json() : { enabled: false, accounts: [] };
+        renderIntegrations(dash, scheduled, whitelist, calConfig, calStatus);
       } catch(e) {
         document.getElementById('integrations-content').innerHTML =
           '<div class="card"><p style="color:var(--red)">Failed to load: ' + e.message + '</p></div>';
       }
     }
 
-    function renderIntegrations(dash, scheduled, whitelist) {
+    function renderIntegrations(dash, scheduled, whitelist, calConfig, calStatus) {
       const wa = dash.whatsapp || {};
       const gmail = dash.gmail || {};
       const gmailAccounts = dash.gmailAccounts || [];
@@ -754,6 +758,65 @@ export function getDashboardHTML(): string {
       } else {
         html += '<div style="color:var(--text-ghost);font-size:13px;padding:8px 0">No Gmail accounts configured</div>';
       }
+      html += '</div>';
+
+      // Calendar
+      const calEnabled = calStatus && calStatus.enabled;
+      const calAccounts = (calStatus && calStatus.accounts) || [];
+      const calCalendars = (calConfig && calConfig.calendars) || [];
+      html += '<div class="intg-card"><div class="intg-header">';
+      html += '<svg viewBox="0 0 24 24" fill="none" stroke="#4285F4" stroke-width="2" style="width:20px;height:20px"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
+      html += '<h3>Calendar</h3>';
+      html += '<span class="intg-status ' + (calEnabled ? 'online' : 'offline') + '">' + (calEnabled ? 'Enabled' : 'Disabled') + '</span>';
+      html += '</div>';
+
+      // Calendar accounts with scope info
+      if (gmailAccounts.length) {
+        for (const acc of gmailAccounts) {
+          const calAcc = calAccounts.find(function(ca) { return ca.id === acc.id; });
+          const hasWrite = acc.hasCalendarWrite;
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.03)">';
+          html += '<span class="status-dot ' + (hasWrite ? 'ok' : 'warn') + '" style="flex-shrink:0"></span>';
+          html += '<span style="font-size:13px;color:var(--text)">' + esc(acc.email) + '</span>';
+          if (!hasWrite) {
+            html += '<a href="/gmail/auth/' + esc(acc.id) + '" class="btn" style="margin-left:auto;padding:4px 10px;font-size:11px">Re-authorize</a>';
+          } else {
+            html += '<span style="font-family:var(--mono);font-size:10px;color:var(--text-muted);margin-left:auto">';
+            html += calAcc && calAcc.lastSync ? 'Last sync: ' + timeAgo(calAcc.lastSync) : 'No sync yet';
+            html += '</span>';
+          }
+          html += '</div>';
+        }
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:8px 0">No Gmail accounts with calendar access</div>';
+      }
+
+      // Tagged calendars config
+      html += '<h4 style="margin:16px 0 8px;color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:1px">Calendar Tags</h4>';
+      if (calCalendars.length) {
+        for (const cal of calCalendars) {
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.03)">';
+          html += '<span style="font-size:13px;color:var(--text)">' + esc(cal.name) + '</span>';
+          html += '<span style="font-family:var(--mono);font-size:10px;color:var(--text-muted);margin-left:auto">' + (cal.tag ? esc(cal.tag) : 'untagged') + '</span>';
+          html += '</div>';
+        }
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:8px 0">No calendars tagged yet</div>';
+      }
+
+      // Load calendars buttons
+      if (gmailAccounts.length) {
+        html += '<div class="btn-row" style="margin-top:12px">';
+        for (const acc of gmailAccounts) {
+          if (acc.hasCalendarWrite) {
+            html += '<button class="btn" onclick="loadCalendarsForAccount(\'' + esc(acc.id) + '\')">Load Calendars (' + esc(acc.email) + ')</button>';
+          }
+        }
+        html += '</div>';
+      }
+
+      // Container for dynamically loaded calendar list
+      html += '<div id="calendar-list-container"></div>';
       html += '</div>';
 
       // Slack
@@ -1137,6 +1200,62 @@ export function getDashboardHTML(): string {
         });
         loadIntegrations();
       } catch {}
+    }
+
+    // ── Calendar management ──
+    async function loadCalendarsForAccount(accountId) {
+      const container = document.getElementById('calendar-list-container');
+      if (!container) return;
+      container.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">Loading calendars...</div>';
+      try {
+        const res = await fetch('/api/calendar/calendars?accountId=' + encodeURIComponent(accountId), { headers: authHeaders() });
+        if (!res.ok) { container.innerHTML = '<div style="color:var(--red);font-size:13px;padding:8px 0">Failed to load calendars</div>'; return; }
+        const data = await res.json();
+        const calendars = data.calendars || [];
+        if (!calendars.length) { container.innerHTML = '<div style="color:var(--text-ghost);font-size:13px;padding:8px 0">No calendars found</div>'; return; }
+
+        // Load current config to show existing tags
+        const cfgRes = await fetch('/api/calendar/config', { headers: authHeaders() });
+        const cfg = cfgRes.ok ? await cfgRes.json() : { calendars: [] };
+        const tagMap = {};
+        for (const c of (cfg.calendars || [])) { tagMap[c.id] = c.tag; }
+
+        var html = '<h4 style="margin:12px 0 8px;color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:1px">Available Calendars</h4>';
+        for (const cal of calendars) {
+          var currentTag = tagMap[cal.id] || '';
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.03)">';
+          html += '<span style="font-size:13px;color:var(--text);flex:1">' + esc(cal.name) + '</span>';
+          html += '<select onchange="tagCalendar(\'' + esc(cal.id) + '\',\'' + esc(cal.name) + '\',this.value)" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:11px;font-family:var(--mono)">';
+          html += '<option value=""' + (!currentTag ? ' selected' : '') + '>untagged</option>';
+          html += '<option value="private"' + (currentTag === 'private' ? ' selected' : '') + '>private</option>';
+          html += '<option value="work"' + (currentTag === 'work' ? ' selected' : '') + '>work</option>';
+          html += '</select>';
+          html += '</div>';
+        }
+        container.innerHTML = html;
+      } catch(e) {
+        container.innerHTML = '<div style="color:var(--red);font-size:13px;padding:8px 0">Error: ' + esc(e.message) + '</div>';
+      }
+    }
+
+    async function tagCalendar(calendarId, name, tag) {
+      try {
+        // Load current config, update the entry, save back
+        const cfgRes = await fetch('/api/calendar/config', { headers: authHeaders() });
+        const cfg = cfgRes.ok ? await cfgRes.json() : { calendars: [] };
+        const calendars = cfg.calendars || [];
+        const idx = calendars.findIndex(function(c) { return c.id === calendarId; });
+        const entry = { id: calendarId, name: name, tag: tag || null };
+        if (idx >= 0) { calendars[idx] = entry; } else { calendars.push(entry); }
+        await fetch('/api/calendar/config', {
+          method: 'POST',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ calendars: calendars })
+        });
+        loadIntegrations();
+      } catch(e) {
+        console.error('Failed to tag calendar:', e);
+      }
     }
 
     // ── Contact sync ──
