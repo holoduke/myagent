@@ -11,6 +11,9 @@ import type { ActionableSignal } from "./actionable.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { processObservation as trackActionable } from "./actionable-tracker.js";
 import { routeObservationToDirectives } from "./directive-router.js";
+import { detectWithPrompt } from "./prompt-detector.js";
+import type { PromptDetectionResult } from "./prompt-detector.js";
+import { getBrainConfig } from "./brain-config.js";
 
 const log = createLogger("observer");
 
@@ -67,6 +70,8 @@ export interface Observation {
   detectedCommitments?: ClassifiedCommitment[];
   /** Actionable content detected from whitelisted contacts (incoming only) */
   actionableSignals?: ActionableSignal[];
+  /** Structured event data from prompt-based detection */
+  promptDetectionResult?: PromptDetectionResult;
 }
 
 export interface CallMeta {
@@ -191,13 +196,52 @@ export function recordObservation(obs: Observation): void {
 
   // Scan incoming messages from whitelisted contacts for actionable content
   if (!obs.isFromMe && obs.text && isWhitelisted(obs.senderJid)) {
-    const signals = detectActionableContent(obs.text);
-    if (signals.length > 0) {
-      obs.actionableSignals = signals;
-      log(`Detected ${signals.length} actionable signal(s) from whitelisted ${obs.sender}`);
-      trackActionable(obs);
-      // Route through directive system for per-contact policy enforcement
-      routeObservationToDirectives(obs);
+    const config = getBrainConfig();
+    const mode = config.detectionMode || "hybrid";
+
+    // Regex detection (fast, free)
+    const regexSignals = detectActionableContent(obs.text);
+
+    if (mode === "regex" || (mode === "hybrid" && regexSignals.length > 0)) {
+      // Use regex results directly
+      if (regexSignals.length > 0) {
+        obs.actionableSignals = regexSignals;
+        log(`Detected ${regexSignals.length} actionable signal(s) from whitelisted ${obs.sender} (regex)`);
+        trackActionable(obs);
+        routeObservationToDirectives(obs);
+      }
+    }
+
+    if (mode === "prompt" || (mode === "hybrid" && regexSignals.length === 0)) {
+      // Use prompt-based detection (async, costs a haiku call)
+      detectWithPrompt(obs.text, obs.sender).then(result => {
+        if (result.events.length > 0 || result.requests.length > 0) {
+          // Convert prompt results to actionable signals for compatibility
+          const promptSignals: ActionableSignal[] = result.events.map(e => ({
+            category: "event" as const,
+            snippet: `${e.summary}${e.date ? ` (${e.date}${e.time ? ` ${e.time}` : ""})` : ""}`,
+            pattern: "prompt-detected",
+          }));
+
+          for (const r of result.requests) {
+            promptSignals.push({
+              category: "request" as const,
+              snippet: r.action,
+              pattern: "prompt-detected",
+            });
+          }
+
+          if (promptSignals.length > 0 && !obs.actionableSignals?.length) {
+            obs.actionableSignals = promptSignals;
+            obs.promptDetectionResult = result;
+            log(`Detected ${result.events.length} events, ${result.requests.length} requests from whitelisted ${obs.sender} (prompt)`);
+            trackActionable(obs);
+            routeObservationToDirectives(obs);
+          }
+        }
+      }).catch(err => {
+        log(`Prompt detection error for ${obs.sender}: ${err}`);
+      });
     }
   }
 

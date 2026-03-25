@@ -21,6 +21,8 @@ export interface BrainConfig {
   urgencyInterruptThreshold: number;  // urgency score (0-1) that triggers an immediate think tick
   characterType: string;              // character preset name or "custom"
   characterCustomPrompt: string | null; // free-text personality override (used when characterType === "custom")
+  detectionMode: "regex" | "prompt" | "hybrid";  // how actionable content is detected
+  detectionPrompt: string | null;                  // custom prompt for prompt-based detection
   activationSpreadFactor: number;        // decay per hop in spreading activation (0–1); higher = better transitive recall
   archiveRecallMin: number;              // minimum archive restores per consolidation cycle
   archiveRecallMax: number;              // maximum archive restores per consolidation cycle
@@ -174,6 +176,8 @@ function envDefaults(): BrainConfig {
     urgencyInterruptThreshold: Number(process.env.BRAIN_URGENCY_INTERRUPT_THRESHOLD ?? 0.8),
     characterType: "default",
     characterCustomPrompt: null,
+    detectionMode: "hybrid",
+    detectionPrompt: null,
     activationSpreadFactor: 0.6,
     archiveRecallMin: 5,
     archiveRecallMax: 15,
