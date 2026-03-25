@@ -34,6 +34,7 @@ import type { TrustConfig } from "../trust.js";
 import { isAuthenticated, readBody } from "./auth.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
 import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS, CHARACTER_PRESETS } from "../brain-config.js";
+import { getDefaultDetectionPrompt } from "../prompt-detector.js";
 import type { BrainConfig } from "../brain-config.js";
 import {
   loadQueue,
@@ -613,6 +614,12 @@ export function handleApiRoutes(
       handleBrainConfigUpdate(req, res);
       return true;
     }
+  }
+
+  // ── Detection prompt default ──
+  if (pathname === "/api/detection-prompt/default" && isAuthenticated(req)) {
+    respondJson(res, 200, { prompt: getDefaultDetectionPrompt() });
+    return true;
   }
 
   // ── Sub-Agents CRUD ──
@@ -1381,6 +1388,7 @@ const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
   "thinkCooldown", "consolidateInterval", "reflectInterval", "tickInterval", "preset",
   "selfImproveEnabled", "selfImproveAutoApprove", "selfImproveMaxPerWeek",
   "characterType", "characterCustomPrompt",
+  "detectionMode", "detectionPrompt",
 ];
 
 // ── Brain dashboard helpers ──

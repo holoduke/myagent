@@ -348,6 +348,53 @@ async function executeEventCreation(request: ActionableRequest, obs: Observation
     return;
   }
 
+  // If prompt detection provided structured events, use them directly (more reliable)
+  if (obs.promptDetectionResult?.events?.length) {
+    const eventIds: string[] = [];
+    for (const evt of obs.promptDetectionResult.events) {
+      const startDate = new Date(`${evt.date}T${evt.time || "10:00"}:00`);
+      // Ensure valid date
+      if (isNaN(startDate.getTime())) {
+        log(`Invalid date from prompt detection: ${evt.date} ${evt.time} — skipping`);
+        continue;
+      }
+      const endDate = new Date(startDate);
+      if (evt.endTime) {
+        const [eh, em] = evt.endTime.split(":").map(Number);
+        endDate.setHours(eh, em, 0, 0);
+      } else {
+        endDate.setHours(endDate.getHours() + 1);
+      }
+
+      const summary = `${obs.sender}: ${evt.summary}`.slice(0, 120);
+
+      const result = await createEvent(
+        account.id,
+        summary,
+        startDate.toISOString(),
+        endDate.toISOString(),
+        evt.location || undefined,
+      );
+
+      if (result.success && result.eventId) {
+        eventIds.push(result.eventId);
+        log(`Auto-created calendar event ${result.eventId} for request ${request.id}: ${summary}`);
+      } else {
+        log(`Calendar event creation failed for ${request.id}: ${result.error}`);
+      }
+    }
+
+    if (eventIds.length > 0) {
+      const requests = load();
+      const tracked = requests.find(r => r.id === request.id);
+      if (tracked) {
+        tracked.eventId = eventIds.join(",");
+        save(requests);
+      }
+    }
+    return; // Skip regex-based parsing
+  }
+
   const eventSignals = request.signals.filter(s => s.category === "event");
 
   // Try to extract multiple events from the full message text

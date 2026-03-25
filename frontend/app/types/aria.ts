@@ -307,6 +307,8 @@ export interface BrainConfig {
   selfImproveMaxPerWeek: number
   characterType: string
   characterCustomPrompt: string | null
+  detectionMode: 'regex' | 'prompt' | 'hybrid'
+  detectionPrompt: string | null
 }
 
 export interface CharacterPreset {

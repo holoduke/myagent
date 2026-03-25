@@ -50,6 +50,64 @@
         </div>
       </UiCard>
 
+      <!-- Event Detection -->
+      <UiCard title="Event Detection" :icon="icons.detection" style="margin-bottom:16px">
+        <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">How ARIA detects events and actionable content from trusted contacts.</div>
+        <div class="ch-presets" style="grid-template-columns: repeat(3, 1fr)">
+          <button
+            class="ch-preset"
+            :class="{ active: detectionMode === 'regex' }"
+            @click="selectDetectionMode('regex')"
+          >
+            <div class="ch-preset-name">Regex</div>
+            <div class="ch-preset-desc">Fast pattern matching. No AI cost. Limited flexibility.</div>
+          </button>
+          <button
+            class="ch-preset"
+            :class="{ active: detectionMode === 'hybrid' }"
+            @click="selectDetectionMode('hybrid')"
+          >
+            <div class="ch-preset-name">Hybrid</div>
+            <div class="ch-preset-desc">Regex first, prompt fallback. Best of both worlds.</div>
+          </button>
+          <button
+            class="ch-preset"
+            :class="{ active: detectionMode === 'prompt' }"
+            @click="selectDetectionMode('prompt')"
+          >
+            <div class="ch-preset-name">Prompt</div>
+            <div class="ch-preset-desc">AI-powered detection. Understands context and nuance.</div>
+          </button>
+        </div>
+        <div v-if="detectionMode !== 'regex'" style="margin-top:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <label class="intg-label" style="margin:0">Detection prompt</label>
+            <button
+              class="btn sm"
+              style="font-size:11px;padding:2px 8px"
+              @click="resetDetectionPrompt"
+            >Reset to default</button>
+          </div>
+          <textarea
+            v-model="detectionPrompt"
+            rows="10"
+            class="intg-input"
+            style="width:100%;resize:vertical;font-size:11px;font-family:var(--mono);line-height:1.5"
+            placeholder="Detection prompt template..."
+            @input="detectionDirty = true"
+          />
+          <div style="font-size:11px;color:var(--text-ghost);margin-top:4px">
+            Variables: {today} = current date, {sender} = message sender name
+          </div>
+        </div>
+        <div class="br-footer">
+          <div class="br-status">Mode: {{ detectionMode }}</div>
+          <button v-if="detectionDirty" class="btn primary" :disabled="detectionSaving" @click="saveDetection">
+            {{ detectionSaving ? 'Saving...' : 'Save' }}
+          </button>
+        </div>
+      </UiCard>
+
       <!-- Brain Responsiveness -->
       <UiCard title="Brain Responsiveness" :icon="icons.brain" style="margin-bottom:16px">
         <!-- Enable toggle -->
@@ -290,6 +348,13 @@ const characterCustomPrompt = ref('')
 const characterDirty = ref(false)
 const characterSaving = ref(false)
 
+// Detection state
+const detectionMode = ref<'regex' | 'prompt' | 'hybrid'>('hybrid')
+const detectionPrompt = ref('')
+const detectionDefaultPrompt = ref('')
+const detectionDirty = ref(false)
+const detectionSaving = ref(false)
+
 // Improve queue state
 const improveQueue = ref<ImproveQueueItem[]>([])
 const improveHistory = ref<ImproveQueueItem[]>([])
@@ -298,6 +363,7 @@ const showHistory = ref(false)
 
 const icons = {
   character: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 10-16 0"/></svg>',
+  detection: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>',
   brain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4 7l1 1.5V21h4v-3.5L15 16c2-1.5 4-4 4-7a7 7 0 0 0-7-7z"/><line x1="10" y1="21" x2="14" y2="21"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
   logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
@@ -334,6 +400,39 @@ async function saveCharacter() {
     console.error('Failed to save character:', e)
   } finally {
     characterSaving.value = false
+  }
+}
+
+function selectDetectionMode(mode: 'regex' | 'prompt' | 'hybrid') {
+  detectionMode.value = mode
+  detectionDirty.value = true
+}
+
+async function resetDetectionPrompt() {
+  try {
+    const resp = await api<{ prompt: string }>('/api/detection-prompt/default')
+    detectionPrompt.value = resp.prompt
+    detectionDirty.value = true
+  } catch (e) {
+    console.error('Failed to load default prompt:', e)
+  }
+}
+
+async function saveDetection() {
+  detectionSaving.value = true
+  try {
+    const payload: Record<string, unknown> = { detectionMode: detectionMode.value }
+    if (detectionMode.value !== 'regex') {
+      payload.detectionPrompt = detectionPrompt.value || null
+    }
+    const resp = await api<BrainConfigResponse>('/api/brain-config', { method: 'PUT', body: payload })
+    detectionMode.value = (resp.config as any).detectionMode || 'hybrid'
+    detectionPrompt.value = (resp.config as any).detectionPrompt || ''
+    detectionDirty.value = false
+  } catch (e) {
+    console.error('Failed to save detection config:', e)
+  } finally {
+    detectionSaving.value = false
   }
 }
 
@@ -407,6 +506,14 @@ async function load() {
     characterPresets.value = brainResp.characterPresets || []
     characterType.value = brainResp.config.characterType || 'default'
     characterCustomPrompt.value = brainResp.config.characterCustomPrompt || ''
+    detectionMode.value = (brainResp.config as any).detectionMode || 'hybrid'
+    detectionPrompt.value = (brainResp.config as any).detectionPrompt || ''
+    // Load default detection prompt
+    try {
+      const defaultPromptResp = await api<{ prompt: string }>('/api/detection-prompt/default')
+      detectionDefaultPrompt.value = defaultPromptResp.prompt
+      if (!detectionPrompt.value) detectionPrompt.value = detectionDefaultPrompt.value
+    } catch {}
     improveQueue.value = queueResp.queue
     improveHistory.value = queueResp.history
     improveWeeklyCount.value = queueResp.weeklyCount
