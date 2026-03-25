@@ -347,6 +347,43 @@ export interface ImproveQueueResponse {
   weeklyCount: number
 }
 
+// ── Directive / Contact Request Types ──
+
+export type DirectiveActionType =
+  | 'calendar' | 'reminder' | 'shopping' | 'task'
+  | 'logistics' | 'message_relay' | 'information'
+
+export type DirectivePolicy = 'auto-execute' | 'require-confirmation'
+
+export interface Directive {
+  id: string
+  contactJid: string
+  contactName: string
+  actionType: DirectiveActionType
+  policy: DirectivePolicy
+  enabled: boolean
+  createdAt: number
+  note?: string
+}
+
+export type RequestStatus = 'pending' | 'approved' | 'rejected' | 'auto_executed'
+
+export interface ContactRequest {
+  id: string
+  timestamp: number
+  contactJid: string
+  contactName: string
+  message: string
+  actionType: DirectiveActionType
+  actionSummary: string
+  status: RequestStatus
+  appliedPolicy: DirectivePolicy | 'no-directive'
+  isGroup: boolean
+  groupName?: string
+  resolvedAt?: number
+  resolutionNote?: string
+}
+
 // ── Brain Dashboard Types ──
 
 export interface RecurringTask {
