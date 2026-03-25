@@ -924,6 +924,10 @@ async function tick(
     "lastMessageTime",
     "recurringThinksToday",
     "initiativeThinksToday",
+    "totalThinks",
+    "totalCost",
+    "nodeCount",
+    "edgeCount",
   ];
   for (const field of schedulerMaxFields) {
     const diskVal = freshState[field];
