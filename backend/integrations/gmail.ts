@@ -514,7 +514,7 @@ export function removeAccount(id: string): boolean {
   return true;
 }
 
-export function getAccountStatus(): Array<{ id: string; email: string; authenticated: boolean; lastPoll: number }> {
+export function getAccountStatus(): Array<{ id: string; email: string; authenticated: boolean; lastPoll: number; hasCalendarWrite: boolean }> {
   const accounts = loadAccounts();
   const state = loadState();
   return accounts.map(a => ({
@@ -522,5 +522,6 @@ export function getAccountStatus(): Array<{ id: string; email: string; authentic
     email: a.email,
     authenticated: !!(a.tokens?.refresh_token || a.tokens?.access_token),
     lastPoll: state[a.id]?.lastPollTime || 0,
+    hasCalendarWrite: !!(a.tokens?.scope && a.tokens.scope.includes('calendar.events')),
   }));
 }
