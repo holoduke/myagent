@@ -1350,9 +1350,10 @@ async function consolidateTick(
   }
   const { weakNodes, orphanNodes, duplicateCandidates, stats } = selectContextForConsolidate(graph);
 
-  // Only call Claude if there's cleanup work or uncaptured signals to consider
+  // Only call Claude if there's cleanup work, uncaptured signals, or low-fidelity reconstructions
   const hasUncaptured = decayResult.uncapturedSignals.length > 0;
-  if (weakNodes.length === 0 && orphanNodes.length === 0 && duplicateCandidates.length === 0 && !hasUncaptured) {
+  const hasLowFidelity = decayResult.fidelityResults.some(r => r.lowFidelity);
+  if (weakNodes.length === 0 && orphanNodes.length === 0 && duplicateCandidates.length === 0 && !hasUncaptured && !hasLowFidelity) {
     log("Consolidate: nothing for Claude to review, decay-only cycle");
     state.lastConsolidateTick = now;
     return true;
@@ -1371,6 +1372,7 @@ async function consolidateTick(
     stats,
     uncapturedSignals: decayResult.uncapturedSignals,
     deltaReport: decayResult.deltaReport,
+    lowFidelityReconstructions: decayResult.fidelityResults.filter(r => r.lowFidelity),
   });
 
   try {

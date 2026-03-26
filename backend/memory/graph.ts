@@ -642,6 +642,12 @@ export class MemoryGraph {
       accessCount: archived.accessCount + 1,
       reconstructedAt: now,
       reconstructedFrom: "archive",
+      reconstructionOriginal: {
+        content: archived.content,
+        tags: [...archived.tags],
+        edgeCount: archivedEdges?.length ?? 0,
+        strength: archived.strength,
+      },
     };
 
     this.addNode(restored);
