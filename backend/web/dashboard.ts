@@ -905,6 +905,101 @@ export function getDashboardHTML(): string {
       }
       html += '</div>';
 
+      // Home Assistant
+      const ha = dash.homeassistant || {};
+      html += '<div class="intg-card"><div class="intg-header">';
+      html += '<svg viewBox="0 0 24 24" fill="none" stroke="#41BDF5" stroke-width="2" style="width:20px;height:20px"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>';
+      html += '<h3>Home Assistant</h3>';
+      html += '<span class="intg-status ' + (ha.connected ? 'online' : ha.enabled ? 'pending' : 'offline') + '">' + (ha.connected ? 'Connected' : ha.enabled ? 'Enabled' : 'Disabled') + '</span>';
+      html += '</div>';
+      html += kv('Mode', ha.mode || 'not configured');
+      html += kv('Entities', ha.entityCount || 0);
+      if (ha.lastPoll) html += kv('Last Poll', timeAgo(ha.lastPoll));
+      if (ha.url) html += kv('URL', ha.url);
+      html += '</div>';
+
+      // RSS
+      const rss = dash.rss || {};
+      const rssFeeds = rss.feeds || [];
+      html += '<div class="intg-card"><div class="intg-header">';
+      html += '<svg viewBox="0 0 24 24" fill="none" stroke="#F5A623" stroke-width="2" style="width:20px;height:20px"><path d="M4 11a9 9 0 019 9"/><path d="M4 4a16 16 0 0116 16"/><circle cx="5" cy="19" r="1"/></svg>';
+      html += '<h3>RSS</h3>';
+      html += '<span class="intg-status ' + (rssFeeds.length ? 'online' : 'offline') + '">' + rssFeeds.length + ' feed' + (rssFeeds.length !== 1 ? 's' : '') + '</span>';
+      html += '</div>';
+      if (rssFeeds.length) {
+        for (const feed of rssFeeds) {
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.03)">';
+          html += '<span class="status-dot ' + (feed.enabled ? 'ok' : 'warn') + '" style="flex-shrink:0"></span>';
+          html += '<span style="font-size:13px;color:var(--text)">' + esc(feed.name) + '</span>';
+          html += '<span style="font-family:var(--mono);font-size:10px;color:var(--text-muted);margin-left:auto">' + (feed.itemCount || 0) + ' items</span>';
+          html += '</div>';
+        }
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:8px 0">No RSS feeds configured</div>';
+      }
+      html += '</div>';
+
+      // OwnTracks
+      const ot = dash.owntracks || {};
+      html += '<div class="intg-card"><div class="intg-header">';
+      html += '<svg viewBox="0 0 24 24" fill="none" stroke="#2ECC71" stroke-width="2" style="width:20px;height:20px"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>';
+      html += '<h3>OwnTracks</h3>';
+      html += '<span class="intg-status ' + (ot.enabled ? 'online' : 'offline') + '">' + (ot.enabled ? 'Enabled' : 'Disabled') + '</span>';
+      html += '</div>';
+      if (ot.lastLocation) {
+        html += kv('Latitude', ot.lastLocation.lat.toFixed(4));
+        html += kv('Longitude', ot.lastLocation.lon.toFixed(4));
+        html += kv('Updated', timeAgo(ot.lastLocation.timestamp));
+        if (ot.lastLocation.battery != null) html += kv('Battery', ot.lastLocation.battery + '%');
+      } else {
+        html += '<div style="color:var(--text-ghost);font-size:13px;padding:8px 0">No location data received</div>';
+      }
+      html += '</div>';
+
+      // SSH
+      const sshData = dash.ssh || {};
+      const sshTargets = sshData.targets || [];
+      html += '<div class="intg-card"><div class="intg-header">';
+      html += '<svg viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2" style="width:20px;height:20px"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
+      html += '<h3>SSH</h3>';
+      html += '<span class="intg-status ' + (sshData.keyGenerated ? 'online' : 'offline') + '">' + (sshData.keyGenerated ? 'Key Ready' : 'No Key') + '</span>';
+      html += '</div>';
+      html += kv('Targets', sshTargets.length);
+      if (sshTargets.length) {
+        for (const t of sshTargets) {
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.03)">';
+          html += '<span class="status-dot ok" style="flex-shrink:0"></span>';
+          html += '<span style="font-size:13px;color:var(--text);font-family:var(--mono)">' + esc(t.host || t.name || 'unknown') + '</span>';
+          html += '</div>';
+        }
+      }
+      html += '</div>';
+
+      // Browser
+      const br = dash.browser || {};
+      html += '<div class="intg-card"><div class="intg-header">';
+      html += '<svg viewBox="0 0 24 24" fill="none" stroke="#60A5FA" stroke-width="2" style="width:20px;height:20px"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>';
+      html += '<h3>Browser</h3>';
+      html += '<span class="intg-status ' + (br.ready ? 'online' : 'offline') + '">' + (br.ready ? 'Ready' : 'Offline') + '</span>';
+      html += '</div>';
+      html += kv('Active Sessions', br.activeSessions || 0);
+      html += kv('Total Tasks', br.totalTasks || 0);
+      if (br.lastTaskAt) html += kv('Last Task', timeAgo(br.lastTaskAt));
+      html += '</div>';
+
+      // Twilio
+      const tw = dash.twilio || {};
+      html += '<div class="intg-card"><div class="intg-header">';
+      html += '<svg viewBox="0 0 24 24" fill="none" stroke="#F22F46" stroke-width="2" style="width:20px;height:20px"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>';
+      html += '<h3>Twilio</h3>';
+      html += '<span class="intg-status ' + (tw.configured ? 'online' : tw.enabled ? 'pending' : 'offline') + '">' + (tw.configured ? 'Configured' : tw.enabled ? 'Enabled' : 'Disabled') + '</span>';
+      html += '</div>';
+      if (tw.phoneNumber) html += kv('Phone', tw.phoneNumber);
+      html += kv('Active Calls', tw.activeCalls || 0);
+      html += kv('Total Calls', tw.totalCalls || 0);
+      if (tw.lastCallAt) html += kv('Last Call', timeAgo(tw.lastCallAt));
+      html += '</div>';
+
       document.getElementById('integrations-content').innerHTML = html;
     }
 
