@@ -16,6 +16,7 @@ import type { PromptDetectionResult } from "./prompt-detector.js";
 import { classifyIntent } from "./intent-classifier.js";
 import type { IntentClassification } from "./intent-classifier.js";
 import { getBrainConfig } from "./brain-config.js";
+import { processObservationForReply } from "./reply-agent.js";
 
 const log = createLogger("observer");
 
@@ -196,6 +197,13 @@ export function recordObservation(obs: Observation): void {
       log(`Intent classified: ${result.intent} (${result.confidence.toFixed(2)}, ${result.method}) for "${obs.text.slice(0, 60)}" from ${obs.sender}`);
     }).catch(err => {
       log(`Intent classification error for ${obs.sender}: ${err}`);
+    });
+  }
+
+  // Reply agent: evaluate for auto-reply (WhatsApp incoming only)
+  if (!obs.isFromMe && obs.text && (!obs.source || obs.source === "whatsapp")) {
+    processObservationForReply(obs).catch(err => {
+      log(`Reply agent error for ${obs.sender}: ${err}`);
     });
   }
 

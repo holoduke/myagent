@@ -13,6 +13,11 @@ import { getActionableRequests, approveRequest, rejectRequest, getPendingCount }
 import type { ActionableRequestStatus } from "../actionable-tracker.js";
 import { getDirectives, getDirectivesForContact, addDirective, updateDirective, removeDirective } from "../directives.js";
 import type { DirectiveActionType, DirectivePolicy } from "../directives.js";
+import {
+  getReplyDirectives, addReplyDirective, updateReplyDirective, removeReplyDirective,
+  getReplyLog, testReplyDirective,
+} from "../reply-agent.js";
+import type { ReplyCategory } from "../reply-agent.js";
 import { getRequests as getContactRequests, approveRequest as approveContactRequest, rejectRequest as rejectContactRequest, getPendingRequestCount } from "../request-queue.js";
 import type { RequestStatus } from "../request-queue.js";
 import { getAccountStatus, addAccount, removeAccount } from "../integrations/gmail.js";
@@ -207,6 +212,44 @@ export function handleApiRoutes(
     if (directiveDeleteMatch) {
       const removed = removeDirective(directiveDeleteMatch[1]);
       respondJson(res, removed ? 200 : 404, { success: removed });
+      return true;
+    }
+  }
+
+  // ── Reply Directives ──
+  if (pathname === "/api/reply-directives" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      respondJson(res, 200, getReplyDirectives());
+      return true;
+    }
+    if (req.method === "POST") {
+      handleReplyDirectiveAdd(req, res);
+      return true;
+    }
+  }
+  if (pathname === "/api/reply-directives/log" && req.method === "GET" && isAuthenticated(req)) {
+    const rdLogUrl = new URL(req.url || "/", `http://${req.headers.host}`);
+    const rdLimit = parseInt(rdLogUrl.searchParams.get("limit") || "100", 10);
+    const rdChatJid = rdLogUrl.searchParams.get("chatJid") || undefined;
+    respondJson(res, 200, getReplyLog(rdLimit, rdChatJid));
+    return true;
+  }
+  if (pathname === "/api/reply-directives/test" && req.method === "POST" && isAuthenticated(req)) {
+    handleReplyDirectiveTest(req, res);
+    return true;
+  }
+  if (req.method === "PATCH" && isAuthenticated(req)) {
+    const rdPatchMatch = pathname.match(/^\/api\/reply-directives\/([^/]+)$/);
+    if (rdPatchMatch) {
+      handleReplyDirectiveUpdate(req, res, rdPatchMatch[1]);
+      return true;
+    }
+  }
+  if (req.method === "DELETE" && isAuthenticated(req)) {
+    const rdDeleteMatch = pathname.match(/^\/api\/reply-directives\/([^/]+)$/);
+    if (rdDeleteMatch) {
+      const removed = removeReplyDirective(rdDeleteMatch[1]);
+      respondJson(res, removed ? 200 : 400, { success: removed });
       return true;
     }
   }
@@ -1621,6 +1664,65 @@ function handleDirectiveUpdate(req: IncomingMessage, res: ServerResponse, id: st
   });
   handler(req, res);
 }
+
+// ── Reply directive handlers ──
+
+const handleReplyDirectiveAdd = apiHandler(async (_req, _res, body: {
+  category?: string;
+  contactJid?: string;
+  contactName?: string;
+  filterPrompt?: string;
+  replyPrompt?: string;
+  enabled?: boolean;
+}) => {
+  if (!body.filterPrompt || !body.replyPrompt) {
+    throw new ApiError(400, "filterPrompt and replyPrompt are required");
+  }
+  if (!body.category && !body.contactJid) {
+    throw new ApiError(400, "Either category or contactJid is required");
+  }
+  return addReplyDirective({
+    category: body.category as ReplyCategory | undefined,
+    contactJid: body.contactJid,
+    contactName: body.contactName,
+    filterPrompt: body.filterPrompt,
+    replyPrompt: body.replyPrompt,
+    enabled: body.enabled,
+  });
+});
+
+function handleReplyDirectiveUpdate(req: IncomingMessage, res: ServerResponse, id: string) {
+  const handler = apiHandler(async (_req, _res, body: {
+    filterPrompt?: string;
+    replyPrompt?: string;
+    enabled?: boolean;
+    contactName?: string;
+  }) => {
+    const result = updateReplyDirective(id, body);
+    if (!result) throw new ApiError(404, "Reply directive not found");
+    return result;
+  });
+  handler(req, res);
+}
+
+const handleReplyDirectiveTest = apiHandler(async (_req, _res, body: {
+  directiveId?: string;
+  testMessage?: string;
+  senderName?: string;
+  isGroup?: boolean;
+  groupName?: string;
+}) => {
+  if (!body.directiveId || !body.testMessage || !body.senderName) {
+    throw new ApiError(400, "directiveId, testMessage, and senderName are required");
+  }
+  return testReplyDirective({
+    directiveId: body.directiveId,
+    testMessage: body.testMessage,
+    senderName: body.senderName,
+    isGroup: body.isGroup ?? false,
+    groupName: body.groupName,
+  });
+});
 
 // ── Contact request handlers ──
 
