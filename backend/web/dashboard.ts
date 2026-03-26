@@ -234,10 +234,9 @@ export function getDashboardHTML(): string {
     function showApp() {
       document.getElementById('login').style.display = 'none';
       document.getElementById('app').classList.add('visible');
-      // Route from hash or default (mobile defaults to home tiles)
+      // Route from hash or default to dashboard tiles
       const hash = location.hash.replace('#', '');
-      const defaultSection = window.innerWidth <= 768 ? 'home' : 'overview';
-      navigate(hash || defaultSection, true);
+      navigate(hash || 'home', true);
     }
 
     async function doLogin() {
@@ -263,9 +262,8 @@ export function getDashboardHTML(): string {
     // ── Navigation ──
     function navigate(section, skipHash) {
       const valid = ['home','overview','chat','memory','requests','integrations','ai-providers','reply-agent','settings'];
-      // On mobile, default to home; on desktop, default to overview
       if (!valid.includes(section)) {
-        section = window.innerWidth <= 768 ? 'home' : 'overview';
+        section = 'home';
       }
       currentSection = section;
       if (!skipHash) location.hash = section === 'home' ? '' : section;
@@ -302,8 +300,7 @@ export function getDashboardHTML(): string {
 
     window.addEventListener('hashchange', () => {
       const hash = location.hash.replace('#', '');
-      const defaultSection = window.innerWidth <= 768 ? 'home' : 'overview';
-      const target = hash || defaultSection;
+      const target = hash || 'home';
       if (target !== currentSection) navigate(target, true);
     });
 

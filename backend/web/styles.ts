@@ -185,7 +185,7 @@ export function getStyles(): string {
 
     /* ── App Layout ── */
     #app { display: none; height: 100dvh; }
-    #app.visible { display: flex; }
+    #app.visible { display: flex; flex-direction: column; }
 
     /* ── Sidebar ── */
     .sidebar {
@@ -1018,19 +1018,36 @@ export function getStyles(): string {
     }
     .node .expand-hint:hover { text-decoration: underline; }
 
-    /* Desktop: hide home tiles, hide back buttons */
+    /* Sidebar always hidden — dashboard tiles are primary nav */
+    .sidebar { display: none !important; }
+
+    /* Back buttons and section headers always visible */
+    .back-btn { display: flex; }
+    .section-header { display: flex; align-items: center; }
+    .chat-header .back-btn { display: flex; }
+
+    /* Desktop: wider tile grid */
     @media (min-width: 769px) {
-      #section-home { display: none !important; }
-      .back-btn { display: none !important; }
-      .logout-btn-mobile { display: none; }
+      .home-tiles {
+        grid-template-columns: repeat(4, 1fr);
+        max-width: 900px;
+        gap: 16px;
+        padding: 0 24px;
+      }
+      .home-tile { min-height: 140px; padding: 28px 16px; }
+      .home-header { padding: 48px 16px 32px; }
+      .home-header h1 { font-size: 36px; }
     }
 
-    @media (max-width: 768px) {
-      #app.visible { flex-direction: column; }
-      .sidebar { display: none; }
-      .back-btn { display: flex; }
-      .section-header { display: flex; align-items: center; }
-      .chat-header .back-btn { display: flex; }
+    /* Tablet: 3 columns */
+    @media (min-width: 481px) and (max-width: 768px) {
+      .home-tiles {
+        grid-template-columns: repeat(3, 1fr);
+        max-width: 700px;
+      }
+    }
+
+    @media (max-width: 480px) {
       .section { padding: 16px 12px; }
       .card-grid { grid-template-columns: 1fr; }
       .stat-grid { grid-template-columns: repeat(2, 1fr); }
