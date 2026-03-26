@@ -40,7 +40,7 @@ async function doLogin() {
   loading.value = false
 
   if (result.success) {
-    navigateTo('/overview')
+    navigateTo('/')
   } else {
     error.value = result.error || 'Access denied'
   }
