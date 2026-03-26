@@ -870,40 +870,139 @@ export function getStyles(): string {
     }
     .qr-box .close-btn:hover { color: var(--text); border-color: var(--border-glow); }
 
-    /* ── Mobile: Bottom Nav ── */
-    .mobile-nav {
-      display: none;
-      background: var(--bg-card);
-      border-top: 1px solid var(--border);
-      padding: 4px 0 max(4px, env(safe-area-inset-bottom));
-      flex-shrink: 0;
-      z-index: 20;
+    /* ── Home Tiles (replaces mobile bottom nav) ── */
+    #section-home { display: none; }
+    #section-home.active { display: flex; flex-direction: column; }
+
+    .home-header {
+      text-align: center;
+      padding: 32px 16px 24px;
     }
-    .mobile-nav-inner {
-      display: flex;
-      justify-content: space-around;
-    }
-    .mob-nav-item {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 1px;
-      padding: 8px 4px 6px;
-      min-width: 44px;
-      min-height: 44px;
-      color: var(--text-muted);
-      cursor: pointer;
-      border: none;
-      background: none;
-      font-size: 8px;
+    .home-header h1 {
       font-family: var(--mono);
-      letter-spacing: 0.3px;
-      text-transform: uppercase;
+      font-size: 28px;
+      color: var(--accent);
+      text-shadow: var(--glow-accent);
+      letter-spacing: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+    .home-header .hal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px rgba(255,77,42,0.6);
+      animation: breathe 3s ease-in-out infinite;
+    }
+    .home-version {
+      font-size: 10px;
+      color: var(--text-muted);
+      font-family: var(--mono);
+      letter-spacing: 1px;
+      margin-top: 6px;
+    }
+
+    .home-tiles {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      padding: 0 16px;
+      max-width: 600px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    .home-tile {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      text-decoration: none;
+      color: var(--text);
       transition: all .15s;
       -webkit-tap-highlight-color: transparent;
     }
-    .mob-nav-item.active { color: var(--accent); }
-    .mob-nav-item svg { width: 20px; height: 20px; }
+    .home-tile:hover, .home-tile:active {
+      border-color: var(--accent);
+      background: rgba(255,77,42,0.04);
+      box-shadow: 0 0 20px rgba(255,77,42,0.08);
+    }
+    .home-tile-icon {
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-surface);
+      border-radius: 10px;
+      flex-shrink: 0;
+      border: 1px solid var(--border);
+    }
+    .home-tile-icon svg { width: 20px; height: 20px; color: var(--accent); }
+    .home-tile-text { flex: 1; min-width: 0; }
+    .home-tile-label {
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text);
+      letter-spacing: 0.5px;
+    }
+    .home-tile-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .home-tile-url {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-ghost);
+      flex-shrink: 0;
+    }
+    .home-footer {
+      padding: 24px 16px;
+      text-align: center;
+    }
+    .logout-btn-mobile {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-family: var(--mono);
+      cursor: pointer;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: transparent;
+      transition: all .15s;
+    }
+    .logout-btn-mobile:hover { color: var(--red); border-color: var(--red); }
+    .logout-btn-mobile svg { width: 14px; height: 14px; }
+
+    /* ── Back Button (mobile, in section headers) ── */
+    .back-btn {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      flex-shrink: 0;
+      margin-right: 10px;
+      transition: all .15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .back-btn:hover { color: var(--accent); border-color: var(--accent); }
+    .back-btn svg { width: 16px; height: 16px; }
 
     /* ── Expandable memory nodes ── */
     .node .content.truncated { cursor: pointer; }
@@ -918,10 +1017,19 @@ export function getStyles(): string {
     }
     .node .expand-hint:hover { text-decoration: underline; }
 
+    /* Desktop: hide home tiles, hide back buttons */
+    @media (min-width: 769px) {
+      #section-home { display: none !important; }
+      .back-btn { display: none !important; }
+      .logout-btn-mobile { display: none; }
+    }
+
     @media (max-width: 768px) {
       #app.visible { flex-direction: column; }
       .sidebar { display: none; }
-      .mobile-nav { display: block; }
+      .back-btn { display: flex; }
+      .section-header { display: flex; align-items: center; }
+      .chat-header .back-btn { display: flex; }
       .section { padding: 16px 12px; }
       .card-grid { grid-template-columns: 1fr; }
       .stat-grid { grid-template-columns: repeat(2, 1fr); }
@@ -929,7 +1037,6 @@ export function getStyles(): string {
       #messages { padding: 12px 8px; }
       .chat-btn span { display: none; }
       .wl-add-form { flex-direction: column; }
-      .mob-nav-item span { font-size: 7px; }
     }
   `;
 }
