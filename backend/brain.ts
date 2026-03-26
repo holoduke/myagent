@@ -867,9 +867,6 @@ async function tick(
     return;
   }
 
-  // Clear urgency after processing
-  clearPendingUrgency();
-
   // ── Track success/failure for health ──
   if (!tickSucceeded) {
     state.consecutiveFailures++;
@@ -878,6 +875,9 @@ async function tick(
       : "";
     log(`Tick failed${errInfo} (${state.consecutiveFailures} consecutive failures)`);
   } else {
+    // Only clear urgency when tick succeeded — failed ticks should preserve
+    // urgency so urgent observations get priority processing on retry
+    clearPendingUrgency();
     state.consecutiveFailures = 0;
     state.lastSuccessfulTick = now;
 
