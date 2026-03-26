@@ -499,3 +499,89 @@ export interface SubAgentsResponse {
   state: SubAgentState
   recentRuns: Record<string, SubAgentRun[]>
 }
+
+// ── Trust / Security Types ──
+
+export interface SourceTrustRule {
+  defaultTrust: 'owner' | 'trusted' | 'untrusted'
+  jidOverrides?: Record<string, 'owner' | 'trusted' | 'untrusted'>
+  ownerAlwaysTrusted?: boolean
+}
+
+export interface TrustConfig {
+  sources: Record<string, SourceTrustRule>
+  ownerJids: string[]
+  logInjectionAttempts: boolean
+}
+
+export interface InjectionLogEntry {
+  t: number
+  sender: string
+  senderJid: string
+  source: string
+  isGroup: boolean
+  groupName?: string
+  labels: string[]
+  snippets: string[]
+  textPreview: string
+}
+
+// ── Audit Log Types ──
+
+export interface AuditEntry {
+  timestamp: number
+  action: string
+  source: string
+  details: string
+  success: boolean
+}
+
+// ── Actionable Request Types ──
+
+export type ActionableRequestStatus = 'auto_executed' | 'pending_confirmation' | 'approved' | 'rejected'
+
+export interface ActionableSignal {
+  type: string
+  confidence: number
+  details?: string
+}
+
+export interface ActionableRequest {
+  id: string
+  timestamp: number
+  senderJid: string
+  senderName: string
+  chatName?: string
+  isGroup: boolean
+  groupName?: string
+  text: string
+  signals: ActionableSignal[]
+  categories: string[]
+  status: ActionableRequestStatus
+  resolvedAt?: number
+  eventId?: string
+}
+
+// ── Captcha Types ──
+
+export interface CaptchaRequest {
+  id: string
+  imagePath: string
+  caption: string
+  requestedAt: number
+  expiresAt: number
+  status: 'pending' | 'answered' | 'expired'
+  answer?: string
+  answeredAt?: number
+}
+
+// ── Memory Relationship Types ──
+
+export interface MemoryRelationship {
+  nodeId: string
+  nodeType: string
+  nodeContent: string
+  edgeType: string
+  edgeWeight: number
+  direction: 'outgoing' | 'incoming'
+}

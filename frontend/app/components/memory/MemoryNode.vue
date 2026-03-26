@@ -26,11 +26,24 @@
       <span>Strength: {{ (node.strength ?? 0).toFixed(4) }}</span>
       <span>ID: {{ node.id.slice(0, 8) }}</span>
     </div>
+    <!-- Relationships panel -->
+    <div v-if="expanded && relationships.length" class="rel-panel" @click.stop>
+      <div class="rel-header">Relationships ({{ relationships.length }})</div>
+      <div v-for="rel in relationships" :key="rel.nodeId + rel.edgeType" class="rel-row">
+        <span class="rel-direction" :class="rel.direction">{{ rel.direction === 'outgoing' ? '\u2192' : '\u2190' }}</span>
+        <span class="rel-edge-badge">{{ rel.edgeType }}</span>
+        <UiTypeBadge :type="rel.nodeType" />
+        <span class="rel-content">{{ truncateRel(rel.nodeContent) }}</span>
+        <span class="rel-weight">{{ rel.edgeWeight.toFixed(2) }}</span>
+      </div>
+    </div>
+    <div v-if="expanded && relLoading" class="rel-loading" @click.stop>Loading relationships...</div>
+    <div v-if="expanded && relError" class="rel-error" @click.stop>{{ relError }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { GraphNode } from '~/types/aria'
+import type { GraphNode, MemoryRelationship } from '~/types/aria'
 
 const props = defineProps<{
   node: GraphNode
@@ -40,13 +53,38 @@ const props = defineProps<{
   childCount?: number
 }>()
 
+const { api } = useApi()
 const { timeAgo, fmtDate } = useTimeAgo()
 const expanded = ref(false)
+const relationships = ref<MemoryRelationship[]>([])
+const relLoading = ref(false)
+const relError = ref('')
+const relLoaded = ref(false)
+
+watch(expanded, async (isExpanded) => {
+  if (isExpanded && !relLoaded.value) {
+    relLoading.value = true
+    relError.value = ''
+    try {
+      const data = await api<MemoryRelationship[]>(`/api/memory/node/${props.node.id}/relationships`)
+      relationships.value = data
+      relLoaded.value = true
+    } catch (e) {
+      relError.value = e instanceof Error ? e.message : 'Failed to load relationships'
+    } finally {
+      relLoading.value = false
+    }
+  }
+})
 
 const truncatedContent = computed(() => {
   const c = props.node.content || ''
   return c.length > 200 ? c.slice(0, 200) + '...' : c
 })
+
+function truncateRel(content: string): string {
+  return content.length > 120 ? content.slice(0, 120) + '...' : content
+}
 </script>
 
 <style scoped>
@@ -87,4 +125,71 @@ const truncatedContent = computed(() => {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* Relationships panel */
+.rel-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.rel-header {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.rel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.02);
+}
+.rel-row:last-child { border-bottom: none; }
+.rel-direction {
+  font-size: 14px;
+  font-weight: 700;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.rel-direction.outgoing { color: var(--accent); }
+.rel-direction.incoming { color: var(--accent-warm, #e0a060); }
+.rel-edge-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-dim);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.rel-content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.rel-weight {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-ghost);
+  flex-shrink: 0;
+}
+.rel-loading, .rel-error {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.rel-loading { color: var(--text-ghost); }
+.rel-error { color: var(--red); }
 </style>

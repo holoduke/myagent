@@ -36,6 +36,55 @@
         />
       </UiCard>
 
+      <!-- Actionable Requests -->
+      <UiCard title="Actionable Requests" :icon="icons.actionable" style="margin-bottom:16px">
+        <!-- Filter tabs -->
+        <div class="rq-filters">
+          <button
+            v-for="f in arFilters"
+            :key="f.value"
+            class="rq-filter"
+            :class="{ active: arActiveFilter === f.value }"
+            @click="arActiveFilter = f.value"
+          >
+            {{ f.label }}
+            <span v-if="f.count > 0" class="rq-filter-count">{{ f.count }}</span>
+          </button>
+        </div>
+
+        <div v-if="filteredActionableRequests.length === 0" class="rq-empty">
+          No {{ arActiveFilter === 'all' ? '' : arActiveFilter.replace('_', ' ') + ' ' }}actionable requests
+        </div>
+
+        <div
+          v-for="ar in filteredActionableRequests"
+          :key="ar.id"
+          class="ar-card"
+          :class="ar.status"
+        >
+          <div class="req-header">
+            <span class="req-badge" :class="ar.status === 'pending_confirmation' ? 'pending' : ar.status">
+              <span v-if="ar.status === 'auto_executed'" class="ar-check">&#10003;</span>
+              {{ arStatusLabel(ar.status) }}
+            </span>
+            <span class="req-time">{{ timeAgo(ar.timestamp) }}</span>
+          </div>
+          <div class="req-contact">
+            {{ ar.senderName }}
+            <span v-if="ar.isGroup && ar.groupName" class="req-group">in {{ ar.groupName }}</span>
+          </div>
+          <div class="ar-text">{{ ar.text }}</div>
+          <div v-if="ar.categories.length" class="ar-categories">
+            <span v-for="cat in ar.categories" :key="cat" class="ar-cat-badge">{{ cat }}</span>
+          </div>
+          <div v-if="ar.status === 'pending_confirmation'" class="req-actions">
+            <button class="btn primary sm" :disabled="arActingId === ar.id" @click="handleArApprove(ar.id)">Approve</button>
+            <button class="btn danger sm" :disabled="arActingId === ar.id" @click="handleArReject(ar.id)">Reject</button>
+          </div>
+          <div v-if="ar.resolvedAt" class="req-note">Resolved {{ timeAgo(ar.resolvedAt) }}</div>
+        </div>
+      </UiCard>
+
       <!-- Directives / Rules -->
       <UiCard title="Directive Rules" :icon="icons.rules" style="margin-bottom:16px">
         <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">
@@ -96,7 +145,7 @@
 </template>
 
 <script setup lang="ts">
-import type { ContactRequest, Directive, DirectiveActionType, DirectivePolicy, WhitelistContact } from '~/types/aria'
+import type { ActionableRequest, ActionableRequestStatus, ContactRequest, Directive, DirectiveActionType, DirectivePolicy, WhitelistContact } from '~/types/aria'
 
 const { api } = useApi()
 
@@ -108,6 +157,11 @@ const contacts = ref<WhitelistContact[]>([])
 const activeFilter = ref<'all' | 'pending' | 'auto_executed' | 'approved' | 'rejected'>('all')
 const actingId = ref('')
 
+// Actionable requests state
+const actionableRequests = ref<ActionableRequest[]>([])
+const arActiveFilter = ref<'all' | 'pending_confirmation'>('pending_confirmation')
+const arActingId = ref('')
+
 // Directive editor state
 const showEditor = ref(false)
 const editingDirective = ref<Directive | undefined>(undefined)
@@ -117,6 +171,7 @@ const icons = {
   inbox: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>',
   rules: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
   contacts: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>',
+  actionable: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
 }
 
 const filters = computed(() => {
@@ -137,6 +192,40 @@ const filteredRequests = computed(() => {
   if (activeFilter.value === 'all') return requests.value
   return requests.value.filter(r => r.status === activeFilter.value)
 })
+
+// Actionable request filters
+const arFilters = computed(() => {
+  const all = actionableRequests.value.length
+  const pending = actionableRequests.value.filter(r => r.status === 'pending_confirmation').length
+  return [
+    { value: 'pending_confirmation' as const, label: 'Pending', count: pending },
+    { value: 'all' as const, label: 'All', count: all },
+  ]
+})
+
+const filteredActionableRequests = computed(() => {
+  if (arActiveFilter.value === 'all') return actionableRequests.value
+  return actionableRequests.value.filter(r => r.status === arActiveFilter.value)
+})
+
+const arStatusLabels: Record<string, string> = {
+  pending_confirmation: 'Pending',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  auto_executed: 'Auto-executed',
+}
+
+function arStatusLabel(status: ActionableRequestStatus): string {
+  return arStatusLabels[status] || status
+}
+
+function timeAgo(ts: number): string {
+  const diff = Date.now() - ts
+  if (diff < 60000) return 'just now'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
+  return `${Math.floor(diff / 86400000)}d ago`
+}
 
 function directiveCountForContact(jid: string): number {
   return directives.value.filter(d => d.contactJid === jid).length
@@ -169,6 +258,36 @@ async function handleReject(id: string) {
   } finally {
     actingId.value = ''
   }
+}
+
+async function handleArApprove(id: string) {
+  arActingId.value = id
+  try {
+    await api(`/api/actionable-requests/${id}/approve`, { method: 'POST' })
+    await loadActionableRequests()
+  } catch (e) {
+    console.error('Failed to approve actionable request:', e)
+  } finally {
+    arActingId.value = ''
+  }
+}
+
+async function handleArReject(id: string) {
+  arActingId.value = id
+  try {
+    await api(`/api/actionable-requests/${id}/reject`, { method: 'POST' })
+    await loadActionableRequests()
+  } catch (e) {
+    console.error('Failed to reject actionable request:', e)
+  } finally {
+    arActingId.value = ''
+  }
+}
+
+async function loadActionableRequests() {
+  try {
+    actionableRequests.value = await api<ActionableRequest[]>('/api/actionable-requests')
+  } catch {}
 }
 
 async function handleSaveDirective(data: { contactJid: string; contactName: string; actionType: DirectiveActionType; policy: DirectivePolicy; enabled: boolean; note?: string; id?: string }) {
@@ -226,14 +345,16 @@ async function loadDirectives() {
 
 async function load() {
   try {
-    const [reqs, dirs, cts] = await Promise.all([
+    const [reqs, dirs, cts, arReqs] = await Promise.all([
       api<ContactRequest[]>('/api/contact-requests'),
       api<Directive[]>('/api/directives'),
       api<WhitelistContact[]>('/api/whitelist'),
+      api<ActionableRequest[]>('/api/actionable-requests'),
     ])
     requests.value = reqs
     directives.value = dirs
     contacts.value = cts
+    actionableRequests.value = arReqs
     loaded.value = true
     error.value = ''
   } catch (e) {
@@ -389,6 +510,53 @@ onMounted(load)
   font-family: var(--mono);
   color: var(--text-ghost);
   white-space: nowrap;
+}
+
+/* ── Actionable Requests ── */
+.ar-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+  transition: border-color .15s;
+}
+.ar-card.pending_confirmation { border-left: 3px solid #eab308; }
+.ar-card.approved { border-left: 3px solid #22c55e; }
+.ar-card.rejected { border-left: 3px solid #6b7280; }
+.ar-card.auto_executed { border-left: 3px solid #3b82f6; }
+
+.ar-text {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  background: var(--bg-surface);
+  border-radius: 6px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.ar-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.ar-cat-badge {
+  font-size: 10px;
+  font-family: var(--mono);
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(168,85,247,0.12);
+  color: var(--accent);
+  text-transform: lowercase;
+}
+.ar-check {
+  color: #22c55e;
+  margin-right: 2px;
 }
 
 @media (max-width: 768px) {

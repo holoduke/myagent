@@ -58,12 +58,61 @@
       No browser tasks yet
     </div>
 
+    <!-- Captcha Verification -->
+    <div class="browser-action-section" style="margin-top:14px">
+      <label class="intg-label">Captcha Verification</label>
+
+      <div v-if="captchaLoading" style="color:var(--text-ghost);font-size:13px;padding:8px 0">Loading captchas...</div>
+
+      <!-- Pending captchas -->
+      <div v-for="cap in pendingCaptchas" :key="cap.id" class="captcha-card captcha-card--pending">
+        <div class="captcha-header">
+          <span class="captcha-caption">{{ cap.caption }}</span>
+          <span class="captcha-badge captcha-badge--pending">pending</span>
+          <span class="captcha-time">{{ timeAgo(cap.requestedAt) }}</span>
+        </div>
+        <div class="captcha-form">
+          <input
+            v-model="captchaAnswers[cap.id]"
+            placeholder="Enter answer"
+            class="intg-input"
+            style="flex:1"
+            @keyup.enter="submitCaptcha(cap.id)"
+          />
+          <button
+            class="btn"
+            :disabled="!captchaAnswers[cap.id]?.trim() || captchaSubmitting[cap.id]"
+            @click="submitCaptcha(cap.id)"
+          >Submit</button>
+        </div>
+      </div>
+
+      <div v-if="!captchaLoading && !pendingCaptchas.length" style="color:var(--text-ghost);font-size:13px;padding:6px 0">
+        No pending captchas
+      </div>
+
+      <!-- History (collapsible) -->
+      <template v-if="captchaHistory.length">
+        <button class="btn" style="margin-top:8px;font-size:11px;padding:4px 10px" @click="showCaptchaHistory = !showCaptchaHistory">
+          {{ showCaptchaHistory ? 'Hide' : 'Show' }} history ({{ captchaHistory.length }})
+        </button>
+        <div v-if="showCaptchaHistory" class="captcha-history">
+          <div v-for="cap in captchaHistory" :key="cap.id" class="captcha-history-row">
+            <span class="captcha-caption">{{ cap.caption }}</span>
+            <span class="captcha-badge" :class="cap.status === 'answered' ? 'captcha-badge--answered' : 'captcha-badge--expired'">{{ cap.status }}</span>
+            <span v-if="cap.answer" class="captcha-answer">{{ cap.answer }}</span>
+            <span class="captcha-time">{{ timeAgo(cap.requestedAt) }}</span>
+          </div>
+        </div>
+      </template>
+    </div>
+
     <p v-if="errorMsg" class="browser-error">{{ errorMsg }}</p>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { BrowserStatus, BrowserTaskResult } from '~/types/aria'
+import type { BrowserStatus, BrowserTaskResult, CaptchaRequest } from '~/types/aria'
 
 defineProps<{
   browser: BrowserStatus
@@ -82,6 +131,51 @@ const extractSelector = ref('')
 const loading = ref(false)
 const lastResult = ref<BrowserTaskResult | null>(null)
 const errorMsg = ref('')
+
+// Captcha state
+const pendingCaptchas = ref<CaptchaRequest[]>([])
+const captchaHistory = ref<CaptchaRequest[]>([])
+const captchaAnswers = ref<Record<string, string>>({})
+const captchaSubmitting = ref<Record<string, boolean>>({})
+const captchaLoading = ref(false)
+const showCaptchaHistory = ref(false)
+
+async function loadCaptchas() {
+  captchaLoading.value = true
+  try {
+    const [pending, history] = await Promise.all([
+      api<CaptchaRequest[]>('/api/browser/captcha/pending'),
+      api<CaptchaRequest[]>('/api/browser/captcha/history'),
+    ])
+    pendingCaptchas.value = pending
+    captchaHistory.value = history
+  } catch {
+    // silent
+  } finally {
+    captchaLoading.value = false
+  }
+}
+
+async function submitCaptcha(id: string) {
+  const answer = captchaAnswers.value[id]?.trim()
+  if (!answer) return
+  captchaSubmitting.value[id] = true
+  try {
+    await api('/api/browser/captcha/verify', {
+      method: 'POST',
+      body: { id, answer },
+    })
+    delete captchaAnswers.value[id]
+    await loadCaptchas()
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : 'Captcha submission failed'
+  } finally {
+    captchaSubmitting.value[id] = false
+  }
+}
+
+// Load captchas on mount
+loadCaptchas()
 
 function truncateUrl(url: string): string {
   try {
@@ -192,4 +286,51 @@ async function clearHistory() {
 .browser-task-url { font-size: 12px; color: var(--text-muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .browser-task-meta { font-family: var(--mono); font-size: 10px; color: var(--text-ghost); flex-shrink: 0; }
 .browser-error { color: var(--red); font-size: 12px; margin-top: 8px; }
+
+/* Captcha styles */
+.captcha-card {
+  padding: 10px;
+  margin-top: 8px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.captcha-card--pending { border-color: var(--yellow, #EAB308); }
+.captcha-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.captcha-caption { font-size: 13px; color: var(--text); flex: 1; }
+.captcha-badge {
+  font-size: 10px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.captcha-badge--pending { background: rgba(234,179,8,0.15); color: var(--yellow, #EAB308); }
+.captcha-badge--answered { background: rgba(34,197,94,0.15); color: var(--green, #22C55E); }
+.captcha-badge--expired { background: rgba(239,68,68,0.15); color: var(--red, #EF4444); }
+.captcha-time { font-family: var(--mono); font-size: 10px; color: var(--text-ghost); flex-shrink: 0; }
+.captcha-form {
+  display: flex;
+  gap: 6px;
+}
+.captcha-history { margin-top: 8px; }
+.captcha-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.captcha-answer {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
 </style>
