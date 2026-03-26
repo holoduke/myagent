@@ -585,3 +585,85 @@ export interface MemoryRelationship {
   edgeWeight: number
   direction: 'outgoing' | 'incoming'
 }
+
+// ── Message Handlers ──
+
+export type HandlerActionType = 'flag' | 'reply' | 'memory' | 'webhook'
+
+export interface HandlerScope {
+  sources?: string[]
+  senderJids?: string[]
+  groupJids?: string[]
+  isGroup?: boolean | null
+  excludeWhitelisted?: boolean
+  excludeFromMe?: boolean
+  minTextLength?: number
+}
+
+export interface HandlerGate {
+  keywords?: string[]
+  regexPattern?: string
+  regexFlags?: string
+}
+
+export interface HandlerAction {
+  type: HandlerActionType
+  flagLabel?: string
+  flagSeverity?: 'info' | 'warning' | 'critical'
+  replyPrompt?: string
+  memoryTag?: string
+  memorySummaryPrompt?: string
+  webhookUrl?: string
+  webhookHeaders?: Record<string, string>
+}
+
+export interface MessageHandler {
+  id: string
+  name: string
+  description?: string
+  enabled: boolean
+  priority: number
+  createdAt: number
+  updatedAt: number
+  scope: HandlerScope
+  gate?: HandlerGate
+  filterPrompt: string
+  action: HandlerAction
+  cooldownMs?: number
+  maxLLMCallsPerDay?: number
+}
+
+export interface HandlerLogEntry {
+  timestamp: number
+  handlerId: string
+  handlerName: string
+  senderJid: string
+  senderName: string
+  chatJid?: string
+  isGroup: boolean
+  groupName?: string
+  messageSnippet: string
+  tier1Passed: boolean
+  tier2Passed: boolean
+  tier3Result?: boolean
+  actionTaken: boolean
+  actionType?: HandlerActionType
+  actionResult?: string
+  error?: string
+  llmLatencyMs?: number
+}
+
+export interface HandlerStats {
+  handlerId: string
+  matchesToday: number
+  llmCallsToday: number
+  actionsTakenToday: number
+  lastMatchAt?: number
+}
+
+export interface HandlerTestResult {
+  tier1: boolean
+  tier2: boolean
+  tier3?: { match: boolean; reason: string }
+  error?: string
+}
