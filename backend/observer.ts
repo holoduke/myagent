@@ -12,6 +12,7 @@ import type { PromptDetectionResult } from "./prompt-detector.js";
 import type { IntentClassification } from "./intent-classifier.js";
 import { evaluateMessage } from "./message-evaluator.js";
 import { dispatchReply } from "./reply-agent.js";
+import { runMessageHandlers } from "./message-handlers.js";
 
 const log = createLogger("observer");
 
@@ -233,6 +234,11 @@ export function recordObservation(obs: Observation): void {
       log(`Evaluation error for ${obs.sender}: ${err}`);
     });
   }
+
+  // ── User-defined message handlers (independent pipeline) ──
+  runMessageHandlers(obs).catch(err => {
+    log(`Message handler error for ${obs.sender}: ${err}`);
+  });
 
   try {
     ensureBrainDir();

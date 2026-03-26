@@ -22,6 +22,7 @@ import { startSlackPolling, stopSlackPolling } from "./integrations/slack.js";
 import { handleSlackRoutes } from "./integrations/slack-routes.js";
 import { handleOwnTracksWebhook } from "./integrations/owntracks.js";
 import { initReplyAgent } from "./reply-agent.js";
+import { initMessageHandlers } from "./message-handlers.js";
 import { initBrowser, closeBrowser } from "./integrations/browser.js";
 import { handleTwiml, handleTurn, handleStatus as handleTwilioStatus } from "./integrations/twilio.js";
 
@@ -47,6 +48,9 @@ async function main() {
 
   // Initialize reply agent (auto-reply system)
   initReplyAgent(sendMessage);
+
+  // Initialize message handlers (user-defined filters)
+  initMessageHandlers(sendMessage);
 
   // Start Gmail polling (if accounts configured)
   startGmailPolling();

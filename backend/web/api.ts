@@ -18,6 +18,11 @@ import {
   getReplyLog, testReplyDirective,
 } from "../reply-agent.js";
 import type { ReplyCategory } from "../reply-agent.js";
+import {
+  getHandlers, getHandler, addHandler, updateHandler, removeHandler,
+  getHandlerLog, getHandlerStats, getHandlerFlags, testHandler,
+} from "../message-handlers.js";
+import type { HandlerScope, HandlerGate, HandlerAction } from "../message-handlers.js";
 import { getRequests as getContactRequests, approveRequest as approveContactRequest, rejectRequest as rejectContactRequest, getPendingRequestCount } from "../request-queue.js";
 import type { RequestStatus } from "../request-queue.js";
 import { getAccountStatus, addAccount, removeAccount } from "../integrations/gmail.js";
@@ -249,6 +254,54 @@ export function handleApiRoutes(
     const rdDeleteMatch = pathname.match(/^\/api\/reply-directives\/([^/]+)$/);
     if (rdDeleteMatch) {
       const removed = removeReplyDirective(rdDeleteMatch[1]);
+      respondJson(res, removed ? 200 : 400, { success: removed });
+      return true;
+    }
+  }
+
+  // ── Message Handlers ──
+  if (pathname === "/api/message-handlers" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      respondJson(res, 200, getHandlers());
+      return true;
+    }
+    if (req.method === "POST") {
+      handleMessageHandlerAdd(req, res);
+      return true;
+    }
+  }
+  if (pathname === "/api/message-handlers/log" && req.method === "GET" && isAuthenticated(req)) {
+    const mhLogUrl = new URL(req.url || "/", `http://${req.headers.host}`);
+    const mhLimit = parseInt(mhLogUrl.searchParams.get("limit") || "100", 10);
+    const mhHandlerId = mhLogUrl.searchParams.get("handlerId") || undefined;
+    respondJson(res, 200, getHandlerLog(mhLimit, mhHandlerId));
+    return true;
+  }
+  if (pathname === "/api/message-handlers/stats" && req.method === "GET" && isAuthenticated(req)) {
+    respondJson(res, 200, getHandlerStats());
+    return true;
+  }
+  if (pathname === "/api/message-handlers/flags" && req.method === "GET" && isAuthenticated(req)) {
+    const flagUrl = new URL(req.url || "/", `http://${req.headers.host}`);
+    const flagLimit = parseInt(flagUrl.searchParams.get("limit") || "50", 10);
+    respondJson(res, 200, getHandlerFlags(flagLimit));
+    return true;
+  }
+  if (pathname === "/api/message-handlers/test" && req.method === "POST" && isAuthenticated(req)) {
+    handleMessageHandlerTest(req, res);
+    return true;
+  }
+  if (req.method === "PATCH" && isAuthenticated(req)) {
+    const mhPatchMatch = pathname.match(/^\/api\/message-handlers\/([^/]+)$/);
+    if (mhPatchMatch) {
+      handleMessageHandlerUpdate(req, res, mhPatchMatch[1]);
+      return true;
+    }
+  }
+  if (req.method === "DELETE" && isAuthenticated(req)) {
+    const mhDeleteMatch = pathname.match(/^\/api\/message-handlers\/([^/]+)$/);
+    if (mhDeleteMatch) {
+      const removed = removeHandler(mhDeleteMatch[1]);
       respondJson(res, removed ? 200 : 400, { success: removed });
       return true;
     }
@@ -1736,6 +1789,53 @@ function handleContactRequestApprove(req: IncomingMessage, res: ServerResponse, 
 function handleContactRequestReject(req: IncomingMessage, res: ServerResponse, id: string) {
   const handler = apiHandler(async (_req, _res, body: { note?: string }) => {
     return rejectContactRequest(id, body?.note);
+  });
+  handler(req, res);
+}
+
+// ── Message handler handlers ──
+
+function handleMessageHandlerAdd(req: IncomingMessage, res: ServerResponse) {
+  const handler = apiHandler(async (_req, _res, body: {
+    name: string;
+    description?: string;
+    scope: HandlerScope;
+    gate?: HandlerGate;
+    filterPrompt: string;
+    action: HandlerAction;
+    cooldownMs?: number;
+    maxLLMCallsPerDay?: number;
+    enabled?: boolean;
+  }) => {
+    if (!body.name || !body.filterPrompt || !body.action?.type) {
+      throw new ApiError(400, "name, filterPrompt, and action.type are required");
+    }
+    return addHandler(body);
+  });
+  handler(req, res);
+}
+
+function handleMessageHandlerUpdate(req: IncomingMessage, res: ServerResponse, id: string) {
+  const handler = apiHandler(async (_req, _res, body: Record<string, unknown>) => {
+    const result = updateHandler(id, body);
+    if (!result) throw new ApiError(404, "Handler not found");
+    return result;
+  });
+  handler(req, res);
+}
+
+function handleMessageHandlerTest(req: IncomingMessage, res: ServerResponse) {
+  const handler = apiHandler(async (_req, _res, body: {
+    handlerId: string;
+    testMessage: string;
+    senderName: string;
+    isGroup: boolean;
+    groupName?: string;
+  }) => {
+    if (!body.handlerId || !body.testMessage) {
+      throw new ApiError(400, "handlerId and testMessage are required");
+    }
+    return testHandler(body);
   });
   handler(req, res);
 }
