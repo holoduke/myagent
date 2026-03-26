@@ -8,7 +8,6 @@ import { extractAndClassifyCommitments } from "./commitments.js";
 import type { ClassifiedCommitment } from "./commitments.js";
 import type { ActionableSignal } from "./actionable.js";
 import { processObservation as trackActionable } from "./actionable-tracker.js";
-import { routeObservationToDirectives } from "./directive-router.js";
 import type { PromptDetectionResult } from "./prompt-detector.js";
 import type { IntentClassification } from "./intent-classifier.js";
 import { evaluateMessage } from "./message-evaluator.js";
@@ -217,13 +216,11 @@ export function recordObservation(obs: Observation): void {
 
         log(`Actionable: ${allSignals.length} signal(s) from ${obs.sender}`);
         trackActionable(obs);
-        routeObservationToDirectives(obs);
       } else if (result.regexSignals.length > 0 && !obs.actionableSignals?.length) {
         // Regex-only signals (when LLM wasn't called)
         obs.actionableSignals = result.regexSignals;
         log(`Actionable (regex): ${result.regexSignals.length} signal(s) from ${obs.sender}`);
         trackActionable(obs);
-        routeObservationToDirectives(obs);
       }
 
       // Dispatch reply if needed
