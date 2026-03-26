@@ -1,10 +1,12 @@
 /**
- * Reply Agent — AI-powered auto-reply system for WhatsApp messages.
+ * Reply Agent — auto-reply dispatch, directive storage, rate limiting, and logging.
  *
  * Two built-in categories: "whitelisted" and "others", plus per-contact overrides.
  * Each reply directive contains a filter prompt (when to reply) and a reply prompt
- * (how to reply). Incoming messages are evaluated by a lightweight Claude haiku call
- * that decides whether to reply and generates the response.
+ * (how to reply).
+ *
+ * AI evaluation is handled by the unified message-evaluator.ts — this module
+ * handles directive CRUD, rate limiting, sending, and audit logging.
  *
  * Storage: /data/brain/reply-directives.json
  * Log: /data/brain/reply-agent-log.jsonl
@@ -74,10 +76,10 @@ interface ChatCooldown {
   windowStart: number;
 }
 
-const MIN_REPLY_INTERVAL_MS = 60_000;           // 1 min between replies per chat
-const MAX_REPLIES_PER_WINDOW = 5;                // max replies per rolling window
-const WINDOW_SIZE_MS = 3_600_000;                // 1 hour window
-const GROUP_COOLDOWN_MULTIPLIER = 3;             // groups get 3x cooldown
+const MIN_REPLY_INTERVAL_MS = 60_000;
+const MAX_REPLIES_PER_WINDOW = 5;
+const WINDOW_SIZE_MS = 3_600_000;
+const GROUP_COOLDOWN_MULTIPLIER = 3;
 
 const cooldowns = new Map<string, ChatCooldown>();
 
@@ -89,8 +91,6 @@ function canReply(chatJid: string, isGroup: boolean): boolean {
   const interval = isGroup ? MIN_REPLY_INTERVAL_MS * GROUP_COOLDOWN_MULTIPLIER : MIN_REPLY_INTERVAL_MS;
 
   if (now - cd.lastReplyAt < interval) return false;
-
-  // Reset window if expired
   if (now - cd.windowStart > WINDOW_SIZE_MS) return true;
 
   const maxReplies = isGroup ? Math.ceil(MAX_REPLIES_PER_WINDOW / GROUP_COOLDOWN_MULTIPLIER) : MAX_REPLIES_PER_WINDOW;
@@ -124,7 +124,6 @@ function load(): ReplyDirective[] {
   if (cache) return cache;
   const data = safeReadJSON<ReplyDirective[] | null>(DIRECTIVES_FILE, null as unknown as ReplyDirective[]);
   if (!data) {
-    // Seed defaults on first load
     const defaults: ReplyDirective[] = [
       {
         id: "rd_whitelisted",
@@ -216,7 +215,6 @@ export function updateReplyDirective(
 }
 
 export function removeReplyDirective(id: string): boolean {
-  // Don't allow deleting built-in category defaults
   if (id === "rd_whitelisted" || id === "rd_others") {
     log(`Cannot delete built-in category directive ${id}`);
     return false;
@@ -227,135 +225,6 @@ export function removeReplyDirective(id: string): boolean {
   save(filtered);
   log(`Removed reply directive ${id}`);
   return true;
-}
-
-// ── Directive matching ──
-
-/**
- * Find the applicable reply directive for a sender.
- * Priority: per-contact override > category default.
- */
-function resolveDirective(senderJid: string): ReplyDirective | null {
-  const directives = load();
-
-  // 1. Per-contact override
-  const contactOverride = directives.find(
-    d => d.contactJid && d.contactJid === senderJid && d.enabled,
-  );
-  if (contactOverride) return contactOverride;
-
-  // 2. Category default
-  const category: ReplyCategory = isWhitelisted(senderJid) ? "whitelisted" : "others";
-  const categoryDefault = directives.find(
-    d => d.category === category && d.enabled,
-  );
-  return categoryDefault || null;
-}
-
-// ── AI evaluation ──
-
-class ReplyAgentLLM extends BaseProvider {
-  readonly name = "reply-agent";
-  readonly supportsStreaming = false;
-  readonly supportsSessions = false;
-
-  /* eslint-disable @typescript-eslint/no-unused-vars */
-  async ask(_message: string) { return { messages: [] as string[] }; }
-  async askStreaming(_message: string, _onDelta: (text: string) => void) { return { messages: [] as string[] }; }
-  resetSession() { /* no-op */ }
-  /* eslint-enable @typescript-eslint/no-unused-vars */
-
-  async evaluate(prompt: string): Promise<string | null> {
-    const timeout = 15_000;
-
-    return new Promise((resolve) => {
-      const { promise } = this.spawnWithTimeout({
-        command: "claude",
-        args: [
-          "-p", prompt,
-          "--output-format", "json",
-          "--model", "haiku",
-          "--allowedTools", "",
-        ],
-        env: {
-          ANTHROPIC_API_KEY: "",
-          CLAUDECODE: "",
-          HOME: process.env.CLAUDE_HOME || process.env.HOME || "/root",
-        },
-        timeout,
-        onTimeout: () => {
-          log("Reply agent LLM timed out");
-        },
-      });
-
-      promise.then(({ code, stdout, stderr }) => {
-        if (code !== 0) {
-          log(`Reply agent LLM exited ${code}: ${stderr.slice(0, 200)}`);
-          resolve(null);
-          return;
-        }
-        try {
-          const response = JSON.parse(stdout) as { result: string; is_error: boolean };
-          if (response.is_error) {
-            log(`Reply agent LLM error: ${response.result.slice(0, 200)}`);
-            resolve(null);
-            return;
-          }
-          resolve(response.result);
-        } catch {
-          resolve(stdout.trim() || null);
-        }
-      }).catch((err) => {
-        log(`Reply agent LLM spawn failed: ${err}`);
-        resolve(null);
-      });
-    });
-  }
-}
-
-const llm = new ReplyAgentLLM();
-
-async function evaluateMessage(obs: Observation, directive: ReplyDirective): Promise<ReplyDecision> {
-  const context = obs.isGroup
-    ? `in group "${obs.groupName || "unknown"}"`
-    : "private chat";
-
-  const prompt = `You are a WhatsApp reply agent. Based on the directive below, decide whether to reply to this message and craft the reply if so.
-
-═══ FILTER RULES ═══
-${directive.filterPrompt}
-
-═══ REPLY RULES ═══
-${directive.replyPrompt}
-
-═══ INCOMING MESSAGE ═══
-From: ${obs.sender} (${context})
-Message: "${obs.text}"
-
-Respond ONLY with valid JSON, no markdown, no code fences:
-{"shouldReply": true or false, "reply": "your reply text or null if shouldReply is false", "reason": "brief reason for your decision"}`;
-
-  const raw = await llm.evaluate(prompt);
-  if (!raw) {
-    return { shouldReply: false, reply: null, reason: "LLM evaluation failed" };
-  }
-
-  try {
-    // Try to extract JSON from the response (handle potential markdown wrapping)
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return { shouldReply: false, reply: null, reason: "No JSON in LLM response" };
-    }
-    const parsed = JSON.parse(jsonMatch[0]) as ReplyDecision;
-    return {
-      shouldReply: !!parsed.shouldReply,
-      reply: parsed.reply || null,
-      reason: parsed.reason || "no reason given",
-    };
-  } catch (err) {
-    log(`Failed to parse reply decision: ${err} — raw: ${raw.slice(0, 200)}`);
-    return { shouldReply: false, reply: null, reason: "JSON parse error" };
-  }
 }
 
 // ── Logging ──
@@ -381,7 +250,6 @@ export function getReplyLog(limit = 100, chatJid?: string): ReplyLogEntry[] {
         entries.push(entry);
       } catch { /* skip corrupt lines */ }
     }
-    // Return most recent entries
     return entries.slice(-limit);
   } catch {
     return [];
@@ -395,44 +263,35 @@ let sendFn: SendFn | null = null;
 
 export function initReplyAgent(send: SendFn): void {
   sendFn = send;
-  // Force-load directives so defaults get seeded
-  load();
+  load(); // Seed defaults
   log("Reply agent initialized");
 }
 
-// ── Main entry point ──
+// ── Dispatch (called by observer after unified evaluation) ──
 
-export async function processObservationForReply(obs: Observation): Promise<void> {
-  // Guards
-  if (obs.isFromMe) return;
-  if (!obs.text) return;
-  if (obs.source && obs.source !== "whatsapp") return;
-
-  // Skip owner messages (they go through the command pipeline)
-  const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
-  if (obs.senderJid === ownerJid) return;
-
-  // Find applicable directive
-  const directive = resolveDirective(obs.senderJid);
-  if (!directive) return;
-
-  // Determine chat JID for rate limiting and replying
+/**
+ * Send an auto-reply based on the evaluation result.
+ * Handles rate limiting, opt-out detection, sending, and logging.
+ * Called from observer.ts after the unified evaluator decides to reply.
+ */
+export async function dispatchReply(
+  obs: Observation,
+  decision: ReplyDecision,
+  directiveId: string,
+): Promise<void> {
   const chatJid = obs.isGroup ? (obs.chatJid || obs.senderJid) : obs.senderJid;
 
-  // Rate limit check
+  // Rate limit
   if (!canReply(chatJid, obs.isGroup ?? false)) {
     log(`Rate limited: skipping reply to ${chatJid}`);
     return;
   }
 
-  // Opt-out detection
+  // Opt-out
   if (isOptOut(obs.text)) {
     log(`Opt-out detected from ${obs.sender} in ${chatJid}`);
     return;
   }
-
-  // Evaluate with AI
-  const decision = await evaluateMessage(obs, directive);
 
   const logEntry: ReplyLogEntry = {
     timestamp: Date.now(),
@@ -441,29 +300,25 @@ export async function processObservationForReply(obs: Observation): Promise<void
     chatJid,
     isGroup: obs.isGroup ?? false,
     groupName: obs.groupName,
-    directiveId: directive.id,
+    directiveId,
     messageSnippet: obs.text.slice(0, 100),
     decision,
     sent: false,
   };
 
-  if (decision.shouldReply && decision.reply) {
-    if (!sendFn) {
-      logEntry.error = "Send function not initialized";
-      log("Reply agent: send function not initialized");
-    } else {
-      try {
-        await sendFn(chatJid, decision.reply);
-        logEntry.sent = true;
-        recordReplyEvent(chatJid);
-        log(`Replied to ${obs.sender} in ${chatJid}: "${decision.reply.slice(0, 80)}"`);
-      } catch (err) {
-        logEntry.error = String(err);
-        log(`Failed to send reply to ${chatJid}: ${err}`);
-      }
-    }
+  if (!sendFn) {
+    logEntry.error = "Send function not initialized";
+    log("Reply agent: send function not initialized");
   } else {
-    log(`No reply to ${obs.sender} in ${chatJid}: ${decision.reason}`);
+    try {
+      await sendFn(chatJid, decision.reply!);
+      logEntry.sent = true;
+      recordReplyEvent(chatJid);
+      log(`Replied to ${obs.sender} in ${chatJid}: "${decision.reply!.slice(0, 80)}"`);
+    } catch (err) {
+      logEntry.error = String(err);
+      log(`Failed to send reply to ${chatJid}: ${err}`);
+    }
   }
 
   logReply(logEntry);
@@ -471,6 +326,10 @@ export async function processObservationForReply(obs: Observation): Promise<void
 
 // ── Test endpoint helper ──
 
+/**
+ * Test a reply directive with a fake message. Uses the unified evaluator
+ * for consistent behavior with the live pipeline.
+ */
 export async function testReplyDirective(params: {
   directiveId: string;
   testMessage: string;
@@ -483,16 +342,82 @@ export async function testReplyDirective(params: {
     return { shouldReply: false, reply: null, reason: "Directive not found" };
   }
 
-  const fakeObs: Observation = {
-    timestamp: Date.now(),
-    sender: params.senderName,
-    senderJid: "test@s.whatsapp.net",
-    isGroup: params.isGroup,
-    groupName: params.groupName,
-    isFromMe: false,
-    text: params.testMessage,
-    source: "whatsapp",
-  };
+  // Use a dedicated LLM call for testing (not the unified evaluator,
+  // since we want to test the directive in isolation)
+  const context = params.isGroup
+    ? `in group "${params.groupName || "unknown"}"`
+    : "private chat";
 
-  return evaluateMessage(fakeObs, directive);
+  const prompt = `You are a WhatsApp reply agent. Based on the directive below, decide whether to reply to this message and craft the reply if so.
+
+═══ FILTER RULES ═══
+${directive.filterPrompt}
+
+═══ REPLY RULES ═══
+${directive.replyPrompt}
+
+═══ INCOMING MESSAGE ═══
+From: ${params.senderName} (${context})
+Message: "${params.testMessage}"
+
+Respond ONLY with valid JSON, no markdown, no code fences:
+{"shouldReply": true or false, "reply": "your reply text or null if shouldReply is false", "reason": "brief reason for your decision"}`;
+
+  const tester = new TestLLM();
+  const raw = await tester.run(prompt);
+  if (!raw) {
+    return { shouldReply: false, reply: null, reason: "LLM evaluation failed" };
+  }
+
+  try {
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { shouldReply: false, reply: null, reason: "No JSON in response" };
+    const parsed = JSON.parse(jsonMatch[0]) as ReplyDecision;
+    return {
+      shouldReply: !!parsed.shouldReply,
+      reply: parsed.reply || null,
+      reason: parsed.reason || "no reason given",
+    };
+  } catch {
+    return { shouldReply: false, reply: null, reason: "JSON parse error" };
+  }
+}
+
+// ── Test-only LLM provider ──
+
+class TestLLM extends BaseProvider {
+  readonly name = "reply-test";
+  readonly supportsStreaming = false;
+  readonly supportsSessions = false;
+
+  /* eslint-disable @typescript-eslint/no-unused-vars */
+  async ask(_msg: string) { return { messages: [] as string[] }; }
+  async askStreaming(_msg: string, _cb: (t: string) => void) { return { messages: [] as string[] }; }
+  resetSession() { /* no-op */ }
+  /* eslint-enable @typescript-eslint/no-unused-vars */
+
+  async run(prompt: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const { promise } = this.spawnWithTimeout({
+        command: "claude",
+        args: ["-p", prompt, "--output-format", "json", "--model", "haiku", "--allowedTools", ""],
+        env: {
+          ANTHROPIC_API_KEY: "",
+          CLAUDECODE: "",
+          HOME: process.env.CLAUDE_HOME || process.env.HOME || "/root",
+        },
+        timeout: 15_000,
+        onTimeout: () => log("Test LLM timed out"),
+      });
+
+      promise.then(({ code, stdout, stderr }) => {
+        if (code !== 0) { log(`Test LLM exited ${code}: ${stderr.slice(0, 200)}`); resolve(null); return; }
+        try {
+          const resp = JSON.parse(stdout) as { result: string; is_error: boolean };
+          if (resp.is_error) { resolve(null); return; }
+          resolve(resp.result);
+        } catch { resolve(stdout.trim() || null); }
+      }).catch(() => resolve(null));
+    });
+  }
 }
