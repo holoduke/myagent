@@ -907,8 +907,8 @@ export function getStyles(): string {
 
     .home-tiles {
       display: grid;
-      grid-template-columns: 1fr;
-      gap: 10px;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
       padding: 0 16px;
       max-width: 600px;
       margin: 0 auto;
@@ -916,16 +916,19 @@ export function getStyles(): string {
     }
     .home-tile {
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 14px;
-      padding: 16px;
+      justify-content: center;
+      gap: 12px;
+      padding: 24px 12px;
       background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: 14px;
       text-decoration: none;
       color: var(--text);
       transition: all .15s;
       -webkit-tap-highlight-color: transparent;
+      min-height: 120px;
     }
     .home-tile:hover, .home-tile:active {
       border-color: var(--accent);
@@ -933,35 +936,33 @@ export function getStyles(): string {
       box-shadow: 0 0 20px rgba(255,77,42,0.08);
     }
     .home-tile-icon {
-      width: 40px;
-      height: 40px;
+      width: 48px;
+      height: 48px;
       display: flex;
       align-items: center;
       justify-content: center;
       background: var(--bg-surface);
-      border-radius: 10px;
+      border-radius: 12px;
       flex-shrink: 0;
       border: 1px solid var(--border);
     }
-    .home-tile-icon svg { width: 20px; height: 20px; color: var(--accent); }
-    .home-tile-text { flex: 1; min-width: 0; }
+    .home-tile-icon svg { width: 24px; height: 24px; color: var(--accent); }
+    .home-tile-text { text-align: center; min-width: 0; }
     .home-tile-label {
       font-family: var(--mono);
       font-size: 14px;
-      font-weight: 500;
+      font-weight: 600;
       color: var(--text);
       letter-spacing: 0.5px;
     }
     .home-tile-desc {
-      font-size: 12px;
+      font-size: 11px;
       color: var(--text-muted);
-      margin-top: 2px;
+      margin-top: 4px;
+      line-height: 1.3;
     }
     .home-tile-url {
-      font-family: var(--mono);
-      font-size: 10px;
-      color: var(--text-ghost);
-      flex-shrink: 0;
+      display: none;
     }
     .home-footer {
       padding: 24px 16px;
