@@ -99,7 +99,7 @@ Backend (/app/backend/):
   - brain-config.ts — configuration with presets
   - memory/ — graph.ts, activation.ts, decay.ts, working-memory.ts, types.ts
   - providers/ — claude-provider.ts, grok-provider.ts, provider-store.ts, types.ts
-  - web/ — api.ts (HTTP API), providers-api.ts, auth.ts, dashboard.ts
+  - web/ — api.ts (HTTP API), providers-api.ts, auth.ts
   - integrations/ — whatsapp.ts, gmail.ts, gmail-routes.ts, calendar.ts, homeassistant.ts, rss.ts, owntracks.ts, ssh.ts
   - observer.ts, history.ts — observation pipeline
   - self-improve.ts, self-improve-prompt.ts, self-improve-queue.ts — self-improvement worker
