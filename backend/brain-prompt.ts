@@ -370,7 +370,7 @@ const OPERATION_INSTRUCTIONS = `
 ═══ MEMORY OPERATIONS ═══
 
 You manage your memory through operations. Return a JSON array of operations.
-Each node has: id, type, content, tags, strength (0-1), pinned (boolean).
+Each node has: id, type, content, tags, strength (0-1), pinned (boolean), importance (0-1, optional).
 Each edge connects two nodes with a type and weight (0-1).
 
 Node types: person, event, insight, fact, emotion, plan, meta, goal, concept
@@ -379,7 +379,7 @@ Edge types: causal, temporal, social, topical, emotional, contradicts, hierarchi
 Available operations:
 
 ADD a new memory node:
-  {"op": "add_node", "id": "n_unique8hex", "type": "person", "content": "description", "tags": ["tag1"], "strength": 0.8, "pinned": false}
+  {"op": "add_node", "id": "n_unique8hex", "type": "person", "content": "description", "tags": ["tag1"], "strength": 0.8, "pinned": false, "importance": 0.5}
 
 ADD an edge between nodes:
   {"op": "add_edge", "from": "n_xxx", "to": "n_yyy", "type": "social", "weight": 0.7}
@@ -390,8 +390,8 @@ STRENGTHEN a node (reinforce memory):
 WEAKEN a node:
   {"op": "weaken", "id": "n_xxx", "amount": 0.1}
 
-UPDATE a node's content/tags/pinned:
-  {"op": "update_node", "id": "n_xxx", "content": "new content", "tags": ["new"], "pinned": true}
+UPDATE a node's content/tags/pinned/importance:
+  {"op": "update_node", "id": "n_xxx", "content": "new content", "tags": ["new"], "pinned": true, "importance": 0.7}
 
 UPDATE an edge:
   {"op": "update_edge", "from": "n_xxx", "to": "n_yyy", "weight": 0.9, "type": "causal"}
@@ -407,6 +407,18 @@ REMOVE an edge:
 
 Generate IDs as: "n_" followed by 8 random hex chars (e.g. "n_a3f1b2c4").
 Pin important nodes (key people, core identity, critical facts) — pinned nodes never decay.
+
+IMPORTANCE FIELD (0.0 – 1.0):
+Set "importance" on nodes to protect significant memories from frequency-based decay.
+This is a SALIENCE signal independent of how often a memory is accessed:
+  - 0.0 = no importance boost (default, decays normally based on access frequency)
+  - 0.3 = mildly important (decays ~25% slower)
+  - 0.5 = moderately important (decays ~40% slower)
+  - 0.7 = highly important (decays ~55% slower)
+  - 1.0 = critical (decays ~80% slower, nearly pinned)
+Use this for one-off significant events (medical decisions, milestones, key conversations) that
+may not be mentioned again but should NOT be forgotten. Frequency-based decay is biased toward
+recurring topics — importance corrects for that by preserving what matters regardless of repetition.
 
 ═══ RETENTION TIERS ═══
 
@@ -640,6 +652,8 @@ export interface ConsolidateContext {
   graph: MemoryGraph;
   wm: WorkingMemory;
   stats: { nodeCount: number; edgeCount: number; archivedCount: number; byType: Record<string, number>; avgStrength: number };
+  uncapturedSignals?: import("./memory/decay.js").UncapturedSignal[];
+  deltaReport?: import("./memory/decay.js").DeltaReport | null;
 }
 
 export function buildConsolidatePrompt(ctx: ConsolidateContext): string {
@@ -673,7 +687,18 @@ ${ctx.orphanNodes.length > 0 ? formatNodeList(ctx.orphanNodes) : "(none)"}
 
 ═══ POTENTIAL DUPLICATES ═══
 ${ctx.duplicateCandidates.length > 0 ? formatDuplicates(ctx.duplicateCandidates) : "(none)"}
-${OPERATION_INSTRUCTIONS}
+${ctx.uncapturedSignals && ctx.uncapturedSignals.length > 0 ? `
+═══ UNCAPTURED SIGNALS (from observation log audit) ═══
+These signals were found in recent observation logs but have no corresponding memory nodes.
+Consider creating nodes for significant ones:
+${ctx.uncapturedSignals.map(s => `  [${s.type}] "${s.name}" — ${s.mentions} mentions, sample: "${s.sampleText}"`).join("\n")}
+` : ""}${ctx.deltaReport ? `
+═══ MEMORY DELTA (loss measurement) ═══
+${ctx.deltaReport.summary}
+Nodes lost since last snapshot: ${ctx.deltaReport.nodesLost.length}${ctx.deltaReport.nodesLost.length > 0 ? ` (${ctx.deltaReport.nodesLost.slice(0, 10).join(", ")}${ctx.deltaReport.nodesLost.length > 10 ? "..." : ""})` : ""}
+Nodes weakened: ${ctx.deltaReport.nodesWeakened.length} | Strengthened: ${ctx.deltaReport.nodesStrengthened.length}
+Loss rate: ${(ctx.deltaReport.lossRate * 100).toFixed(1)}%
+` : ""}${OPERATION_INSTRUCTIONS}
 ═══ WHAT TO DO ═══
 
 Review your memory graph. Merge duplicates, remove noise, strengthen important things, connect orphans or remove them.
@@ -703,6 +728,9 @@ CONSOLIDATION GUIDELINES:
   2. Add a "corrected" tag to the merged node so it is retained as important.
   3. Create a meta node noting the resolution: what conflicted, which version was kept, and why.
   This prevents stale or incorrect information from lingering in the memory graph.
+- UNCAPTURED SIGNALS: If the "UNCAPTURED SIGNALS" section lists people or events from logs, consider creating nodes for ones that seem significant. Not everything needs a node — focus on people who appear repeatedly or events with real impact.
+- IMPORTANCE: When creating or updating nodes for significant one-off events (milestones, medical, legal, major decisions), set "importance" (0.3–1.0) to protect them from frequency-based decay.
+- MEMORY DELTA: If the loss rate is high (>10%), consider whether important nodes are decaying too fast and whether they need importance boosts or pinning.
 
 Respond with ONLY the JSON object.`;
 }

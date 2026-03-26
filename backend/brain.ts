@@ -1328,9 +1328,15 @@ async function consolidateTick(
   // Load working memory first so consolidation can use it for archive rescan
   const wm = loadWorkingMemory();
 
-  // Run automatic decay + archive rescan (free)
+  // Run automatic decay + archive rescan + log audit + snapshot (free)
   const decayResult = runConsolidation(graph, wm);
   log(`Consolidate decay: ${decayResult.nodesDecayed} nodes decayed, ${decayResult.nodesPruned} archived, ${decayResult.edgesDecayed} edges decayed, ${decayResult.edgesPruned} pruned, ${decayResult.orphansPruned} orphans, ${decayResult.archiveRestored} recalled from archive`);
+  if (decayResult.uncapturedSignals.length > 0) {
+    log(`Consolidate audit: ${decayResult.uncapturedSignals.length} uncaptured signals found in observation logs`);
+  }
+  if (decayResult.deltaReport) {
+    log(`Consolidate delta: ${decayResult.deltaReport.summary}`);
+  }
 
   // Prepare context for Claude consolidation
   populateTemporalContext(wm);
@@ -1344,8 +1350,9 @@ async function consolidateTick(
   }
   const { weakNodes, orphanNodes, duplicateCandidates, stats } = selectContextForConsolidate(graph);
 
-  // Only call Claude if there's cleanup work to consider
-  if (weakNodes.length === 0 && orphanNodes.length === 0 && duplicateCandidates.length === 0) {
+  // Only call Claude if there's cleanup work or uncaptured signals to consider
+  const hasUncaptured = decayResult.uncapturedSignals.length > 0;
+  if (weakNodes.length === 0 && orphanNodes.length === 0 && duplicateCandidates.length === 0 && !hasUncaptured) {
     log("Consolidate: nothing for Claude to review, decay-only cycle");
     state.lastConsolidateTick = now;
     return true;
@@ -1362,6 +1369,8 @@ async function consolidateTick(
     graph,
     wm,
     stats,
+    uncapturedSignals: decayResult.uncapturedSignals,
+    deltaReport: decayResult.deltaReport,
   });
 
   try {

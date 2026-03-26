@@ -1,7 +1,7 @@
 import { existsSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { randomBytes } from "crypto";
-import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode } from "./types.js";
+import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode, ArchivedEdge } from "./types.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("graph");
@@ -437,11 +437,20 @@ export class MemoryGraph {
     if (!node) return false;
     if (node.pinned) return false; // never archive pinned nodes
 
-    // Create archived copy
+    // Capture edge topology BEFORE removal (tombstone preservation)
+    const tombstoneEdges: ArchivedEdge[] = this.edgesFor(id).map(e => ({
+      from: e.from,
+      to: e.to,
+      type: e.type,
+      weight: e.weight,
+    }));
+
+    // Create archived copy with preserved edges
     const archived: ArchivedNode = {
       ...node,
       archivedAt: Date.now(),
       archiveReason: reason,
+      archivedEdges: tombstoneEdges.length > 0 ? tombstoneEdges : undefined,
     };
 
     this.archive.set(id, archived);
@@ -509,19 +518,46 @@ export class MemoryGraph {
     const archived = this.archive.get(id);
     if (!archived) return false;
 
-    // Restore with reduced strength (it was dormant)
-    const { archivedAt: _, archiveReason: __, ...nodeData } = archived;
+    // Restore with reduced strength and reconstruction metadata
+    const { archivedAt: _, archiveReason: __, archivedEdges, ...nodeData } = archived;
+    const now = Date.now();
     const restored: MemoryNode = {
       ...nodeData,
       strength: Math.min(0.6, archived.strength), // cap at 0.6 — needs reinforcement
-      lastAccessedAt: Date.now(),
+      lastAccessedAt: now,
       accessCount: archived.accessCount + 1,
+      reconstructedAt: now,
+      reconstructedFrom: "archive",
     };
 
     this.addNode(restored);
+
+    // Re-create tombstone edges where the other endpoint still exists
+    if (archivedEdges && archivedEdges.length > 0) {
+      let edgesRestored = 0;
+      for (const te of archivedEdges) {
+        const from = te.from === id ? id : te.from;
+        const to = te.to === id ? id : te.to;
+        const otherId = from === id ? to : from;
+        if (!this.nodes.has(otherId)) continue; // other endpoint gone
+        this.addEdge({
+          from,
+          to,
+          type: te.type,
+          weight: Math.min(0.5, te.weight), // reduced weight — stale connection
+          createdAt: now,
+          lastReinforcedAt: now,
+        });
+        edgesRestored++;
+      }
+      if (edgesRestored > 0) {
+        log(`Restored ${edgesRestored}/${archivedEdges.length} tombstone edges for node ${id}`);
+      }
+    }
+
     this.archive.delete(id);
 
-    log(`Restored node ${id} from archive (was archived for "${archived.archiveReason}")`);
+    log(`Restored node ${id} from archive (was archived for "${archived.archiveReason}", marked as reconstructed)`);
     return true;
   }
 
@@ -717,6 +753,7 @@ export class MemoryGraph {
               createdAt: now,
               lastAccessedAt: now,
               accessCount: 1,
+              ...(op.importance != null ? { importance: Math.max(0, Math.min(1, op.importance)) } : {}),
             };
             this.addNode(newNode);
             // Auto-correlate: find related nodes and create edges
@@ -756,6 +793,11 @@ export class MemoryGraph {
           case "update_node": {
             if (!this.nodes.has(op.id)) { skipped++; break; }
             this.updateNode(op.id, { content: op.content, tags: op.tags, pinned: op.pinned });
+            // Handle importance update separately (not part of updateNode's generic interface)
+            if (op.importance != null) {
+              const node = this.nodes.get(op.id);
+              if (node) node.importance = Math.max(0, Math.min(1, op.importance));
+            }
             applied++;
             break;
           }

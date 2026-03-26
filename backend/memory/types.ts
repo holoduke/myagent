@@ -21,11 +21,23 @@ export interface MemoryNode {
   createdAt: number;       // unix ms
   lastAccessedAt: number;  // unix ms, updated on reinforce
   accessCount: number;
+  importance?: number;     // 0.0 – 1.0, explicit salience signal (independent of frequency)
+  reconstructedAt?: number;    // unix ms — set when restored from archive/logs
+  reconstructedFrom?: "archive" | "log";  // source of reconstruction
 }
 
 export interface ArchivedNode extends MemoryNode {
   archivedAt: number;       // unix ms — when it was moved to cold storage
   archiveReason: "decay" | "orphan" | "emergency" | "manual" | "consolidation";
+  archivedEdges?: ArchivedEdge[];  // tombstone: edges preserved from active graph at archive time
+}
+
+/** Lightweight edge snapshot preserved when a node is archived (tombstone) */
+export interface ArchivedEdge {
+  from: string;
+  to: string;
+  type: EdgeType;
+  weight: number;
 }
 
 // ── Edge Types ──
@@ -144,11 +156,11 @@ export type TickType = "observe" | "think" | "consolidate" | "reflect";
 // ── Memory Operations (Claude's output) ──
 
 export type MemoryOperation =
-  | { op: "add_node"; id: string; type: NodeType; content: string; tags: string[]; pinned?: boolean; strength?: number }
+  | { op: "add_node"; id: string; type: NodeType; content: string; tags: string[]; pinned?: boolean; strength?: number; importance?: number }
   | { op: "add_edge"; from: string; to: string; type: EdgeType; weight: number }
   | { op: "strengthen"; id: string; amount: number }
   | { op: "weaken"; id: string; amount: number }
-  | { op: "update_node"; id: string; content?: string; tags?: string[]; pinned?: boolean }
+  | { op: "update_node"; id: string; content?: string; tags?: string[]; pinned?: boolean; importance?: number }
   | { op: "update_edge"; from: string; to: string; weight?: number; type?: EdgeType }
   | { op: "merge_nodes"; ids: string[]; into: { content: string; tags: string[] } }
   | { op: "remove_node"; id: string }
