@@ -3,8 +3,8 @@ import { getApiUrl, proxyHeaders } from '../utils/proxy'
 export default defineEventHandler(async (event) => {
   const method = getMethod(event)
 
-  // Only handle GET, POST, PUT (DELETE has its own handler)
-  if (method !== 'GET' && method !== 'POST' && method !== 'PUT') return
+  // Only handle GET, POST, PUT, PATCH (DELETE has its own handler)
+  if (method !== 'GET' && method !== 'POST' && method !== 'PUT' && method !== 'PATCH') return
 
   const path = getRequestURL(event).pathname
   const search = getRequestURL(event).search || ''
@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
     headers: proxyHeaders(event),
   }
 
-  if (method === 'POST' || method === 'PUT') {
+  if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
     const body = await readBody(event)
     if (body) {
       fetchOptions.body = JSON.stringify(body)
