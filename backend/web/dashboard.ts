@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { id: "requests", label: "Requests", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`, desc: "Incoming requests" },
   { id: "integrations", label: "Integrations", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>`, desc: "WhatsApp, Gmail, Calendar & more" },
   { id: "ai-providers", label: "Agents", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 014 4v1a1 1 0 001 1h1a4 4 0 010 8h-1a1 1 0 00-1 1v1a4 4 0 01-8 0v-1a1 1 0 00-1-1H6a4 4 0 010-8h1a1 1 0 001-1V6a4 4 0 014-4z"/><circle cx="12" cy="12" r="2"/></svg>`, desc: "AI providers & sub-agents" },
+  { id: "reply-agent", label: "Reply Agent", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>`, desc: "Auto-reply directives" },
   { id: "settings", label: "Settings", icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`, desc: "Configuration & preferences" },
 ];
 
@@ -162,6 +163,14 @@ export function getDashboardHTML(): string {
         </div>
       </div>
 
+      <!-- Reply Agent Section -->
+      <div class="section" id="section-reply-agent">
+        <div class="section-header"><button class="back-btn" onclick="navigate('home')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5m0 0l7 7m-7-7l7-7"/></svg></button>Reply Agent</div>
+        <div id="reply-agent-content">
+          <div style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
+        </div>
+      </div>
+
       <!-- Settings Section -->
       <div class="section" id="section-settings">
         <div class="section-header"><button class="back-btn" onclick="navigate('home')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5m0 0l7 7m-7-7l7-7"/></svg></button>Settings</div>
@@ -253,7 +262,7 @@ export function getDashboardHTML(): string {
 
     // ── Navigation ──
     function navigate(section, skipHash) {
-      const valid = ['home','overview','chat','memory','requests','integrations','ai-providers','settings'];
+      const valid = ['home','overview','chat','memory','requests','integrations','ai-providers','reply-agent','settings'];
       // On mobile, default to home; on desktop, default to overview
       if (!valid.includes(section)) {
         section = window.innerWidth <= 768 ? 'home' : 'overview';
@@ -278,6 +287,7 @@ export function getDashboardHTML(): string {
       else if (section === 'requests') loadRequests();
       else if (section === 'integrations') loadIntegrations();
       else if (section === 'ai-providers') loadProviders();
+      else if (section === 'reply-agent') loadReplyAgent();
       else if (section === 'settings') loadSettings();
 
       // Auto-refresh for overview
@@ -1570,6 +1580,213 @@ export function getDashboardHTML(): string {
       document.getElementById('qr-modal').classList.add('visible');
     }
     function hideQr() { document.getElementById('qr-modal').classList.remove('visible'); }
+
+    // ── Reply Agent ──
+    let _replyDirectives = [];
+
+    async function loadReplyAgent() {
+      try {
+        const [dirRes, logRes] = await Promise.all([
+          fetch('/api/reply-directives', { headers: authHeaders() }),
+          fetch('/api/reply-directives/log?limit=50', { headers: authHeaders() }),
+        ]);
+        if (dirRes.status === 401) { resetAuth(); return; }
+        _replyDirectives = await dirRes.json();
+        const logEntries = logRes.ok ? await logRes.json() : [];
+        renderReplyAgent(_replyDirectives, logEntries);
+      } catch(e) {
+        document.getElementById('reply-agent-content').innerHTML =
+          '<div class="card"><p style="color:var(--red)">Failed to load: ' + e.message + '</p></div>';
+      }
+    }
+
+    function renderReplyAgent(directives, logEntries) {
+      const cats = directives.filter(d => d.category);
+      const overrides = directives.filter(d => d.contactJid);
+
+      let html = '<p style="color:var(--text-dim);margin-bottom:16px">AI-powered auto-reply for incoming WhatsApp messages. Configure filter and reply prompts per category or per contact.</p>';
+
+      // Category directives
+      html += '<h3 style="margin:0 0 12px">Category Directives</h3>';
+      for (const cat of ['whitelisted', 'others']) {
+        const d = cats.find(c => c.category === cat) || { id: '', category: cat, filterPrompt: '', replyPrompt: '', enabled: false };
+        const label = cat === 'whitelisted' ? 'Whitelisted Contacts' : 'Other Contacts';
+        const color = d.enabled ? 'var(--green)' : 'var(--text-ghost)';
+        html += '<div class="card" style="margin-bottom:16px">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+        html += '<strong>' + label + '</strong>';
+        html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="color:' + color + ';font-size:12px">' + (d.enabled ? 'Active' : 'Disabled') + '</span>';
+        html += '<input type="checkbox" ' + (d.enabled ? 'checked' : '') + ' onchange="toggleReplyDirective(\'' + d.id + '\',this.checked)"></label>';
+        html += '</div>';
+        html += '<label style="display:block;color:var(--text-dim);font-size:12px;margin-bottom:4px">Filter (when to reply)</label>';
+        html += '<textarea id="rd-filter-' + d.id + '" rows="3" style="width:100%;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-family:inherit;font-size:13px;resize:vertical">' + esc(d.filterPrompt) + '</textarea>';
+        html += '<label style="display:block;color:var(--text-dim);font-size:12px;margin:8px 0 4px">Reply instructions (tone, content)</label>';
+        html += '<textarea id="rd-reply-' + d.id + '" rows="3" style="width:100%;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-family:inherit;font-size:13px;resize:vertical">' + esc(d.replyPrompt) + '</textarea>';
+        html += '<div style="display:flex;gap:8px;margin-top:8px">';
+        html += '<button class="action-btn" onclick="saveReplyDirective(\'' + d.id + '\')">Save</button>';
+        html += '<button class="action-btn" style="background:var(--bg-raised)" onclick="testReplyDirectiveUI(\'' + d.id + '\')">Test</button>';
+        html += '</div>';
+        html += '<div id="rd-status-' + d.id + '" style="margin-top:6px;font-size:12px"></div>';
+        html += '</div>';
+      }
+
+      // Per-contact overrides
+      html += '<h3 style="margin:16px 0 12px">Per-Contact Overrides</h3>';
+      html += '<button class="action-btn" onclick="addReplyOverrideUI()" style="margin-bottom:12px">+ Add Override</button>';
+      html += '<div id="rd-overrides">';
+      if (overrides.length === 0) {
+        html += '<p style="color:var(--text-ghost);font-size:13px">No per-contact overrides configured.</p>';
+      }
+      for (const d of overrides) {
+        html += renderReplyOverride(d);
+      }
+      html += '</div>';
+
+      // Add override form (hidden)
+      html += '<div id="rd-add-form" style="display:none" class="card">';
+      html += '<h4 style="margin:0 0 8px">New Override</h4>';
+      html += '<label style="font-size:12px;color:var(--text-dim)">Contact JID (e.g. 31612345678@s.whatsapp.net)</label>';
+      html += '<input id="rd-new-jid" style="width:100%;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;margin:4px 0 8px">';
+      html += '<label style="font-size:12px;color:var(--text-dim)">Display Name</label>';
+      html += '<input id="rd-new-name" style="width:100%;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;margin:4px 0 8px">';
+      html += '<label style="font-size:12px;color:var(--text-dim)">Filter prompt</label>';
+      html += '<textarea id="rd-new-filter" rows="2" style="width:100%;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;margin:4px 0 8px;font-family:inherit;font-size:13px"></textarea>';
+      html += '<label style="font-size:12px;color:var(--text-dim)">Reply prompt</label>';
+      html += '<textarea id="rd-new-reply" rows="2" style="width:100%;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;margin:4px 0 8px;font-family:inherit;font-size:13px"></textarea>';
+      html += '<div style="display:flex;gap:8px"><button class="action-btn" onclick="saveNewReplyOverride()">Create</button>';
+      html += '<button class="action-btn" style="background:var(--bg-raised)" onclick="document.getElementById(\'rd-add-form\').style.display=\'none\'">Cancel</button></div>';
+      html += '</div>';
+
+      // Reply log
+      html += '<h3 style="margin:16px 0 12px">Recent Reply Log</h3>';
+      if (logEntries.length === 0) {
+        html += '<p style="color:var(--text-ghost);font-size:13px">No replies sent yet.</p>';
+      } else {
+        html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
+        html += '<tr style="color:var(--text-dim);text-align:left"><th style="padding:6px">Time</th><th style="padding:6px">From</th><th style="padding:6px">Message</th><th style="padding:6px">Reply</th><th style="padding:6px">Sent</th></tr>';
+        for (const e of logEntries.slice().reverse().slice(0, 30)) {
+          const time = new Date(e.timestamp).toLocaleString();
+          const sent = e.sent ? '✓' : (e.decision.shouldReply ? '✗ ' + (e.error || '') : '—');
+          const sentColor = e.sent ? 'var(--green)' : (e.decision.shouldReply ? 'var(--red)' : 'var(--text-ghost)');
+          html += '<tr style="border-top:1px solid var(--border)">';
+          html += '<td style="padding:6px;white-space:nowrap">' + esc(time) + '</td>';
+          html += '<td style="padding:6px">' + esc(e.senderName) + (e.isGroup ? ' <span style="color:var(--text-ghost)">(' + esc(e.groupName || 'group') + ')</span>' : '') + '</td>';
+          html += '<td style="padding:6px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(e.messageSnippet) + '</td>';
+          html += '<td style="padding:6px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(e.decision.reply || e.decision.reason || '—') + '</td>';
+          html += '<td style="padding:6px;color:' + sentColor + '">' + sent + '</td>';
+          html += '</tr>';
+        }
+        html += '</table></div>';
+      }
+
+      document.getElementById('reply-agent-content').innerHTML = html;
+    }
+
+    function renderReplyOverride(d) {
+      let h = '<div class="card" style="margin-bottom:8px" id="rd-card-' + d.id + '">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+      h += '<strong>' + esc(d.contactName || d.contactJid) + '</strong>';
+      h += '<div style="display:flex;align-items:center;gap:8px">';
+      h += '<input type="checkbox" ' + (d.enabled ? 'checked' : '') + ' onchange="toggleReplyDirective(\'' + d.id + '\',this.checked)">';
+      h += '<button onclick="deleteReplyOverride(\'' + d.id + '\')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:16px">✕</button>';
+      h += '</div></div>';
+      h += '<div style="font-size:11px;color:var(--text-ghost);margin:4px 0 8px">' + esc(d.contactJid || '') + '</div>';
+      h += '<label style="font-size:12px;color:var(--text-dim)">Filter</label>';
+      h += '<textarea id="rd-filter-' + d.id + '" rows="2" style="width:100%;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;margin:4px 0;font-family:inherit;font-size:13px;resize:vertical">' + esc(d.filterPrompt) + '</textarea>';
+      h += '<label style="font-size:12px;color:var(--text-dim)">Reply</label>';
+      h += '<textarea id="rd-reply-' + d.id + '" rows="2" style="width:100%;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;margin:4px 0;font-family:inherit;font-size:13px;resize:vertical">' + esc(d.replyPrompt) + '</textarea>';
+      h += '<button class="action-btn" onclick="saveReplyDirective(\'' + d.id + '\')" style="margin-top:4px">Save</button>';
+      h += '<div id="rd-status-' + d.id + '" style="margin-top:4px;font-size:12px"></div>';
+      h += '</div>';
+      return h;
+    }
+
+    async function toggleReplyDirective(id, enabled) {
+      try {
+        await fetch('/api/reply-directives/' + id, {
+          method: 'PATCH', headers: jsonHeaders(),
+          body: JSON.stringify({ enabled })
+        });
+        loadReplyAgent();
+      } catch(e) { console.error('Toggle failed:', e); }
+    }
+
+    async function saveReplyDirective(id) {
+      const filterEl = document.getElementById('rd-filter-' + id);
+      const replyEl = document.getElementById('rd-reply-' + id);
+      const statusEl = document.getElementById('rd-status-' + id);
+      if (!filterEl || !replyEl) return;
+      try {
+        const res = await fetch('/api/reply-directives/' + id, {
+          method: 'PATCH', headers: jsonHeaders(),
+          body: JSON.stringify({ filterPrompt: filterEl.value, replyPrompt: replyEl.value })
+        });
+        if (res.ok) {
+          statusEl.textContent = 'Saved!';
+          statusEl.style.color = 'var(--green)';
+        } else {
+          statusEl.textContent = 'Failed to save';
+          statusEl.style.color = 'var(--red)';
+        }
+        setTimeout(() => { statusEl.textContent = ''; }, 2000);
+      } catch(e) {
+        statusEl.textContent = 'Error: ' + e.message;
+        statusEl.style.color = 'var(--red)';
+      }
+    }
+
+    async function testReplyDirectiveUI(id) {
+      const msg = prompt('Enter a test message:');
+      if (!msg) return;
+      const name = prompt('Sender name:', 'Test User');
+      const isGroup = confirm('Is this a group message?');
+      const statusEl = document.getElementById('rd-status-' + id);
+      statusEl.textContent = 'Testing...';
+      statusEl.style.color = 'var(--text-dim)';
+      try {
+        const res = await fetch('/api/reply-directives/test', {
+          method: 'POST', headers: jsonHeaders(),
+          body: JSON.stringify({ directiveId: id, testMessage: msg, senderName: name, isGroup })
+        });
+        const result = await res.json();
+        if (result.shouldReply) {
+          statusEl.innerHTML = '<span style="color:var(--green)">Would reply:</span> ' + esc(result.reply);
+        } else {
+          statusEl.innerHTML = '<span style="color:var(--text-ghost)">No reply:</span> ' + esc(result.reason);
+        }
+      } catch(e) {
+        statusEl.textContent = 'Test failed: ' + e.message;
+        statusEl.style.color = 'var(--red)';
+      }
+    }
+
+    function addReplyOverrideUI() {
+      document.getElementById('rd-add-form').style.display = 'block';
+    }
+
+    async function saveNewReplyOverride() {
+      const jid = document.getElementById('rd-new-jid').value.trim();
+      const name = document.getElementById('rd-new-name').value.trim();
+      const filter = document.getElementById('rd-new-filter').value;
+      const reply = document.getElementById('rd-new-reply').value;
+      if (!jid || !filter || !reply) { alert('JID, filter and reply prompts are required'); return; }
+      try {
+        await fetch('/api/reply-directives', {
+          method: 'POST', headers: jsonHeaders(),
+          body: JSON.stringify({ contactJid: jid, contactName: name || jid, filterPrompt: filter, replyPrompt: reply, enabled: true })
+        });
+        document.getElementById('rd-add-form').style.display = 'none';
+        loadReplyAgent();
+      } catch(e) { alert('Failed: ' + e.message); }
+    }
+
+    async function deleteReplyOverride(id) {
+      if (!confirm('Delete this override?')) return;
+      try {
+        await fetch('/api/reply-directives/' + id, { method: 'DELETE', headers: authHeaders() });
+        loadReplyAgent();
+      } catch(e) { console.error('Delete failed:', e); }
+    }
 
     async function doReset() {
       if (busy) return;

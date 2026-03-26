@@ -21,6 +21,7 @@ import { startRSSPolling, stopRSSPolling } from "./integrations/rss.js";
 import { startSlackPolling, stopSlackPolling } from "./integrations/slack.js";
 import { handleSlackRoutes } from "./integrations/slack-routes.js";
 import { handleOwnTracksWebhook } from "./integrations/owntracks.js";
+import { initReplyAgent } from "./reply-agent.js";
 import { initBrowser, closeBrowser } from "./integrations/browser.js";
 import { handleTwiml, handleTurn, handleStatus as handleTwilioStatus } from "./integrations/twilio.js";
 
@@ -43,6 +44,9 @@ async function main() {
 
   // Start autonomous brain loop
   startBrainLoop(queue, sendMessage);
+
+  // Initialize reply agent (auto-reply system)
+  initReplyAgent(sendMessage);
 
   // Start Gmail polling (if accounts configured)
   startGmailPolling();
