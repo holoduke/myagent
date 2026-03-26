@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "fs";
 import { dirname } from "path";
 import type { MemoryGraph } from "./graph.js";
 import type { MemoryNode, RetentionTier, WorkingMemory } from "./types.js";
@@ -96,7 +96,10 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
     const lambda = DECAY_LAMBDA[node.type] ?? 0.004;
     // Logarithmic resistance: more accesses = slower decay
     const resistance = 1 / (1 + Math.log2(1 + node.accessCount));
-    let effectiveLambda = lambda * resistance * tierMultiplier;
+    // Importance-based resistance: high-importance nodes decay slower regardless of frequency
+    // importance=1.0 → 0.2x decay, importance=0.5 → 0.6x decay, importance=0 → 1.0x (no effect)
+    const importanceResistance = node.importance ? (1 - 0.8 * node.importance) : 1;
+    let effectiveLambda = lambda * resistance * tierMultiplier * importanceResistance;
 
     // Concept nodes with children decay slower — they're structurally important
     if (node.type === "concept") {
@@ -373,6 +376,8 @@ interface ConsolidationLogEntry {
   orphansPruned: number;
   emergencyPruned: number;
   archiveRestored: number;
+  lossRate?: number;         // fraction of nodes lost since last snapshot
+  uncapturedCount?: number;  // signals found in logs but not in graph
 }
 
 function appendConsolidationLog(entry: ConsolidationLogEntry): void {
@@ -407,6 +412,8 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
   orphansPruned: number;
   emergencyPruned: number;
   archiveRestored: number;
+  uncapturedSignals: UncapturedSignal[];
+  deltaReport: DeltaReport | null;
 } {
   const tierCache = new Map<string, RetentionTier>();
   const nodeResult = applyDecay(graph, tierCache);
@@ -416,6 +423,15 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
 
   // Periodic archive rescan — check if any archived memories match current context
   const archiveRestored = wm ? rescanArchive(graph, wm) : 0;
+
+  // Log audit — scan observations for uncaptured signals
+  const uncapturedSignals = auditObservationLogs(graph, 24);
+
+  // Graph snapshot — save current state for future delta comparison
+  saveGraphSnapshot(graph);
+
+  // Delta audit — compare current state with ~24h ago snapshot
+  const deltaReport = compareWithSnapshot(graph, 24);
 
   // Build tier distribution from cache
   const tierDistribution: Record<RetentionTier, number> = { core: 0, important: 0, work: 0, standard: 0, ephemeral: 0 };
@@ -431,6 +447,8 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
     orphansPruned,
     emergencyPruned,
     archiveRestored,
+    uncapturedSignals,
+    deltaReport,
   };
 
   // Append health metrics to consolidation log
@@ -440,8 +458,293 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
     edgeCount: graph.edgeCount,
     archiveSize: graph.archiveSize,
     tierDistribution,
-    ...result,
+    nodesDecayed: result.nodesDecayed,
+    nodesPruned: result.nodesPruned,
+    edgesDecayed: result.edgesDecayed,
+    edgesPruned: result.edgesPruned,
+    orphansPruned: result.orphansPruned,
+    emergencyPruned: result.emergencyPruned,
+    archiveRestored: result.archiveRestored,
+    lossRate: deltaReport?.lossRate,
+    uncapturedCount: uncapturedSignals.length,
   });
 
   return result;
+}
+
+// ── Observation Log Audit ──
+
+const OBSERVATIONS_FILE = `${process.env.BRAIN_DIR || "/data/brain"}/observations.jsonl`;
+
+interface ObservationLogEntry {
+  timestamp: number;
+  sender: string;
+  senderJid: string;
+  isGroup: boolean;
+  groupName?: string;
+  isFromMe: boolean;
+  text: string;
+  source?: string;
+}
+
+export interface UncapturedSignal {
+  type: "person" | "event" | "topic";
+  name: string;
+  mentions: number;
+  lastSeen: number;
+  sampleText: string;
+}
+
+/**
+ * Audit observation logs for significant signals that may not have corresponding memory nodes.
+ *
+ * Scans recent observations (last N hours) and extracts:
+ * - People mentioned frequently who don't have person nodes
+ * - Significant events (decisions, plans, milestones) with no corresponding event/fact nodes
+ *
+ * Returns uncaptured signals that Claude should consider creating nodes for.
+ */
+export function auditObservationLogs(graph: MemoryGraph, hoursBack = 24, maxSignals = 10): UncapturedSignal[] {
+  if (!existsSync(OBSERVATIONS_FILE)) return [];
+
+  const cutoff = Date.now() - hoursBack * 3600000;
+  const lines = readFileSync(OBSERVATIONS_FILE, "utf-8").trimEnd().split("\n");
+
+  // Parse recent observations
+  const recent: ObservationLogEntry[] = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const entry = JSON.parse(lines[i]) as ObservationLogEntry;
+      if (entry.timestamp < cutoff) break; // logs are chronological
+      recent.push(entry);
+    } catch { /* skip malformed */ }
+  }
+
+  if (recent.length === 0) return [];
+
+  // Count sender mentions (non-Gillis, non-bot senders)
+  const senderCounts = new Map<string, { count: number; jid: string; lastSeen: number; sample: string }>();
+  for (const obs of recent) {
+    if (obs.isFromMe) continue;
+    if (!obs.sender || obs.sender === "unknown") continue;
+    const existing = senderCounts.get(obs.sender);
+    if (existing) {
+      existing.count++;
+      if (obs.timestamp > existing.lastSeen) {
+        existing.lastSeen = obs.timestamp;
+        existing.sample = obs.text.slice(0, 120);
+      }
+    } else {
+      senderCounts.set(obs.sender, {
+        count: 1,
+        jid: obs.senderJid,
+        lastSeen: obs.timestamp,
+        sample: obs.text.slice(0, 120),
+      });
+    }
+  }
+
+  // Find senders with no person node
+  const uncaptured: UncapturedSignal[] = [];
+  const personNodes = graph.findByType("person");
+  const knownNames = new Set(personNodes.map(n => n.content.toLowerCase()));
+  const knownTags = new Set(personNodes.flatMap(n => n.tags.map(t => t.toLowerCase())));
+
+  for (const [name, data] of senderCounts) {
+    if (data.count < 2) continue; // need at least 2 messages to be signal
+    const nameLower = name.toLowerCase();
+    // Check if this person already has a node (by name in content or tags)
+    const hasNode = knownNames.has(nameLower)
+      || [...knownNames].some(n => n.includes(nameLower))
+      || knownTags.has(nameLower);
+    if (hasNode) continue;
+
+    uncaptured.push({
+      type: "person",
+      name,
+      mentions: data.count,
+      lastSeen: data.lastSeen,
+      sampleText: data.sample,
+    });
+  }
+
+  // Detect high-signal event keywords in recent messages
+  const eventSignals = [
+    "decided", "besloten", "afgesproken", "agreed", "deadline", "appointment",
+    "doctor", "dokter", "school", "hospital", "ziekenhuis", "moving", "verhuizen",
+    "pregnant", "zwanger", "promotion", "fired", "ontslagen", "accident", "ongeluk",
+    "birthday", "verjaardag", "wedding", "trouwen", "funeral", "begrafenis",
+  ];
+  const eventHits = new Map<string, { count: number; lastSeen: number; sample: string }>();
+  for (const obs of recent) {
+    const textLower = obs.text.toLowerCase();
+    for (const signal of eventSignals) {
+      if (textLower.includes(signal)) {
+        const existing = eventHits.get(signal);
+        if (existing) {
+          existing.count++;
+          if (obs.timestamp > existing.lastSeen) {
+            existing.lastSeen = obs.timestamp;
+            existing.sample = obs.text.slice(0, 120);
+          }
+        } else {
+          eventHits.set(signal, { count: 1, lastSeen: obs.timestamp, sample: obs.text.slice(0, 120) });
+        }
+      }
+    }
+  }
+
+  // Only surface event signals mentioned 2+ times (repeated = more likely significant)
+  for (const [keyword, data] of eventHits) {
+    if (data.count < 2) continue;
+    uncaptured.push({
+      type: "event",
+      name: keyword,
+      mentions: data.count,
+      lastSeen: data.lastSeen,
+      sampleText: data.sample,
+    });
+  }
+
+  // Sort by mention count descending, cap at maxSignals
+  uncaptured.sort((a, b) => b.mentions - a.mentions);
+  const result = uncaptured.slice(0, maxSignals);
+
+  if (result.length > 0) {
+    log(`Log audit: found ${result.length} uncaptured signals in last ${hoursBack}h (${recent.length} observations scanned)`);
+  }
+
+  return result;
+}
+
+// ── Graph Snapshots & Delta Audit ──
+
+const SNAPSHOT_DIR = `${process.env.BRAIN_DIR || "/data/brain"}/graph/snapshots`;
+const MAX_SNAPSHOTS = 50;
+
+export interface GraphSnapshot {
+  timestamp: number;
+  nodeCount: number;
+  edgeCount: number;
+  archiveSize: number;
+  nodeIds: string[];
+  nodeStrengths: Record<string, number>;
+  nodeTypes: Record<string, string>;
+}
+
+export interface DeltaReport {
+  snapshotAge: number;        // hours since snapshot
+  nodesLost: string[];        // IDs in snapshot but not in current graph
+  nodesGained: string[];      // IDs in current graph but not in snapshot
+  nodesWeakened: { id: string; was: number; now: number }[];  // strength decreased
+  nodesStrengthened: { id: string; was: number; now: number }[];
+  lossRate: number;           // fraction of snapshot nodes that are gone (0-1)
+  summary: string;
+}
+
+/**
+ * Save a lightweight snapshot of the current graph state.
+ * Called during consolidation to enable future delta audits.
+ */
+export function saveGraphSnapshot(graph: MemoryGraph): void {
+  if (!existsSync(SNAPSHOT_DIR)) mkdirSync(SNAPSHOT_DIR, { recursive: true });
+
+  const now = Date.now();
+  const nodes = graph.allNodes();
+  const snapshot: GraphSnapshot = {
+    timestamp: now,
+    nodeCount: nodes.length,
+    edgeCount: graph.edgeCount,
+    archiveSize: graph.archiveSize,
+    nodeIds: nodes.map(n => n.id),
+    nodeStrengths: Object.fromEntries(nodes.map(n => [n.id, Math.round(n.strength * 1000) / 1000])),
+    nodeTypes: Object.fromEntries(nodes.map(n => [n.id, n.type])),
+  };
+
+  const filename = `${SNAPSHOT_DIR}/snapshot_${now}.json`;
+  writeFileSync(filename, JSON.stringify(snapshot));
+
+  // Prune old snapshots (keep MAX_SNAPSHOTS most recent)
+  try {
+    const files = readdirSync(SNAPSHOT_DIR)
+      .filter(f => f.startsWith("snapshot_") && f.endsWith(".json"))
+      .sort();
+    if (files.length > MAX_SNAPSHOTS) {
+      const toDelete = files.slice(0, files.length - MAX_SNAPSHOTS);
+      for (const f of toDelete) {
+        unlinkSync(`${SNAPSHOT_DIR}/${f}`);
+      }
+    }
+  } catch { /* ignore cleanup errors */ }
+
+  log(`Graph snapshot saved: ${nodes.length} nodes, ${graph.edgeCount} edges`);
+}
+
+/**
+ * Compare current graph against a past snapshot to measure memory loss.
+ * Returns a delta report showing what was lost, gained, weakened, strengthened.
+ */
+export function compareWithSnapshot(graph: MemoryGraph, hoursBack = 24): DeltaReport | null {
+  if (!existsSync(SNAPSHOT_DIR)) return null;
+
+  // Find the snapshot closest to hoursBack ago
+  const targetTime = Date.now() - hoursBack * 3600000;
+  let bestFile: string | null = null;
+  let bestDist = Infinity;
+
+  try {
+    const files = readdirSync(SNAPSHOT_DIR)
+      .filter(f => f.startsWith("snapshot_") && f.endsWith(".json"));
+
+    for (const f of files) {
+      const ts = parseInt(f.replace("snapshot_", "").replace(".json", ""), 10);
+      if (isNaN(ts)) continue;
+      const dist = Math.abs(ts - targetTime);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestFile = f;
+      }
+    }
+  } catch { return null; }
+
+  if (!bestFile) return null;
+
+  let snapshot: GraphSnapshot;
+  try {
+    snapshot = JSON.parse(readFileSync(`${SNAPSHOT_DIR}/${bestFile}`, "utf-8"));
+  } catch { return null; }
+
+  const currentIds = new Set(graph.allNodes().map(n => n.id));
+  const snapshotIds = new Set(snapshot.nodeIds);
+
+  const nodesLost = snapshot.nodeIds.filter(id => !currentIds.has(id));
+  const nodesGained = graph.allNodes().filter(n => !snapshotIds.has(n.id)).map(n => n.id);
+  const nodesWeakened: DeltaReport["nodesWeakened"] = [];
+  const nodesStrengthened: DeltaReport["nodesStrengthened"] = [];
+
+  for (const id of snapshot.nodeIds) {
+    const current = graph.getNode(id);
+    if (!current) continue;
+    const was = snapshot.nodeStrengths[id] ?? 0;
+    const now = Math.round(current.strength * 1000) / 1000;
+    const diff = now - was;
+    if (diff < -0.05) nodesWeakened.push({ id, was, now });
+    else if (diff > 0.05) nodesStrengthened.push({ id, was, now });
+  }
+
+  const lossRate = snapshot.nodeIds.length > 0 ? nodesLost.length / snapshot.nodeIds.length : 0;
+  const snapshotAge = (Date.now() - snapshot.timestamp) / 3600000;
+
+  const summary = `Delta audit (${snapshotAge.toFixed(1)}h ago): ${nodesLost.length} lost, ${nodesGained.length} gained, ${nodesWeakened.length} weakened, ${nodesStrengthened.length} strengthened. Loss rate: ${(lossRate * 100).toFixed(1)}%`;
+  log(summary);
+
+  return {
+    snapshotAge,
+    nodesLost,
+    nodesGained,
+    nodesWeakened,
+    nodesStrengthened,
+    lossRate,
+    summary,
+  };
 }
