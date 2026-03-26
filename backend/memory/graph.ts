@@ -1,7 +1,8 @@
 import { existsSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { randomBytes } from "crypto";
-import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode, ArchivedEdge } from "./types.js";
+import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode, ArchivedEdge, GhostNode } from "./types.js";
+import { MAX_GHOST_NODES } from "./types.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("graph");
@@ -11,6 +12,7 @@ const GRAPH_DIR = `${BRAIN_DIR}/graph`;
 const NODES_FILE = `${GRAPH_DIR}/nodes.json`;
 const EDGES_FILE = `${GRAPH_DIR}/edges.json`;
 const ARCHIVE_FILE = `${GRAPH_DIR}/archive.json`;
+const GHOST_FILE = `${GRAPH_DIR}/ghost-graph.json`;
 
 const MAX_ARCHIVE_NODES = 2000;
 
@@ -35,6 +37,9 @@ export class MemoryGraph {
   // Long-term archive (cold storage — searchable but not active)
   private archive = new Map<string, ArchivedNode>();
 
+  // Ghost graph — topology-only remnants of fully evicted nodes
+  private ghosts = new Map<string, GhostNode>();
+
   // Pending observations buffer (for observe ticks)
   private pending: Observation[] = [];
 
@@ -55,9 +60,14 @@ export class MemoryGraph {
       this.archive.set(id, node);
     }
 
+    const ghostRaw = safeReadJSON<Record<string, GhostNode>>(GHOST_FILE, {});
+    for (const [id, node] of Object.entries(ghostRaw)) {
+      this.ghosts.set(id, node);
+    }
+
     this.rebuildIndexes();
     this.validateGraph();
-    log(`Loaded graph: ${this.nodes.size} nodes, ${this.edges.length} edges, ${this.archive.size} archived`);
+    log(`Loaded graph: ${this.nodes.size} nodes, ${this.edges.length} edges, ${this.archive.size} archived, ${this.ghosts.size} ghosts`);
   }
 
   save(): void {
@@ -76,6 +86,13 @@ export class MemoryGraph {
       archiveObj[id] = node;
     }
     atomicWriteJSON(ARCHIVE_FILE, archiveObj, 0);
+
+    // Save ghost graph
+    const ghostObj: Record<string, GhostNode> = {};
+    for (const [id, node] of this.ghosts) {
+      ghostObj[id] = node;
+    }
+    atomicWriteJSON(GHOST_FILE, ghostObj, 0);
   }
 
   private rebuildIndexes(): void {
@@ -499,15 +516,39 @@ export class MemoryGraph {
     // Remove from active graph (edges get cleaned up)
     this.removeNode(id);
 
-    // Evict oldest archived nodes if over limit
+    // Evict oldest archived nodes if over limit — preserve as ghosts
     if (this.archive.size > MAX_ARCHIVE_NODES) {
       const sorted = Array.from(this.archive.values())
         .sort((a, b) => a.archivedAt - b.archivedAt);
       const toEvict = sorted.slice(0, this.archive.size - MAX_ARCHIVE_NODES);
-      for (const node of toEvict) {
-        this.archive.delete(node.id);
+      const now = Date.now();
+      for (const evicted of toEvict) {
+        // Create ghost node — topology-only remnant (no content)
+        const ghost: GhostNode = {
+          id: evicted.id,
+          type: evicted.type,
+          tagFingerprint: evicted.tags,
+          edges: evicted.archivedEdges ?? [],
+          archivedAt: evicted.archivedAt,
+          evictedAt: now,
+          archiveReason: evicted.archiveReason,
+        };
+        this.ghosts.set(evicted.id, ghost);
+        this.archive.delete(evicted.id);
       }
-      log(`Archive eviction: removed ${toEvict.length} oldest archived nodes`);
+
+      // Cap ghost graph size — evict oldest ghosts when over limit
+      if (this.ghosts.size > MAX_GHOST_NODES) {
+        const ghostsSorted = Array.from(this.ghosts.values())
+          .sort((a, b) => a.evictedAt - b.evictedAt);
+        const ghostsToEvict = ghostsSorted.slice(0, this.ghosts.size - MAX_GHOST_NODES);
+        for (const g of ghostsToEvict) {
+          this.ghosts.delete(g.id);
+        }
+        log(`Ghost graph eviction: removed ${ghostsToEvict.length} oldest ghost nodes`);
+      }
+
+      log(`Archive eviction: moved ${toEvict.length} nodes to ghost graph (${this.ghosts.size} total ghosts)`);
     }
 
     return true;
@@ -615,6 +656,28 @@ export class MemoryGraph {
   /** Get a specific archived node by ID */
   getArchived(id: string): ArchivedNode | undefined {
     return this.archive.get(id);
+  }
+
+  // ── Ghost Graph ──
+
+  /** Get ghost graph size */
+  get ghostCount(): number {
+    return this.ghosts.size;
+  }
+
+  /** Get all ghost nodes (for dashboard/inspection) */
+  allGhostNodes(): GhostNode[] {
+    return Array.from(this.ghosts.values());
+  }
+
+  /** Get a specific ghost node by ID */
+  getGhost(id: string): GhostNode | undefined {
+    return this.ghosts.get(id);
+  }
+
+  /** Check if a node exists anywhere: active, archived, or ghost */
+  hasTopology(id: string): boolean {
+    return this.nodes.has(id) || this.archive.has(id) || this.ghosts.has(id);
   }
 
   // ── Auto-Correlation ──
@@ -949,7 +1012,7 @@ export class MemoryGraph {
 
   // ── Stats ──
 
-  getStats(): { nodeCount: number; edgeCount: number; archivedCount: number; byType: Record<string, number>; avgStrength: number } {
+  getStats(): { nodeCount: number; edgeCount: number; archivedCount: number; ghostCount: number; byType: Record<string, number>; avgStrength: number } {
     const byType: Record<string, number> = {};
     let totalStrength = 0;
 
@@ -962,6 +1025,7 @@ export class MemoryGraph {
       nodeCount: this.nodes.size,
       edgeCount: this.edges.length,
       archivedCount: this.archive.size,
+      ghostCount: this.ghosts.size,
       byType,
       avgStrength: this.nodes.size > 0 ? totalStrength / this.nodes.size : 0,
     };
