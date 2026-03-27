@@ -1,8 +1,8 @@
-import { existsSync } from "fs";
+import { existsSync, appendFileSync, statSync, renameSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { randomBytes } from "crypto";
-import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode, ArchivedEdge, GhostNode } from "./types.js";
-import { MAX_GHOST_NODES } from "./types.js";
+import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode, ArchivedEdge, GhostNode, WALEntry, WALOperationType } from "./types.js";
+import { MAX_GHOST_NODES, WAL_MAX_BYTES } from "./types.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("graph");
@@ -13,6 +13,7 @@ const NODES_FILE = `${GRAPH_DIR}/nodes.json`;
 const EDGES_FILE = `${GRAPH_DIR}/edges.json`;
 const ARCHIVE_FILE = `${GRAPH_DIR}/archive.json`;
 const GHOST_FILE = `${GRAPH_DIR}/ghost-graph.json`;
+const WAL_FILE = `${GRAPH_DIR}/wal.jsonl`;
 
 const MAX_ARCHIVE_NODES = 2000;
 
@@ -93,6 +94,36 @@ export class MemoryGraph {
       ghostObj[id] = node;
     }
     atomicWriteJSON(GHOST_FILE, ghostObj, 0);
+  }
+
+  // ── Write-Ahead Log ──
+
+  /** Append a mutation entry to the WAL file */
+  private walAppend(entry: WALEntry): void {
+    try {
+      ensureDir(GRAPH_DIR);
+      const line = JSON.stringify(entry) + "\n";
+      appendFileSync(WAL_FILE, line, "utf-8");
+
+      // Roll if over size limit
+      try {
+        const stat = statSync(WAL_FILE);
+        if (stat.size > WAL_MAX_BYTES) {
+          const rolled = `${WAL_FILE}.${Date.now()}.old`;
+          renameSync(WAL_FILE, rolled);
+          log(`WAL rolled: ${WAL_FILE} → ${rolled} (${stat.size} bytes)`);
+        }
+      } catch {
+        // stat/rename failure is non-critical
+      }
+    } catch (err) {
+      log(`WAL append failed: ${err}`);
+    }
+  }
+
+  /** Convenience: build and append a WAL entry */
+  private walLog(op: WALOperationType, fields: Omit<WALEntry, "ts" | "op"> = {}): void {
+    this.walAppend({ ts: Date.now(), op, ...fields });
   }
 
   private rebuildIndexes(): void {
@@ -512,6 +543,7 @@ export class MemoryGraph {
     };
 
     this.archive.set(id, archived);
+    this.walLog("archive", { nodeId: id, meta: { reason, type: node.type, edgeCount: tombstoneEdges.length } });
 
     // Remove from active graph (edges get cleaned up)
     this.removeNode(id);
@@ -638,6 +670,7 @@ export class MemoryGraph {
     }
 
     this.archive.delete(id);
+    this.walLog("restore", { nodeId: id, meta: { type: archived.type, archiveReason: archived.archiveReason } });
 
     log(`Restored node ${id} from archive (was archived for "${archived.archiveReason}", marked as reconstructed)`);
     return true;
@@ -867,6 +900,7 @@ export class MemoryGraph {
             this.addNode(newNode);
             // Auto-correlate: find related nodes and create edges
             this.correlateNode(newNode);
+            this.walLog("add_node", { nodeId: op.id, meta: { type: op.type, tags: op.tags } });
             applied++;
             break;
           }
@@ -880,6 +914,7 @@ export class MemoryGraph {
               createdAt: now,
               lastReinforcedAt: now,
             });
+            this.walLog("add_edge", { edgeFrom: op.from, edgeTo: op.to, meta: { type: op.type, weight: op.weight } });
             applied++;
             break;
           }
@@ -889,6 +924,7 @@ export class MemoryGraph {
             node.strength = Math.min(1, node.strength + op.amount);
             node.lastAccessedAt = now;
             node.accessCount++;
+            this.walLog("strengthen", { nodeId: op.id, meta: { amount: op.amount } });
             applied++;
             break;
           }
@@ -896,6 +932,7 @@ export class MemoryGraph {
             const node = this.nodes.get(op.id);
             if (!node) { skipped++; break; }
             node.strength = Math.max(0, node.strength - op.amount);
+            this.walLog("weaken", { nodeId: op.id, meta: { amount: op.amount } });
             applied++;
             break;
           }
@@ -907,6 +944,7 @@ export class MemoryGraph {
               const node = this.nodes.get(op.id);
               if (node) node.importance = Math.max(0, Math.min(1, op.importance));
             }
+            this.walLog("update_node", { nodeId: op.id, meta: { hasContent: op.content != null, hasTags: op.tags != null } });
             applied++;
             break;
           }
@@ -916,21 +954,27 @@ export class MemoryGraph {
             const hasEdge = fromEdges?.some(e => e.to === op.to && (!op.type || e.type === op.type));
             if (!hasEdge) { skipped++; break; }
             this.updateEdge(op.from, op.to, { weight: op.weight, type: op.type }, op.type);
+            this.walLog("update_edge", { edgeFrom: op.from, edgeTo: op.to, meta: { weight: op.weight } });
             applied++;
             break;
           }
           case "merge_nodes": {
             const mergedId = this.mergeNodes(op.ids, op.into);
-            if (mergedId) { applied++; } else { skipped++; }
+            if (mergedId) {
+              this.walLog("merge_nodes", { nodeId: mergedId, nodeIds: op.ids, meta: { into: op.into } });
+              applied++;
+            } else { skipped++; }
             break;
           }
           case "remove_node": {
             if (!this.nodes.has(op.id)) { skipped++; break; }
+            this.walLog("remove_node", { nodeId: op.id, meta: { type: this.nodes.get(op.id)!.type } });
             this.removeNode(op.id);
             applied++;
             break;
           }
           case "remove_edge": {
+            this.walLog("remove_edge", { edgeFrom: op.from, edgeTo: op.to, meta: { type: op.type } });
             this.removeEdge(op.from, op.to, op.type);
             applied++;
             break;

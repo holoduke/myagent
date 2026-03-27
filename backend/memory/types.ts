@@ -317,6 +317,35 @@ export interface GhostNode {
 
 export const MAX_GHOST_NODES = 5000;
 
+// ── Write-Ahead Log (WAL) ──
+// Append-only log recording every graph mutation for forensic reconstruction.
+
+export type WALOperationType =
+  | "add_node"
+  | "remove_node"
+  | "update_node"
+  | "strengthen"
+  | "weaken"
+  | "add_edge"
+  | "remove_edge"
+  | "update_edge"
+  | "merge_nodes"
+  | "archive"
+  | "restore";
+
+export interface WALEntry {
+  ts: number;                    // unix ms
+  op: WALOperationType;
+  nodeId?: string;               // primary node involved
+  nodeIds?: string[];            // for merge: source node IDs
+  edgeFrom?: string;             // for edge ops
+  edgeTo?: string;               // for edge ops
+  meta?: Record<string, unknown>; // minimal metadata (type, reason, etc.)
+}
+
+/** Max WAL file size in bytes before rolling (default 10MB) */
+export const WAL_MAX_BYTES = 10 * 1024 * 1024;
+
 export const PRUNE_NODE_THRESHOLD = 0.05;
 export const PRUNE_EDGE_THRESHOLD = 0.03;
 export const ORPHAN_GRACE_HOURS = 24;
