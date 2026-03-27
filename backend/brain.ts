@@ -1651,19 +1651,36 @@ async function reflectTick(
 // Only checks getDueMessages() and delivers them — no full tick overhead.
 
 let schedulerPollRunning = false;
+let schedulerPollStartTime: number | null = null;
+const SCHEDULER_POLL_TIMEOUT_MS = 60_000; // 60s timeout for stuck polls
 
 async function pollScheduledMessages(
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
 ): Promise<void> {
-  // Guard against overlapping polls
-  if (schedulerPollRunning) return;
+  // Guard against overlapping polls — with timeout-based auto-recovery
+  if (schedulerPollRunning) {
+    if (
+      schedulerPollStartTime !== null &&
+      Date.now() - schedulerPollStartTime > SCHEDULER_POLL_TIMEOUT_MS
+    ) {
+      console.warn(
+        `[brain] ⚠️ Scheduler poll stuck for >${SCHEDULER_POLL_TIMEOUT_MS / 1000}s — auto-clearing guard to resume delivery`,
+      );
+      schedulerPollRunning = false;
+      schedulerPollStartTime = null;
+    } else {
+      return;
+    }
+  }
   schedulerPollRunning = true;
+  schedulerPollStartTime = Date.now();
   try {
     const state = loadState();
     await deliverScheduledMessages(state, sendMessage, ownerJid);
   } finally {
     schedulerPollRunning = false;
+    schedulerPollStartTime = null;
   }
 }
 
