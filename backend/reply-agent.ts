@@ -279,7 +279,7 @@ export async function dispatchReply(
   decision: ReplyDecision,
   directiveId: string,
 ): Promise<void> {
-  const chatJid = obs.isGroup ? (obs.chatJid || obs.senderJid) : obs.senderJid;
+  const chatJid = obs.chatJid || obs.senderJid;
 
   // Rate limit
   if (!canReply(chatJid, obs.isGroup ?? false)) {
