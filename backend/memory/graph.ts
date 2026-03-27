@@ -128,10 +128,51 @@ export class MemoryGraph {
       repairsMade = true;
     }
 
-    // (3) Clamp out-of-range edge weights to [0, 1]
+    // (3) Validate node numeric fields: strength, importance, lastAccessedAt
+    let nodesRepaired = 0;
+    for (const [id, node] of this.nodes) {
+      // NaN/Infinity check on strength — reset to 0.5
+      if (!Number.isFinite(node.strength)) {
+        log(`Graph validation: node ${id} has invalid strength (${node.strength}), resetting to 0.5`);
+        node.strength = 0.5;
+        nodesRepaired++;
+      }
+      // Clamp strength to [0, 1]
+      if (node.strength < 0 || node.strength > 1) {
+        node.strength = Math.max(0, Math.min(1, node.strength));
+        nodesRepaired++;
+      }
+      // Validate importance field if present
+      if (node.importance !== undefined) {
+        if (!Number.isFinite(node.importance)) {
+          log(`Graph validation: node ${id} has invalid importance (${node.importance}), resetting to 0.5`);
+          node.importance = 0.5;
+          nodesRepaired++;
+        } else if (node.importance < 0 || node.importance > 1) {
+          node.importance = Math.max(0, Math.min(1, node.importance));
+          nodesRepaired++;
+        }
+      }
+      // NaN check on lastAccessedAt — reset to now
+      if (!Number.isFinite(node.lastAccessedAt)) {
+        log(`Graph validation: node ${id} has invalid lastAccessedAt (${node.lastAccessedAt}), resetting to now`);
+        node.lastAccessedAt = Date.now();
+        nodesRepaired++;
+      }
+    }
+    if (nodesRepaired > 0) {
+      log(`Graph validation: repaired ${nodesRepaired} invalid node field(s)`);
+      repairsMade = true;
+    }
+
+    // (4) Clamp out-of-range or NaN edge weights to [0, 1]
     let weightsClamped = 0;
     for (const edge of this.edges) {
-      if (edge.weight < 0 || edge.weight > 1) {
+      if (!Number.isFinite(edge.weight)) {
+        log(`Graph validation: edge ${edge.from}->${edge.to} has invalid weight (${edge.weight}), resetting to 0.5`);
+        edge.weight = 0.5;
+        weightsClamped++;
+      } else if (edge.weight < 0 || edge.weight > 1) {
         edge.weight = Math.max(0, Math.min(1, edge.weight));
         weightsClamped++;
       }
@@ -141,7 +182,7 @@ export class MemoryGraph {
       repairsMade = true;
     }
 
-    // (4) Deduplicate edges (same from/to/type) — keep highest weight
+    // (5) Deduplicate edges (same from/to/type) — keep highest weight
     const bestByKey = new Map<string, MemoryEdge>();
     for (const edge of this.edges) {
       const key = `${edge.from}|${edge.to}|${edge.type}`;
@@ -162,10 +203,10 @@ export class MemoryGraph {
       this.rebuildIndexes();
     }
 
-    // (5) Persist repairs and log summary
+    // (6) Persist repairs and log summary
     if (repairsMade) {
       this.save();
-      log(`Graph validation: repairs complete (${phantomEdgesRemoved} phantom, ${selfLoopsRemoved} self-loops, ${weightsClamped} weights clamped, ${duplicatesRemoved} duplicates removed)`);
+      log(`Graph validation: repairs complete (${phantomEdgesRemoved} phantom, ${selfLoopsRemoved} self-loops, ${nodesRepaired} node fields, ${weightsClamped} weights clamped, ${duplicatesRemoved} duplicates removed)`);
     }
   }
 
@@ -569,6 +610,11 @@ export class MemoryGraph {
   /** Get all archived nodes (for dashboard/inspection) */
   allArchivedNodes(): ArchivedNode[] {
     return Array.from(this.archive.values());
+  }
+
+  /** Get a specific archived node by ID */
+  getArchived(id: string): ArchivedNode | undefined {
+    return this.archive.get(id);
   }
 
   // ── Auto-Correlation ──

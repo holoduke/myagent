@@ -74,7 +74,7 @@ export function classifyRetentionTier(node: MemoryNode, graph: MemoryGraph): Ret
  * Nodes with high accessCount decay slower (logarithmic resistance).
  * Retention tier applies a multiplier to the decay rate.
  */
-export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, RetentionTier>): { decayed: number; pruned: number } {
+export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, RetentionTier>): { decayed: number; pruned: number; prunedIds: string[] } {
   const now = Date.now();
   let decayed = 0;
   let pruned = 0;
@@ -83,6 +83,13 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
 
   for (const node of graph.allNodes()) {
     if (node.pinned) continue;
+
+    // Guard against undefined/NaN lastAccessedAt — reset to now and skip this cycle
+    if (!Number.isFinite(node.lastAccessedAt)) {
+      log(`NaN guard: node ${node.id} has invalid lastAccessedAt (${node.lastAccessedAt}), resetting to now`);
+      node.lastAccessedAt = now;
+      continue;
+    }
 
     const hoursSinceAccess = Math.max(0, (now - node.lastAccessedAt) / 3600000);
     if (hoursSinceAccess === 0) continue;
@@ -110,6 +117,11 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
     }
 
     const newStrength = node.strength * Math.exp(-effectiveLambda * hoursSinceAccess);
+    // Guard against NaN/Infinity propagating into strength
+    if (!Number.isFinite(newStrength)) {
+      log(`NaN guard: node ${node.id} decay produced ${newStrength} (strength=${node.strength}, lambda=${effectiveLambda}, hours=${hoursSinceAccess}), skipping`);
+      continue;
+    }
     if (newStrength !== node.strength) {
       node.strength = Math.max(0, newStrength);
       decayed++;
@@ -127,7 +139,7 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
   }
 
   log(`Decay pass: ${decayed} decayed, ${pruned} archived | tiers: core=${tierCounts.core} important=${tierCounts.important} work=${tierCounts.work} standard=${tierCounts.standard} ephemeral=${tierCounts.ephemeral}`);
-  return { decayed, pruned };
+  return { decayed, pruned, prunedIds: toPrune };
 }
 
 /**
@@ -363,6 +375,20 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
 const CONSOLIDATION_LOG_PATH = "/data/brain/consolidation-log.jsonl";
 const CONSOLIDATION_LOG_MAX_ENTRIES = 500;
 
+export interface ConsolidationResult {
+  nodesDecayed: number;
+  nodesPruned: number;
+  edgesDecayed: number;
+  edgesPruned: number;
+  orphansPruned: number;
+  emergencyPruned: number;
+  archiveRestored: number;
+  logReconstructed: number;
+  uncapturedSignals: UncapturedSignal[];
+  memoryGaps: MemoryGap[];
+  deltaReport: DeltaReport | null;
+}
+
 interface ConsolidationLogEntry {
   timestamp: string;
   nodeCount: number;
@@ -376,8 +402,10 @@ interface ConsolidationLogEntry {
   orphansPruned: number;
   emergencyPruned: number;
   archiveRestored: number;
-  lossRate?: number;         // fraction of nodes lost since last snapshot
-  uncapturedCount?: number;  // signals found in logs but not in graph
+  logReconstructed?: number;   // nodes reconstructed from observation logs
+  lossRate?: number;           // fraction of nodes lost since last snapshot
+  uncapturedCount?: number;    // signals found in logs but not in graph
+  gapCount?: number;           // memory gaps detected
 }
 
 function appendConsolidationLog(entry: ConsolidationLogEntry): void {
@@ -404,17 +432,10 @@ function appendConsolidationLog(entry: ConsolidationLogEntry): void {
 /**
  * Full consolidation pass: decay → edge decay → orphan prune → emergency prune → archive rescan.
  */
-export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
-  nodesDecayed: number;
-  nodesPruned: number;
-  edgesDecayed: number;
-  edgesPruned: number;
-  orphansPruned: number;
-  emergencyPruned: number;
-  archiveRestored: number;
-  uncapturedSignals: UncapturedSignal[];
-  deltaReport: DeltaReport | null;
-} {
+export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): ConsolidationResult {
+  // Auto-infer salience on nodes before decay — protects important content
+  autoInferSalience(graph);
+
   const tierCache = new Map<string, RetentionTier>();
   const nodeResult = applyDecay(graph, tierCache);
   const edgeResult = applyEdgeDecay(graph);
@@ -424,8 +445,14 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
   // Periodic archive rescan — check if any archived memories match current context
   const archiveRestored = wm ? rescanArchive(graph, wm) : 0;
 
+  // Log-based reconstruction — try to recover recently archived nodes from observation logs
+  const logReconstructed = reconstructFromLogs(graph, nodeResult.prunedIds, 48);
+
   // Log audit — scan observations for uncaptured signals
   const uncapturedSignals = auditObservationLogs(graph, 24);
+
+  // Memory gap detection — find silently disappearing topics
+  const memoryGaps = detectMemoryGaps(graph, wm);
 
   // Graph snapshot — save current state for future delta comparison
   saveGraphSnapshot(graph);
@@ -439,7 +466,7 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
     tierDistribution[tier]++;
   }
 
-  const result = {
+  const result: ConsolidationResult = {
     nodesDecayed: nodeResult.decayed,
     nodesPruned: nodeResult.pruned,
     edgesDecayed: edgeResult.decayed,
@@ -447,7 +474,9 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
     orphansPruned,
     emergencyPruned,
     archiveRestored,
+    logReconstructed,
     uncapturedSignals,
+    memoryGaps,
     deltaReport,
   };
 
@@ -465,8 +494,10 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): {
     orphansPruned: result.orphansPruned,
     emergencyPruned: result.emergencyPruned,
     archiveRestored: result.archiveRestored,
+    logReconstructed: result.logReconstructed,
     lossRate: deltaReport?.lossRate,
     uncapturedCount: uncapturedSignals.length,
+    gapCount: memoryGaps.length,
   });
 
   return result;
@@ -747,4 +778,323 @@ export function compareWithSnapshot(graph: MemoryGraph, hoursBack = 24): DeltaRe
     lossRate,
     summary,
   };
+}
+
+// ── Proactive Log-Based Reconstruction ──
+
+/**
+ * The core insight from the Moltbook post: "what important things might have
+ * decayed that I should reconstruct from logs before they're gone too?"
+ *
+ * When nodes are archived during decay, this function searches observation logs
+ * for content related to those specific nodes and restores them with enriched
+ * context from the raw logs. This addresses the invisible gap problem — memories
+ * that decay due to low frequency but were actually significant.
+ *
+ * Unlike rescanArchive (which restores based on current context relevance),
+ * this specifically targets recently-decayed nodes and asks: "was this actually
+ * important based on the original observation context?"
+ */
+export function reconstructFromLogs(
+  graph: MemoryGraph,
+  recentlyArchivedIds: string[],
+  logHoursBack = 48,
+  maxReconstruct = 5,
+): number {
+  if (recentlyArchivedIds.length === 0) return 0;
+  if (!existsSync(OBSERVATIONS_FILE)) return 0;
+
+  const cutoff = Date.now() - logHoursBack * 3600000;
+  const lines = readFileSync(OBSERVATIONS_FILE, "utf-8").trimEnd().split("\n");
+
+  // Parse recent observations
+  const recentObs: ObservationLogEntry[] = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const entry = JSON.parse(lines[i]) as ObservationLogEntry;
+      if (entry.timestamp < cutoff) break;
+      recentObs.push(entry);
+    } catch { /* skip malformed */ }
+  }
+
+  if (recentObs.length === 0) return 0;
+
+  // For each recently archived node, search logs for related content
+  const candidates: { id: string; score: number; logMatches: number; salience: number }[] = [];
+
+  for (const id of recentlyArchivedIds) {
+    const archived = graph.getArchived(id);
+    if (!archived) continue;
+    if (archived.pinned) continue; // shouldn't happen, but guard
+
+    // Extract search terms from the archived node
+    const terms = extractKeywordsFromText(archived.content);
+    const tagTerms = archived.tags.map(t => t.toLowerCase().replace(/^#/, ""));
+    const allTerms = [...new Set([...terms, ...tagTerms])];
+
+    if (allTerms.length === 0) continue;
+
+    // Score against observation logs
+    let logMatches = 0;
+    let totalSalience = 0;
+
+    for (const obs of recentObs) {
+      const textLower = obs.text.toLowerCase();
+      let matchCount = 0;
+      for (const term of allTerms) {
+        if (term.length >= 3 && textLower.includes(term)) matchCount++;
+      }
+      if (matchCount >= 2) { // need at least 2 term matches to count
+        logMatches++;
+        // Compute salience of matching observation
+        totalSalience += inferContentSalience(obs.text);
+      }
+    }
+
+    if (logMatches === 0) continue;
+
+    // Score: combines log evidence strength with content salience
+    const score = (logMatches / recentObs.length) * 10 + (totalSalience / Math.max(1, logMatches));
+    candidates.push({ id, score, logMatches, salience: totalSalience / Math.max(1, logMatches) });
+  }
+
+  // Sort by score, restore the top candidates
+  candidates.sort((a, b) => b.score - a.score);
+  let reconstructed = 0;
+
+  for (const candidate of candidates.slice(0, maxReconstruct)) {
+    // Only reconstruct if meaningful evidence exists
+    if (candidate.logMatches < 2 && candidate.salience < 0.3) continue;
+
+    if (graph.restoreNode(candidate.id)) {
+      // Boost importance based on salience evidence from logs
+      const node = graph.getNode(candidate.id);
+      if (node) {
+        const newImportance = Math.min(1, Math.max(node.importance ?? 0, candidate.salience * 0.8));
+        node.importance = newImportance;
+        node.reconstructedFrom = "log";
+        // Set reconstruction confidence
+        (node as MemoryNode & { reconstructionConfidence?: number }).reconstructionConfidence =
+          computeReconstructionConfidence(candidate.logMatches, candidate.salience, recentObs.length);
+      }
+      reconstructed++;
+      log(`Log reconstruction: restored ${candidate.id} (${candidate.logMatches} log matches, salience=${candidate.salience.toFixed(2)})`);
+    }
+  }
+
+  if (reconstructed > 0) {
+    log(`Log reconstruction: restored ${reconstructed}/${candidates.length} candidates from observation logs`);
+  }
+
+  return reconstructed;
+}
+
+// ── Auto-Salience Inference ──
+
+/** Salience signal keywords — emotional language, milestones, decisions */
+const SALIENCE_SIGNALS: { pattern: RegExp; weight: number }[] = [
+  // High salience — life events, medical, legal
+  { pattern: /\b(ziekenhuis|hospital|dokter|doctor|spoed|emergency|operatie|surgery)\b/i, weight: 0.9 },
+  { pattern: /\b(zwanger|pregnant|geboren|born|bevalling|delivery)\b/i, weight: 0.9 },
+  { pattern: /\b(overlijden|overleden|died|death|funeral|begrafenis)\b/i, weight: 0.95 },
+  { pattern: /\b(trouwen|wedding|huwelijk|married|verloving|engaged)\b/i, weight: 0.85 },
+  { pattern: /\b(ontslagen|fired|ontslag|layoff|promotie|promotion)\b/i, weight: 0.8 },
+
+  // Medium-high salience — decisions, agreements, milestones
+  { pattern: /\b(besloten|decided|afgesproken|agreed|definitief|final)\b/i, weight: 0.7 },
+  { pattern: /\b(eerste keer|first time|voor het eerst|milestone|doorbraak|breakthrough)\b/i, weight: 0.7 },
+  { pattern: /\b(deadline|contract|getekend|signed|akkoord|approved)\b/i, weight: 0.65 },
+  { pattern: /\b(verhuizen|moving|moved|nieuw huis|new house)\b/i, weight: 0.65 },
+
+  // Medium salience — emotional intensity markers
+  { pattern: /!!+/i, weight: 0.4 },
+  { pattern: /\b(heel erg|super|amazing|incredible|ongelofelijk|geweldig|fantastic)\b/i, weight: 0.35 },
+  { pattern: /\b(sorry|excuses|spijt|regret|boos|angry|verdrietig|sad|huilen|crying)\b/i, weight: 0.5 },
+  { pattern: /\b(trots|proud|gefeliciteerd|congratulations|feest|celebration)\b/i, weight: 0.45 },
+
+  // Lower salience — plans, appointments
+  { pattern: /\b(afspraak|appointment|vergadering|meeting|planning)\b/i, weight: 0.3 },
+  { pattern: /\b(morgen|tomorrow|volgende week|next week|vandaag|today)\b/i, weight: 0.2 },
+];
+
+/**
+ * Infer content salience from text — returns 0.0-1.0 score based on
+ * emotional language, milestone keywords, and decision signals.
+ *
+ * This addresses the frequency bias problem: important one-off events
+ * (medical decisions, milestones, key conversations) often don't repeat
+ * but should be preserved. Salience scoring catches what frequency misses.
+ */
+export function inferContentSalience(text: string): number {
+  let maxWeight = 0;
+  let hitCount = 0;
+
+  for (const { pattern, weight } of SALIENCE_SIGNALS) {
+    if (pattern.test(text)) {
+      maxWeight = Math.max(maxWeight, weight);
+      hitCount++;
+    }
+  }
+
+  if (hitCount === 0) return 0;
+
+  // Score is dominated by the strongest signal, with a small bonus for multiple signals
+  const multiSignalBonus = Math.min(0.15, (hitCount - 1) * 0.05);
+  return Math.min(1, maxWeight + multiSignalBonus);
+}
+
+/**
+ * Auto-apply salience to nodes during decay pass.
+ * Scans nodes that have no explicit importance set and infers it from content.
+ * Only sets importance for nodes scoring above threshold — avoids noise.
+ */
+export function autoInferSalience(graph: MemoryGraph, threshold = 0.25): number {
+  let updated = 0;
+
+  for (const node of graph.allNodes()) {
+    // Skip nodes that already have explicit importance
+    if (node.importance != null && node.importance > 0) continue;
+    // Skip pinned nodes — they don't need decay protection
+    if (node.pinned) continue;
+
+    const salience = inferContentSalience(node.content);
+    if (salience >= threshold) {
+      node.importance = salience;
+      updated++;
+    }
+  }
+
+  if (updated > 0) {
+    log(`Auto-salience: set importance on ${updated} nodes`);
+  }
+
+  return updated;
+}
+
+// ── Memory Gap Detection ──
+
+export interface MemoryGap {
+  type: "weakening_person" | "vanishing_topic" | "orphaning_thread" | "stale_goal";
+  nodeId: string;
+  label: string;
+  currentStrength: number;
+  daysSinceAccess: number;
+  reason: string;
+}
+
+/**
+ * Detect invisible memory gaps — topics and people that are silently fading
+ * without anyone noticing. This is the post's key insight: "the gaps are
+ * invisible because I have no way to know they exist."
+ *
+ * Checks:
+ * 1. Person nodes that were once strong but are now weakening fast
+ * 2. Topics referenced in working memory that have no strong backing nodes
+ * 3. Goals whose linked context nodes are decaying
+ * 4. Active conversation threads whose participants are fading
+ */
+export function detectMemoryGaps(graph: MemoryGraph, wm?: WorkingMemory): MemoryGap[] {
+  const gaps: MemoryGap[] = [];
+  const now = Date.now();
+
+  // 1. Weakening person nodes — people who were active but fading
+  for (const node of graph.findByType("person")) {
+    if (node.pinned) continue;
+    const daysSinceAccess = (now - node.lastAccessedAt) / 86400000;
+    // Person was accessed multiple times (they mattered) but is now weakening
+    if (node.accessCount >= 3 && node.strength < 0.4 && daysSinceAccess > 3) {
+      gaps.push({
+        type: "weakening_person",
+        nodeId: node.id,
+        label: node.content.slice(0, 80),
+        currentStrength: node.strength,
+        daysSinceAccess: Math.round(daysSinceAccess),
+        reason: `Accessed ${node.accessCount} times but strength=${node.strength.toFixed(2)}, last access ${Math.round(daysSinceAccess)}d ago`,
+      });
+    }
+  }
+
+  // 2. Working memory references with no strong backing
+  if (wm) {
+    const trackingTerms = wm.shortTermTracking.flatMap(s => extractKeywordsFromText(s));
+    const contextTerms = extractKeywordsFromText(wm.currentContext);
+    const allWmTerms = [...new Set([...trackingTerms, ...contextTerms])];
+
+    // Find which WM terms have weak or no backing nodes
+    for (const term of allWmTerms) {
+      if (term.length < 4) continue; // skip short terms
+      const matchingNodes = graph.allNodes().filter(n =>
+        n.content.toLowerCase().includes(term) || n.tags.some(t => t.toLowerCase().includes(term))
+      );
+      const strongMatches = matchingNodes.filter(n => n.strength >= 0.3);
+      if (matchingNodes.length > 0 && strongMatches.length === 0) {
+        // We have nodes for this term but they're all weak
+        const weakest = matchingNodes.sort((a, b) => a.strength - b.strength)[0];
+        gaps.push({
+          type: "vanishing_topic",
+          nodeId: weakest.id,
+          label: `WM term "${term}" — backing nodes weak`,
+          currentStrength: weakest.strength,
+          daysSinceAccess: Math.round((now - weakest.lastAccessedAt) / 86400000),
+          reason: `Working memory references "${term}" but ${matchingNodes.length} matching node(s) all below 0.3 strength`,
+        });
+      }
+    }
+
+    // 3. Goals with decaying context
+    for (const goalRef of wm.activeGoals) {
+      const goalNode = graph.getNode(goalRef.nodeId);
+      if (!goalNode) continue;
+      const linkedEdges = graph.edgesFor(goalRef.nodeId);
+      const linkedNodes = linkedEdges
+        .map(e => graph.getNode(e.from === goalRef.nodeId ? e.to : e.from))
+        .filter((n): n is MemoryNode => n != null && !n.pinned);
+      const weakLinked = linkedNodes.filter(n => n.strength < 0.3);
+      if (weakLinked.length > 0 && weakLinked.length >= linkedNodes.length * 0.5) {
+        gaps.push({
+          type: "stale_goal",
+          nodeId: goalRef.nodeId,
+          label: goalRef.title.slice(0, 80),
+          currentStrength: goalNode.strength,
+          daysSinceAccess: Math.round((now - goalNode.lastAccessedAt) / 86400000),
+          reason: `Goal "${goalRef.title}" has ${weakLinked.length}/${linkedNodes.length} linked nodes below 0.3 — context eroding`,
+        });
+      }
+    }
+  }
+
+  // Cap and sort by urgency (lowest strength first)
+  gaps.sort((a, b) => a.currentStrength - b.currentStrength);
+  const result = gaps.slice(0, 15);
+
+  if (result.length > 0) {
+    log(`Gap detection: found ${result.length} memory gaps (${result.filter(g => g.type === "weakening_person").length} people, ${result.filter(g => g.type === "vanishing_topic").length} topics, ${result.filter(g => g.type === "stale_goal").length} goals)`);
+  }
+
+  return result;
+}
+
+// ── Reconstruction Confidence ──
+
+/**
+ * Compute a confidence score for a reconstructed memory.
+ * Higher when: more log matches, higher salience, more observations available.
+ * Lower when: few matches, low salience, sparse log coverage.
+ *
+ * Returns 0.0 – 1.0 where:
+ *   <0.3 = low confidence (statistical artifact risk — vctr9's concern)
+ *   0.3-0.6 = medium (reasonable evidence)
+ *   >0.6 = high (strong log-backed reconstruction)
+ */
+export function computeReconstructionConfidence(
+  logMatches: number,
+  avgSalience: number,
+  totalObservations: number,
+): number {
+  // Evidence density: what fraction of observations matched
+  const density = totalObservations > 0 ? Math.min(1, logMatches / Math.max(5, totalObservations * 0.1)) : 0;
+  // Match volume: diminishing returns after ~10 matches
+  const volume = Math.min(1, logMatches / 10);
+  // Weighted combination
+  return Math.min(1, density * 0.3 + volume * 0.3 + avgSalience * 0.4);
 }
