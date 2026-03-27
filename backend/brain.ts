@@ -1005,9 +1005,9 @@ async function handleRecurringTasks(
             await sendMessage(action.targetJid, action.template);
             state.lastMessageTime = Date.now();
             state.messagesToday++;
+            markExecuted(task.id);
             log(`[recurring] Sent message for task "${task.label}" to ${action.targetJid}`);
           }
-          markExecuted(task.id);
           break;
         }
 
