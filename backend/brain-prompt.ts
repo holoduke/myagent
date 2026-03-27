@@ -654,6 +654,7 @@ export interface ConsolidateContext {
   stats: { nodeCount: number; edgeCount: number; archivedCount: number; byType: Record<string, number>; avgStrength: number };
   uncapturedSignals?: import("./memory/decay.js").UncapturedSignal[];
   deltaReport?: import("./memory/decay.js").DeltaReport | null;
+  lowFidelityReconstructions?: import("./memory/decay.js").FidelityResult[];
 }
 
 export function buildConsolidatePrompt(ctx: ConsolidateContext): string {
@@ -698,6 +699,11 @@ ${ctx.deltaReport.summary}
 Nodes lost since last snapshot: ${ctx.deltaReport.nodesLost.length}${ctx.deltaReport.nodesLost.length > 0 ? ` (${ctx.deltaReport.nodesLost.slice(0, 10).join(", ")}${ctx.deltaReport.nodesLost.length > 10 ? "..." : ""})` : ""}
 Nodes weakened: ${ctx.deltaReport.nodesWeakened.length} | Strengthened: ${ctx.deltaReport.nodesStrengthened.length}
 Loss rate: ${(ctx.deltaReport.lossRate * 100).toFixed(1)}%
+` : ""}${ctx.lowFidelityReconstructions && ctx.lowFidelityReconstructions.length > 0 ? `
+═══ LOW-FIDELITY RECONSTRUCTIONS ═══
+These restored memories have drifted significantly from their original archived content.
+Consider whether they should be trusted, re-examined, or re-archived:
+${ctx.lowFidelityReconstructions.map(r => `  [${r.nodeId}] fidelity=${r.overallFidelity.toFixed(2)} (content=${r.contentSimilarity.toFixed(2)}, edges=${r.edgePreservation.toFixed(2)}) from=${r.reconstructedFrom}`).join("\n")}
 ` : ""}${OPERATION_INSTRUCTIONS}
 ═══ WHAT TO DO ═══
 
@@ -731,6 +737,7 @@ CONSOLIDATION GUIDELINES:
 - UNCAPTURED SIGNALS: If the "UNCAPTURED SIGNALS" section lists people or events from logs, consider creating nodes for ones that seem significant. Not everything needs a node — focus on people who appear repeatedly or events with real impact.
 - IMPORTANCE: When creating or updating nodes for significant one-off events (milestones, medical, legal, major decisions), set "importance" (0.3–1.0) to protect them from frequency-based decay.
 - MEMORY DELTA: If the loss rate is high (>10%), consider whether important nodes are decaying too fast and whether they need importance boosts or pinning.
+- LOW-FIDELITY RECONSTRUCTIONS: If listed, these nodes were restored from archive/logs but have changed significantly (content drift or lost edges). Low fidelity (< 0.5) means the reconstruction may be unreliable. Consider: updating the node content to be more accurate, boosting edges to restore topology, or re-archiving if the reconstruction is no longer trustworthy.
 
 Respond with ONLY the JSON object.`;
 }

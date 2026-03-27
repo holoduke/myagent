@@ -387,6 +387,7 @@ export interface ConsolidationResult {
   uncapturedSignals: UncapturedSignal[];
   memoryGaps: MemoryGap[];
   deltaReport: DeltaReport | null;
+  fidelityResults: FidelityResult[];
 }
 
 interface ConsolidationLogEntry {
@@ -406,6 +407,8 @@ interface ConsolidationLogEntry {
   lossRate?: number;           // fraction of nodes lost since last snapshot
   uncapturedCount?: number;    // signals found in logs but not in graph
   gapCount?: number;           // memory gaps detected
+  fidelityChecked?: number;    // reconstructed nodes validated for fidelity
+  lowFidelityCount?: number;   // reconstructed nodes with fidelity < 0.5
 }
 
 function appendConsolidationLog(entry: ConsolidationLogEntry): void {
@@ -460,6 +463,9 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): Consol
   // Delta audit — compare current state with ~24h ago snapshot
   const deltaReport = compareWithSnapshot(graph, 24);
 
+  // Reconstruction fidelity — validate quality of restored memories
+  const fidelityResults = validateReconstructionFidelity(graph);
+
   // Build tier distribution from cache
   const tierDistribution: Record<RetentionTier, number> = { core: 0, important: 0, work: 0, standard: 0, ephemeral: 0 };
   for (const tier of tierCache.values()) {
@@ -478,6 +484,7 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): Consol
     uncapturedSignals,
     memoryGaps,
     deltaReport,
+    fidelityResults,
   };
 
   // Append health metrics to consolidation log
@@ -497,6 +504,8 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): Consol
     logReconstructed: result.logReconstructed,
     lossRate: deltaReport?.lossRate,
     uncapturedCount: uncapturedSignals.length,
+    fidelityChecked: fidelityResults.length,
+    lowFidelityCount: fidelityResults.filter(r => r.lowFidelity).length,
     gapCount: memoryGaps.length,
   });
 
@@ -1097,4 +1106,139 @@ export function computeReconstructionConfidence(
   const volume = Math.min(1, logMatches / 10);
   // Weighted combination
   return Math.min(1, density * 0.3 + volume * 0.3 + avgSalience * 0.4);
+}
+
+// ── Reconstruction Fidelity Validation ──
+
+const FIDELITY_LOG_PATH = `${process.env.BRAIN_DIR || "/data/brain"}/graph/fidelity-log.jsonl`;
+const FIDELITY_LOG_MAX_ENTRIES = 500;
+
+export interface FidelityResult {
+  nodeId: string;
+  contentSimilarity: number;   // 0.0–1.0 Jaccard similarity between original and current content
+  edgePreservation: number;    // 0.0–1.0 fraction of original edges that were restored
+  overallFidelity: number;     // 0.0–1.0 weighted composite score
+  reconstructedFrom: string;
+  reconstructedAt: number;
+  lowFidelity: boolean;        // true if overallFidelity < 0.5
+}
+
+interface FidelityLogEntry {
+  timestamp: string;
+  nodeId: string;
+  type: string;
+  contentSimilarity: number;
+  edgePreservation: number;
+  overallFidelity: number;
+  reconstructedFrom: string;
+  currentStrength: number;
+  contentSnippet: string;      // first 80 chars of current content
+}
+
+/**
+ * Compute Jaccard similarity between two strings based on word tokens.
+ * Returns 0.0–1.0 where 1.0 = identical token sets.
+ */
+function tokenJaccard(a: string, b: string): number {
+  const tokenize = (s: string) => new Set(
+    s.toLowerCase().split(/[\s\-—,.:;!?()\[\]"'`/\\]+/).filter(w => w.length >= 2)
+  );
+  const setA = tokenize(a);
+  const setB = tokenize(b);
+  if (setA.size === 0 && setB.size === 0) return 1; // both empty = identical
+  if (setA.size === 0 || setB.size === 0) return 0;
+
+  let intersection = 0;
+  for (const token of setA) {
+    if (setB.has(token)) intersection++;
+  }
+  const union = setA.size + setB.size - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+/**
+ * Validate reconstruction fidelity for all nodes that have been restored
+ * from archive or logs. Compares current state against the original
+ * archived content snapshot to detect drift or loss.
+ *
+ * Tracks:
+ * 1. Content similarity (Jaccard) — has the content changed since reconstruction?
+ * 2. Edge topology preservation — how many original edges were restored?
+ * 3. Rolling fidelity log at /data/brain/graph/fidelity-log.jsonl
+ *
+ * Returns low-fidelity reconstructions for surfacing in consolidation report.
+ */
+export function validateReconstructionFidelity(graph: MemoryGraph): FidelityResult[] {
+  const results: FidelityResult[] = [];
+
+  for (const node of graph.allNodes()) {
+    if (!node.reconstructedAt || !node.reconstructionOriginal) continue;
+
+    const original = node.reconstructionOriginal;
+
+    // 1. Content similarity: Jaccard of word tokens
+    const contentSimilarity = tokenJaccard(original.content, node.content);
+
+    // 2. Edge topology preservation: fraction of original edges restored
+    const currentEdgeCount = graph.edgesFor(node.id).length;
+    const edgePreservation = original.edgeCount > 0
+      ? Math.min(1, currentEdgeCount / original.edgeCount)
+      : (currentEdgeCount > 0 ? 1 : 1); // no original edges = trivially preserved
+
+    // 3. Overall fidelity: weighted composite (content matters more than edges)
+    const overallFidelity = contentSimilarity * 0.6 + edgePreservation * 0.4;
+
+    const result: FidelityResult = {
+      nodeId: node.id,
+      contentSimilarity: Math.round(contentSimilarity * 1000) / 1000,
+      edgePreservation: Math.round(edgePreservation * 1000) / 1000,
+      overallFidelity: Math.round(overallFidelity * 1000) / 1000,
+      reconstructedFrom: node.reconstructedFrom ?? "unknown",
+      reconstructedAt: node.reconstructedAt,
+      lowFidelity: overallFidelity < 0.5,
+    };
+
+    results.push(result);
+
+    // Append to rolling fidelity log
+    appendFidelityLog({
+      timestamp: new Date().toISOString(),
+      nodeId: node.id,
+      type: node.type,
+      contentSimilarity: result.contentSimilarity,
+      edgePreservation: result.edgePreservation,
+      overallFidelity: result.overallFidelity,
+      reconstructedFrom: result.reconstructedFrom,
+      currentStrength: Math.round(node.strength * 1000) / 1000,
+      contentSnippet: node.content.slice(0, 80),
+    });
+  }
+
+  const lowFidelity = results.filter(r => r.lowFidelity);
+  if (results.length > 0) {
+    log(`Fidelity validation: ${results.length} reconstructed nodes checked, ${lowFidelity.length} low-fidelity (< 0.5)`);
+  }
+
+  return results;
+}
+
+function appendFidelityLog(entry: FidelityLogEntry): void {
+  try {
+    const dir = dirname(FIDELITY_LOG_PATH);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+    appendFileSync(FIDELITY_LOG_PATH, JSON.stringify(entry) + "\n");
+
+    // Rolling cap
+    if (existsSync(FIDELITY_LOG_PATH)) {
+      const content = readFileSync(FIDELITY_LOG_PATH, "utf-8");
+      const lines = content.trimEnd().split("\n");
+      if (lines.length > FIDELITY_LOG_MAX_ENTRIES) {
+        const trimmed = lines.slice(lines.length - FIDELITY_LOG_MAX_ENTRIES);
+        writeFileSync(FIDELITY_LOG_PATH, trimmed.join("\n") + "\n");
+      }
+    }
+  } catch (err) {
+    log(`Failed to write fidelity log: ${err}`);
+  }
 }

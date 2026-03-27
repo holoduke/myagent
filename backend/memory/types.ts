@@ -24,6 +24,12 @@ export interface MemoryNode {
   importance?: number;     // 0.0 – 1.0, explicit salience signal (independent of frequency)
   reconstructedAt?: number;    // unix ms — set when restored from archive/logs
   reconstructedFrom?: "archive" | "log";  // source of reconstruction
+  reconstructionOriginal?: {   // snapshot of original state at archive time (for fidelity validation)
+    content: string;
+    tags: string[];
+    edgeCount: number;         // how many edges the node had when archived
+    strength: number;          // original strength at archive time
+  };
 }
 
 export interface ArchivedNode extends MemoryNode {
