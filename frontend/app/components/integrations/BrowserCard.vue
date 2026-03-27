@@ -120,6 +120,7 @@ defineProps<{
 
 const emit = defineEmits<{
   reload: []
+  error: [msg: string]
 }>()
 
 const { api } = useApi()
@@ -149,8 +150,8 @@ async function loadCaptchas() {
     ])
     pendingCaptchas.value = pending
     captchaHistory.value = history
-  } catch {
-    // silent
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : 'Failed to load captchas'
   } finally {
     captchaLoading.value = false
   }
@@ -227,8 +228,8 @@ async function clearHistory() {
   try {
     await api('/api/browser/history', { method: 'DELETE' })
     emit('reload')
-  } catch {
-    // silent
+  } catch (e) {
+    emit('error', e instanceof Error ? e.message : 'Failed to clear history')
   }
 }
 </script>

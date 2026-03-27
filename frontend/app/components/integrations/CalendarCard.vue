@@ -69,6 +69,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   reload: []
+  error: [msg: string]
 }>()
 
 const { api } = useApi()
@@ -148,8 +149,8 @@ async function save() {
     saved.value = true
     setTimeout(() => { saved.value = false }, 3000)
     emit('reload')
-  } catch {
-    // silent
+  } catch (e) {
+    emit('error', e instanceof Error ? e.message : 'Failed to save calendar config')
   } finally {
     saving.value = false
   }
