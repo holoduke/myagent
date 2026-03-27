@@ -9,7 +9,7 @@
     </div>
     <UiKvRow label="Contacts" :value="whatsapp.contactCount || 0" />
     <div class="btn-row">
-      <button class="btn" @click="$emit('syncContacts')">Sync Contacts</button>
+      <button class="btn" @click="emit('syncContacts')">Sync Contacts</button>
     </div>
 
     <!-- WhatsApp Pairing QR -->
@@ -117,6 +117,7 @@
       <input v-model="newName" type="text" placeholder="Name">
       <button class="btn primary" @click="addContact">Add</button>
     </div>
+    <p v-if="errorMsg" class="wa-error">{{ errorMsg }}</p>
   </div>
 </template>
 
@@ -129,7 +130,11 @@ const props = defineProps<{
   whatsapp: { connected: boolean; contactCount: number }
 }>()
 
-defineEmits(['syncContacts', 'reload'])
+const emit = defineEmits<{
+  syncContacts: []
+  reload: []
+  error: [msg: string]
+}>()
 
 const { api } = useApi()
 const qrData = ref<string | null>(null)
@@ -140,6 +145,7 @@ const newName = ref('')
 const expandedJid = ref<string | null>(null)
 const editPerms = ref<Record<string, ContactPermissions>>({})
 const savingJid = ref<string | null>(null)
+const errorMsg = ref('')
 
 const qrImageUrl = computed(() => {
   if (!qrData.value) return ''
@@ -229,8 +235,8 @@ async function savePermissions(jid: string) {
   try {
     await api('/api/whitelist/permissions', { method: 'PUT', body: { jid, permissions: p } })
     await loadWhitelist()
-  } catch {
-    // Silent
+  } catch (e) {
+    emit('error', e instanceof Error ? e.message : 'Failed to save permissions')
   } finally {
     savingJid.value = null
   }
@@ -242,8 +248,8 @@ async function disablePermissions(jid: string) {
     await api('/api/whitelist/permissions', { method: 'PUT', body: { jid, permissions: null } })
     editPerms.value[jid] = { acceptCommands: false, autoActions: [], confirmActions: [], defaultMode: 'confirm' }
     await loadWhitelist()
-  } catch {
-    // Silent
+  } catch (e) {
+    emit('error', e instanceof Error ? e.message : 'Failed to disable permissions')
   } finally {
     savingJid.value = null
   }
@@ -254,8 +260,9 @@ async function fetchQr() {
   try {
     const res = await api<{ qr: string | null }>('/api/whatsapp/qr')
     qrData.value = res.qr
-  } catch {
+  } catch (e) {
     qrData.value = null
+    errorMsg.value = e instanceof Error ? e.message : 'Failed to load QR code'
   } finally {
     qrLoading.value = false
   }
@@ -264,8 +271,8 @@ async function fetchQr() {
 async function loadWhitelist() {
   try {
     whitelist.value = await api<WhitelistContact[]>('/api/whitelist')
-  } catch {
-    // Silent
+  } catch (e) {
+    emit('error', e instanceof Error ? e.message : 'Failed to load whitelist')
   }
 }
 
@@ -278,8 +285,8 @@ async function addContact() {
     newJid.value = ''
     newName.value = ''
     await loadWhitelist()
-  } catch {
-    // Silent
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : 'Failed to add contact'
   }
 }
 
@@ -288,8 +295,8 @@ async function removeContact(jid: string) {
     await api('/api/whitelist', { method: 'DELETE', body: { jid } })
     if (expandedJid.value === jid) expandedJid.value = null
     await loadWhitelist()
-  } catch {
-    // Silent
+  } catch (e) {
+    emit('error', e instanceof Error ? e.message : 'Failed to remove contact')
   }
 }
 
@@ -489,6 +496,8 @@ onUnmounted(() => {
   gap: 8px;
   margin-top: 10px;
 }
+
+.wa-error { color: var(--red); font-size: 12px; margin-top: 8px; }
 
 @media (max-width: 600px) {
   .perm-grid { grid-template-columns: repeat(2, 1fr); }

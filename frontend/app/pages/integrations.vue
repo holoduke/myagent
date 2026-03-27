@@ -52,11 +52,11 @@
 
       <!-- Integration Modals -->
       <UiModal :open="activeModal === 'whatsapp'" title="WhatsApp" @close="activeModal = null">
-        <IntegrationsWhatsAppCard :whatsapp="waData" @sync-contacts="syncContacts" />
+        <IntegrationsWhatsAppCard :whatsapp="waData" @sync-contacts="syncContacts" @error="(msg: string) => showToast(msg, 'error')" />
       </UiModal>
 
       <UiModal :open="activeModal === 'gmail'" title="Gmail" @close="activeModal = null">
-        <IntegrationsGmailCard :gmail="gmailData" :accounts="dashboard.gmailAccounts || []" @reload="load" />
+        <IntegrationsGmailCard :gmail="gmailData" :accounts="dashboard.gmailAccounts || []" @reload="load" @error="(msg: string) => showToast(msg, 'error')" />
       </UiModal>
 
       <UiModal :open="activeModal === 'ssh'" title="SSH" max-width="640px" @close="activeModal = null">
@@ -68,7 +68,7 @@
       </UiModal>
 
       <UiModal :open="activeModal === 'calendar'" title="Google Calendar" @close="activeModal = null">
-        <IntegrationsCalendarCard :calendar="calendarData" @reload="load" />
+        <IntegrationsCalendarCard :calendar="calendarData" @reload="load" @error="(msg: string) => showToast(msg, 'error')" />
       </UiModal>
 
       <UiModal :open="activeModal === 'homeassistant'" title="Home Assistant" @close="activeModal = null">
@@ -76,7 +76,7 @@
       </UiModal>
 
       <UiModal :open="activeModal === 'rss'" title="RSS Feeds" max-width="640px" @close="activeModal = null">
-        <IntegrationsRSSCard :rss="rssData" @reload="load" />
+        <IntegrationsRSSCard :rss="rssData" @reload="load" @error="(msg: string) => showToast(msg, 'error')" />
       </UiModal>
 
       <UiModal :open="activeModal === 'owntracks'" title="OwnTracks" @close="activeModal = null">
@@ -84,11 +84,11 @@
       </UiModal>
 
       <UiModal :open="activeModal === 'browser'" title="Browser Automation" max-width="640px" @close="activeModal = null">
-        <IntegrationsBrowserCard :browser="browserData" @reload="load" />
+        <IntegrationsBrowserCard :browser="browserData" @reload="load" @error="(msg: string) => showToast(msg, 'error')" />
       </UiModal>
 
       <UiModal :open="activeModal === 'twilio'" title="Twilio Voice" max-width="640px" @close="activeModal = null">
-        <IntegrationsTwilioCard :twilio="twilioData" @reload="load" />
+        <IntegrationsTwilioCard :twilio="twilioData" @reload="load" @error="(msg: string) => showToast(msg, 'error')" />
       </UiModal>
 
       <UiModal :open="activeModal === 'moltbook'" title="Moltbook" @close="activeModal = null">

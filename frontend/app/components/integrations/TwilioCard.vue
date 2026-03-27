@@ -140,6 +140,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   reload: []
+  error: [msg: string]
 }>()
 
 const { api } = useApi()

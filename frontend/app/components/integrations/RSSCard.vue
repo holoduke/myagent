@@ -43,6 +43,7 @@ defineProps<{
 
 const emit = defineEmits<{
   reload: []
+  error: [msg: string]
 }>()
 
 const { api } = useApi()
@@ -73,8 +74,8 @@ async function remove(id: string) {
   try {
     await api('/api/rss/feeds', { method: 'DELETE', body: { id } })
     emit('reload')
-  } catch {
-    // silent
+  } catch (e) {
+    emit('error', e instanceof Error ? e.message : 'Failed to remove feed')
   }
 }
 </script>

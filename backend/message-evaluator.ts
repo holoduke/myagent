@@ -331,6 +331,6 @@ export async function evaluateMessage(obs: Observation): Promise<EvaluationResul
     result.replyDirectiveId = replyDirective.id;
   }
 
-  log(`Evaluated ${obs.sender}: intent=${result.intent.intent}, events=${result.detectedEvents.length}, requests=${result.detectedRequests.length}, reply=${result.reply?.shouldReply || false}`);
+  log(`Evaluated ${obs.sender}: intent=${result.intent.intent}, events=${result.detectedEvents.length}, requests=${result.detectedRequests.length}, reply=${result.reply?.shouldReply || false}${result.reply ? ` (reason: ${result.reply.reason}, hasText: ${!!result.reply.reply})` : ""}`);
   return result;
 }

@@ -225,10 +225,14 @@ export function recordObservation(obs: Observation): void {
       }
 
       // Dispatch reply if needed
-      if (result.reply && result.reply.shouldReply && result.reply.reply) {
-        dispatchReply(obs, result.reply, result.replyDirectiveId || "unknown").catch(err => {
-          log(`Reply dispatch error for ${obs.sender}: ${err}`);
-        });
+      if (result.reply) {
+        if (result.reply.shouldReply && result.reply.reply) {
+          dispatchReply(obs, result.reply, result.replyDirectiveId || "unknown").catch(err => {
+            log(`Reply dispatch error for ${obs.sender}: ${err}`);
+          });
+        } else {
+          log(`Reply skipped for ${obs.sender}: shouldReply=${result.reply.shouldReply}, hasText=${!!result.reply.reply}, reason=${result.reply.reason}`);
+        }
       }
     }).catch(err => {
       log(`Evaluation error for ${obs.sender}: ${err}`);
