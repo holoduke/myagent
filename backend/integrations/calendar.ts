@@ -62,12 +62,18 @@ async function fetchUpcomingEvents(accountId: string): Promise<void> {
     });
 
     const events = res.data.items || [];
+    let newCount = 0;
     for (const event of events) {
       if (!event.id || !event.summary) continue;
 
       const start = event.start?.dateTime || event.start?.date || "";
       const end = event.end?.dateTime || event.end?.date || "";
       const location = event.location || "";
+
+      // Dedup key: eventId + start time + updated timestamp (catches reschedules/edits)
+      const dedupKey = `${event.id}:${start}:${event.updated || ""}`;
+      if (!trackEventKey(dedupKey)) continue;
+      newCount++;
 
       const startDisplay = start ? new Date(start).toLocaleString() : "unknown";
       const endDisplay = end ? new Date(end).toLocaleString() : "unknown";
@@ -92,7 +98,8 @@ async function fetchUpcomingEvents(accountId: string): Promise<void> {
       });
     }
 
-    log(`Fetched ${events.length} upcoming events for ${accountId}`);
+    if (newCount > 0) saveSeenEvents();
+    log(`Fetched ${events.length} upcoming events for ${accountId} (${newCount} new)`);
   } catch (err: any) {
     if (err.code === 401) {
       log(`Calendar auth expired for ${accountId}`);
@@ -139,6 +146,41 @@ export async function listCalendars(accountId: string): Promise<Array<{ id: stri
   }
 }
 
+// ── Seen event dedup (prevents re-emitting same events every poll) ──
+
+const SEEN_EVENTS_FILE = `${CALENDAR_DIR}/seen-events.json`;
+const MAX_SEEN_EVENTS = 500;
+const seenEventKeys = new Set<string>();
+
+function loadSeenEvents(): void {
+  try {
+    const data = new FileStore<string[]>({ filePath: SEEN_EVENTS_FILE, defaultValue: [] }).load();
+    seenEventKeys.clear();
+    for (const key of data) seenEventKeys.add(key);
+    if (data.length > 0) log(`Loaded ${seenEventKeys.size} seen event keys from disk`);
+  } catch { /* first run — no file yet */ }
+}
+
+function saveSeenEvents(): void {
+  const allKeys = Array.from(seenEventKeys);
+  new FileStore<string[]>({ filePath: SEEN_EVENTS_FILE, defaultValue: [] }).save(allKeys);
+}
+
+function trackEventKey(key: string): boolean {
+  if (seenEventKeys.has(key)) return false;
+  seenEventKeys.add(key);
+  // Evict oldest entries if set grows too large
+  if (seenEventKeys.size > MAX_SEEN_EVENTS) {
+    const iter = seenEventKeys.values();
+    const excess = seenEventKeys.size - MAX_SEEN_EVENTS;
+    for (let i = 0; i < excess; i++) {
+      const val = iter.next().value;
+      if (val) seenEventKeys.delete(val);
+    }
+  }
+  return true;
+}
+
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 export function startCalendarPolling(): void {
@@ -157,6 +199,7 @@ export function startCalendarPolling(): void {
 
   log(`Starting calendar polling for ${authenticated.length} account(s) (every ${POLL_INTERVAL / 1000}s)`);
 
+  loadSeenEvents();
   setTimeout(() => pollAll(), 10000);
   pollTimer = setInterval(() => pollAll(), POLL_INTERVAL);
 }
