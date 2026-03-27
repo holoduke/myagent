@@ -300,6 +300,23 @@ export const DECAY_LAMBDA: Record<NodeType, number> = {
   concept: 0.001,   // very slow — concepts are structural
 };
 
+// ── Ghost Graph ──
+// Lightweight topology-only remnants preserved after archive eviction.
+// Retains structural information (node ID, type, tag fingerprint, edges)
+// without content, enabling potential graph reconstruction.
+
+export interface GhostNode {
+  id: string;
+  type: NodeType;
+  tagFingerprint: string[];       // tags at time of eviction
+  edges: ArchivedEdge[];          // topology preserved from archive
+  archivedAt: number;             // when originally archived
+  evictedAt: number;              // when evicted from archive → ghost
+  archiveReason: ArchivedNode["archiveReason"];
+}
+
+export const MAX_GHOST_NODES = 5000;
+
 export const PRUNE_NODE_THRESHOLD = 0.05;
 export const PRUNE_EDGE_THRESHOLD = 0.03;
 export const ORPHAN_GRACE_HOURS = 24;
