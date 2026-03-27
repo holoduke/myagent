@@ -1815,6 +1815,7 @@ async function trySendMessage(
       await sendMessage(ownerJid, message);
       state.lastMessageTime = now;
       state.messagesToday++;
+      logDelivery(ownerJid, bypass ? "digest" : "think", message);
       log(`Sent proactive message (${message.length} chars, #${state.messagesToday} today)`);
     } catch (err) {
       log(`Failed to send proactive message: ${err}`);
