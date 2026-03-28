@@ -356,7 +356,7 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
       lastMessageTimestamp: newestTimestamp || Date.now(),
     };
   } catch (err: any) {
-    if (err.code === 401) {
+    if (err.status === 401 || err.response?.status === 401) {
       log(`Auth expired for ${account.id}, will retry after refresh`);
     } else if (err.message?.includes("timed out")) {
       log(`Gmail API timeout for ${account.id}, skipping this polling cycle`);
