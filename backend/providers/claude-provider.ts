@@ -1,4 +1,5 @@
 import { getSystemPrompt, getMessageMemoryContext, resetMemoryContextTracker } from "../system-prompt.js";
+import { getRecentConversationRecap } from "../history.js";
 import { ensureValidToken } from "../auth-refresh.js";
 import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, ClaudeConfig } from "./types.js";
 import { BaseProvider } from "./base-provider.js";
@@ -12,6 +13,29 @@ interface ClaudeResponse {
   session_id?: string;
 }
 
+// ── Session auto-reset thresholds (configurable via env) ──
+const SESSION_MAX_COST_USD = Number(process.env.SESSION_MAX_COST_USD) || 2.0;
+const SESSION_MAX_INPUT_TOKENS = Number(process.env.SESSION_MAX_INPUT_TOKENS) || 100_000;
+const SESSION_MAX_TURNS = Number(process.env.SESSION_MAX_TURNS) || 30;
+
+interface SessionStats {
+  cumulativeCostUsd: number;
+  cumulativeInputTokens: number;
+  cumulativeOutputTokens: number;
+  turnCount: number;
+  startedAt: number;
+}
+
+function freshSessionStats(): SessionStats {
+  return {
+    cumulativeCostUsd: 0,
+    cumulativeInputTokens: 0,
+    cumulativeOutputTokens: 0,
+    turnCount: 0,
+    startedAt: Date.now(),
+  };
+}
+
 export class ClaudeProvider extends BaseProvider {
   readonly name = "claude";
   readonly supportsStreaming = true;
@@ -19,6 +43,8 @@ export class ClaudeProvider extends BaseProvider {
 
   private currentSessionId: string | null = null;
   private config: ClaudeConfig;
+  private sessionStats: SessionStats = freshSessionStats();
+  private needsConversationRecap = false;
 
   constructor(config: ClaudeConfig = {}) {
     super();
@@ -27,6 +53,8 @@ export class ClaudeProvider extends BaseProvider {
 
   resetSession(): void {
     this.currentSessionId = null;
+    this.sessionStats = freshSessionStats();
+    this.needsConversationRecap = false;
     resetMemoryContextTracker();
     log("Session reset");
   }
@@ -35,9 +63,46 @@ export class ClaudeProvider extends BaseProvider {
     return this.currentSessionId;
   }
 
+  getSessionStats(): Readonly<SessionStats> {
+    return this.sessionStats;
+  }
+
   restoreSession(sessionId: string): void {
     this.currentSessionId = sessionId;
     log(`Session restored: ${sessionId}`);
+  }
+
+  /** Check if session exceeds thresholds and auto-reset if so. */
+  private checkAutoReset(): void {
+    const s = this.sessionStats;
+    const reasons: string[] = [];
+
+    if (s.cumulativeCostUsd >= SESSION_MAX_COST_USD) {
+      reasons.push(`cost $${s.cumulativeCostUsd.toFixed(4)} >= $${SESSION_MAX_COST_USD}`);
+    }
+    if (s.cumulativeInputTokens >= SESSION_MAX_INPUT_TOKENS) {
+      reasons.push(`input tokens ${s.cumulativeInputTokens.toLocaleString()} >= ${SESSION_MAX_INPUT_TOKENS.toLocaleString()}`);
+    }
+    if (s.turnCount >= SESSION_MAX_TURNS) {
+      reasons.push(`turns ${s.turnCount} >= ${SESSION_MAX_TURNS}`);
+    }
+
+    if (reasons.length > 0) {
+      log(`Auto-reset: ${reasons.join(", ")} (session ${this.currentSessionId})`);
+      this.currentSessionId = null;
+      this.sessionStats = freshSessionStats();
+      this.needsConversationRecap = true;
+      resetMemoryContextTracker();
+    }
+  }
+
+  /** Accumulate stats from a completed response. */
+  private accumulateStats(stats?: AgentStats): void {
+    if (!stats) return;
+    this.sessionStats.cumulativeCostUsd += stats.totalCostUsd;
+    this.sessionStats.cumulativeInputTokens += stats.inputTokens;
+    this.sessionStats.cumulativeOutputTokens += stats.outputTokens;
+    this.sessionStats.turnCount += 1;
   }
 
   async ask(message: string, options: ProviderAskOptions = {}): Promise<AgentResult> {
@@ -55,7 +120,15 @@ export class ClaudeProvider extends BaseProvider {
       if (retry.isAuthError) {
         throw new Error("Authentication failed after retry. OAuth tokens may need manual refresh.");
       }
+      if (!noSession) {
+        this.accumulateStats(retry.stats);
+        this.checkAutoReset();
+      }
       return retry;
+    }
+    if (!noSession) {
+      this.accumulateStats(result.stats);
+      this.checkAutoReset();
     }
     return result;
   }
@@ -79,7 +152,15 @@ export class ClaudeProvider extends BaseProvider {
       if (retry.isAuthError) {
         throw new Error("Authentication failed after retry. OAuth tokens may need manual refresh.");
       }
+      if (!noSession) {
+        this.accumulateStats(retry.stats);
+        this.checkAutoReset();
+      }
       return retry;
+    }
+    if (!noSession) {
+      this.accumulateStats(result.stats);
+      this.checkAutoReset();
     }
     return result;
   }
@@ -98,7 +179,10 @@ export class ClaudeProvider extends BaseProvider {
       return memCtx ? `${memCtx}${message}` : message;
     }
     // First message: full system prompt with initial memory snapshot
-    return `${getSystemPrompt()}\n\nUser message:\n${message}`;
+    // Include conversation recap if session was auto-compacted
+    const recap = this.needsConversationRecap ? getRecentConversationRecap() : "";
+    this.needsConversationRecap = false;
+    return `${getSystemPrompt()}${recap}\n\nUser message:\n${message}`;
   }
 
   private get claudeEnv(): Record<string, string> {

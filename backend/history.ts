@@ -51,6 +51,34 @@ export function clearHistory(): void {
   save();
 }
 
+/**
+ * Build a compact recap of recent conversation for session continuity.
+ * Used when a session is auto-reset to give the new session context
+ * about what was just being discussed. Keeps it short to avoid
+ * bloating the initial prompt.
+ */
+export function getRecentConversationRecap(maxMessages = 10, maxCharsPerMsg = 200): string {
+  const history = getHistory();
+  if (history.length === 0) return "";
+
+  // Take the most recent messages (user + assistant only)
+  const recent = history
+    .filter(m => m.role === "user" || m.role === "assistant")
+    .slice(-maxMessages);
+
+  if (recent.length === 0) return "";
+
+  const lines = recent.map(m => {
+    const role = m.role === "user" ? "User" : "ARIA";
+    const content = m.content.length > maxCharsPerMsg
+      ? m.content.slice(0, maxCharsPerMsg) + "..."
+      : m.content;
+    return `  ${role}: ${content}`;
+  });
+
+  return `\n\n═══ RECENT CONVERSATION (session was auto-compacted for performance) ═══\nThe previous session was reset to keep responses fast. Here's what was just discussed:\n${lines.join("\n")}`;
+}
+
 export interface UsageData {
   totalMessages: number;
   totalResponses: number;
