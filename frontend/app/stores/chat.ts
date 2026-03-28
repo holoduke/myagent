@@ -52,6 +52,73 @@ export const useChatStore = defineStore('chat', () => {
     historyLoaded.value = true
   }
 
+  async function streamResponse(text: string): Promise<void> {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    })
+
+    if (res.status === 401) {
+      addMessage({ role: 'error', content: 'Session expired', timestamp: Date.now() })
+      streaming.value = false
+      streamPhase.value = 'idle'
+      const { logout } = useAuth()
+      logout()
+      return
+    }
+
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    let lastStats: ChatStats | null = null
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const ev = JSON.parse(line.slice(6))
+
+          if (ev.type === 'delta') {
+            streamPhase.value = 'streaming'
+            streamContent.value += ev.text
+          } else if (ev.type === 'queued') {
+            streamPhase.value = 'queued'
+          } else if (ev.type === 'start') {
+            streamPhase.value = 'streaming'
+            streamContent.value = ''
+          } else if (ev.type === 'done') {
+            lastStats = ev.stats || null
+          } else if (ev.type === 'error') {
+            addMessage({ role: 'error', content: ev.error, timestamp: Date.now() })
+          }
+        } catch {
+          // Skip malformed events
+        }
+      }
+    }
+
+    // Finalize assistant message
+    if (streamContent.value) {
+      const msg: ChatMessage = {
+        role: 'assistant',
+        content: streamContent.value,
+        timestamp: Date.now(),
+        source: 'web',
+        stats: lastStats || undefined,
+      }
+      addMessage(msg)
+      if (lastStats) addStats(lastStats)
+    }
+  }
+
   async function sendMessage(text: string) {
     if (streaming.value) return
 
@@ -68,76 +135,33 @@ export const useChatStore = defineStore('chat', () => {
     streamPhase.value = 'queued'
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
-      })
-
-      if (res.status === 401) {
-        addMessage({ role: 'error', content: 'Session expired', timestamp: Date.now() })
-        streaming.value = false
-        streamPhase.value = 'idle'
-        const { logout } = useAuth()
-        logout()
-        return
-      }
-
-      const reader = res.body!.getReader()
-      const decoder = new TextDecoder()
-      let buf = ''
-      let lastStats: ChatStats | null = null
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n')
-        buf = lines.pop() || ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const ev = JSON.parse(line.slice(6))
-
-            if (ev.type === 'delta') {
-              streamPhase.value = 'streaming'
-              streamContent.value += ev.text
-            } else if (ev.type === 'queued') {
-              streamPhase.value = 'queued'
-            } else if (ev.type === 'start') {
-              streamPhase.value = 'streaming'
-              streamContent.value = ''
-            } else if (ev.type === 'done') {
-              lastStats = ev.stats || null
-            } else if (ev.type === 'error') {
-              addMessage({ role: 'error', content: ev.error, timestamp: Date.now() })
-            }
-          } catch {
-            // Skip malformed events
-          }
-        }
-      }
-
-      // Finalize assistant message
-      if (streamContent.value) {
-        const msg: ChatMessage = {
-          role: 'assistant',
-          content: streamContent.value,
-          timestamp: Date.now(),
-          source: 'web',
-          stats: lastStats || undefined,
-        }
-        addMessage(msg)
-        if (lastStats) addStats(lastStats)
-      }
+      await streamResponse(text)
     } catch (err) {
-      addMessage({
-        role: 'error',
-        content: 'Connection error: ' + (err instanceof Error ? err.message : 'Unknown'),
-        timestamp: Date.now(),
-      })
+      // Preserve any partial content received before the drop
+      const partialContent = streamContent.value
+
+      // Retry once after 1 second
+      try {
+        streamContent.value = partialContent
+        streamPhase.value = 'queued'
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        await streamResponse(text)
+      } catch (retryErr) {
+        // If we got partial content before both failures, preserve it
+        if (partialContent) {
+          addMessage({
+            role: 'assistant',
+            content: partialContent,
+            timestamp: Date.now(),
+            source: 'web',
+          })
+        }
+        addMessage({
+          role: 'error',
+          content: 'Connection error: ' + (retryErr instanceof Error ? retryErr.message : 'Unknown'),
+          timestamp: Date.now(),
+        })
+      }
     } finally {
       streaming.value = false
       streamContent.value = ''

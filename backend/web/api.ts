@@ -1065,7 +1065,7 @@ async function handleChat(req: IncomingMessage, res: ServerResponse, queue: Mess
 
     const heartbeat = setInterval(() => {
       if (!res.writableEnded) res.write(`:heartbeat\n\n`);
-    }, 15000);
+    }, 5000);
 
     try {
       await queue.add(async () => {
