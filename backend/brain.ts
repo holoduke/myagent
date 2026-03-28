@@ -142,6 +142,7 @@ function parseBrainResponse(raw: string): BrainResponse | null {
     return {
       operations: Array.isArray(parsed.operations) ? parsed.operations : [],
       message: parsed.message ?? null,
+      messageTargetJid: typeof parsed.messageTargetJid === "string" ? parsed.messageTargetJid : undefined,
       reasoning: parsed.reasoning ?? "",
       workingMemory: parsed.workingMemory ?? undefined,
       goalOps: Array.isArray(parsed.goalOps) ? parsed.goalOps : undefined,
@@ -1273,6 +1274,7 @@ async function thinkTick(
       const isDigestTriggered = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
       await trySendMessage(state, sendMessage, ownerJid, response.message, {
         bypassLimits: isDigestTriggered,
+        targetJid: response.messageTargetJid,
       });
 
       // Scan outgoing brain message for commitments
@@ -1626,7 +1628,9 @@ async function reflectTick(
     }
 
     if (response.message) {
-      await trySendMessage(state, sendMessage, ownerJid, response.message);
+      await trySendMessage(state, sendMessage, ownerJid, response.message, {
+        targetJid: response.messageTargetJid,
+      });
 
       // Scan outgoing reflect message for commitments
       scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
@@ -1814,7 +1818,7 @@ async function trySendMessage(
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
   message: string,
-  options?: { bypassLimits?: boolean },
+  options?: { bypassLimits?: boolean; targetJid?: string | null },
 ): Promise<void> {
   const cfg = getBrainConfig();
   const now = Date.now();
@@ -1823,12 +1827,13 @@ async function trySendMessage(
   const messageIntervalOk = (now - state.lastMessageTime) >= cfg.minMessageInterval;
   const underDailyLimit = state.messagesToday < cfg.maxMessagesPerDay;
   const bypass = options?.bypassLimits === true;
+  const recipientJid = options?.targetJid || ownerJid;
 
   // Action verifier gate
   const verifyResult = verify({
     type: "send_message",
     source: bypass ? "digest" : "think",
-    targetJid: ownerJid,
+    targetJid: recipientJid,
     messageText: message,
   });
   if (verifyResult.verdict === "blocked") {
@@ -1845,11 +1850,11 @@ async function trySendMessage(
   } else {
     try {
       if (bypass) log("Briefing message — bypassing rate limits");
-      await sendMessage(ownerJid, message);
+      await sendMessage(recipientJid, message);
       state.lastMessageTime = now;
       state.messagesToday++;
-      logDelivery(ownerJid, bypass ? "digest" : "think", message);
-      log(`Sent proactive message (${message.length} chars, #${state.messagesToday} today)`);
+      logDelivery(recipientJid, bypass ? "digest" : "think", message);
+      log(`Sent proactive message to ${recipientJid} (${message.length} chars, #${state.messagesToday} today)`);
     } catch (err) {
       log(`Failed to send proactive message: ${err}`);
     }
