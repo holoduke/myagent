@@ -1773,6 +1773,20 @@ async function deliverScheduledMessages(
     const raw = readFileSync(pendingPath, "utf-8");
     const pending = JSON.parse(raw) as { sendAt: number; message: string };
     if (Date.now() >= pending.sendAt) {
+      // Action verifier gate — same protection as the scheduled-messages path
+      const verifyResult = verify({
+        type: "send_scheduled",
+        source: "legacy-pending",
+        targetJid: ownerJid,
+        messageText: pending.message,
+        metadata: { legacy: true },
+      });
+      if (verifyResult.verdict === "blocked") {
+        log(`Verifier blocked legacy pending message: ${verifyResult.reasons.join("; ")}`);
+        unlinkSync(pendingPath);
+        return;
+      }
+
       const SEND_TIMEOUT_MS = 30_000;
       await Promise.race([
         sendMessage(ownerJid, pending.message),
