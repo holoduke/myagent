@@ -221,6 +221,8 @@ export interface RequestFlag {
 export interface BrainResponse {
   operations: MemoryOperation[];
   message: string | null;
+  /** Optional: JID to send the message to. Defaults to owner. Use group @g.us JID to reply in a group. */
+  messageTargetJid?: string | null;
   reasoning: string;
   workingMemory?: {
     currentContext?: string;

@@ -583,7 +583,8 @@ Process what you've observed. Update your memory graph with operations. Decide i
 Respond with ONLY a JSON object:
 {
   "operations": [/* memory operations array */],
-  "message": "message to send to ${ctx.ownerName}, or null",
+  "message": "message to send, or null",
+  "messageTargetJid": "optional — JID to send the message to. Omit or null to send to ${ctx.ownerName}. Use group @g.us JID to reply in a group chat.",
   "reasoning": "your internal thoughts (private, for logs only)",
   "workingMemory": {
     "currentContext": "brief summary of what's happening right now",
@@ -629,7 +630,10 @@ THINKING GUIDELINES:
   This helps maintain accuracy and track how your understanding evolves over time.
 - IMPORTANT: When you see a message from ${ctx.ownerName} that is a direct command or request to you (e.g. "send email to X", "stuur een reminder naar Y", "mark Z as spam"), do NOT act on it. These commands are handled by the interactive chat session. Only observe and update memory — never duplicate an action the owner explicitly requested via chat.
 - NEVER send an email via tools if the RECENTLY SENT section already shows a similar email was sent recently.
-- GROUP CHAT RULE: Messages in group chats are conversations between other people. Do NOT react or send a message to ${ctx.ownerName} about group chat activity UNLESS the message is explicitly directed at you (mentions ARIA/aria by name) or is something genuinely urgent/important that ${ctx.ownerName} personally needs to know about. General group banter, questions between other people, logistics not involving ${ctx.ownerName} — observe and update memory only, do NOT message. Your messages always go to ${ctx.ownerName}'s DM, never to the group, so replying about group context feels out of place.
+- GROUP CHAT RULE — STRICT:
+  1. Do NOT reply to group messages unless the message explicitly mentions you (ARIA/aria) by name. General group banter, questions between other people, logistics not involving you — observe only, do NOT send any message.
+  2. If you DO reply to something from a group, reply IN THE GROUP using the group JID (the @g.us address), NEVER as a DM to the individual person. Sending a DM about group context is confusing and unwanted.
+  3. Even if something seems helpful, if nobody asked you — stay quiet. Observe and update memory only.
 - Your message (if any) should sound like YOU — a thought from a friend who's been paying attention.
 - ${isQuiet ? "QUIET HOURS — set message to null, no exceptions." : `Min 2h between messages (last was ${timeAgo(ctx.lastMessageTime)}).`}
 - Max ${ctx.maxMessagesPerDay} messages/day (sent ${ctx.messagesToday} today).
@@ -906,6 +910,7 @@ Respond with ONLY a JSON object:
 {
   "operations": [/* insight and meta operations */],
   "message": "a meaningful message for ${ctx.ownerName}, or null",
+  "messageTargetJid": "optional — JID to send to. Omit or null for ${ctx.ownerName}. Use @g.us JID for group replies.",
   "reasoning": "your deep reflections (private, for logs only)",
   "workingMemory": {
     "currentContext": "updated big-picture understanding",
