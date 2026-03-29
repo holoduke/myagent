@@ -2,6 +2,7 @@ import "dotenv/config";
 import { readFileSync, existsSync } from "fs";
 import { createServer } from "http";
 import { createLogger } from "./logger.js";
+import { validateConfig } from "./config.js";
 import { startWhatsApp, sendMessage, sendReaction, sendTypingIndicator, stopTypingIndicator, getLatestQr } from "./integrations/whatsapp.js";
 import { handleCaptchaReply } from "./captcha-verify.js";
 import { resetSession } from "./claude.js";
@@ -31,11 +32,9 @@ const log = createLogger("index");
 const startedAt = Date.now();
 
 async function main() {
+  validateConfig();
+
   const ownerPhone = process.env.OWNER_PHONE;
-  if (!ownerPhone) {
-    log.error("OWNER_PHONE is not set in .env");
-    process.exit(1);
-  }
 
   // Bootstrap default provider profile on first boot
   bootstrapDefaultProvider();

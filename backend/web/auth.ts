@@ -49,6 +49,10 @@ loadSessions();
 const loginAttempts: { ts: number }[] = [];
 const WEB_PASSWORD = process.env.WEB_PASSWORD || "";
 
+if (!WEB_PASSWORD) {
+  log.warn("WEB_PASSWORD not set — all authenticated endpoints will be inaccessible");
+}
+
 export function isPasswordConfigured(): boolean {
   return WEB_PASSWORD.length > 0;
 }
@@ -69,6 +73,7 @@ export function getSessionToken(req: IncomingMessage): string | null {
 }
 
 export function isAuthenticated(req: IncomingMessage): boolean {
+  if (!WEB_PASSWORD) return false;
   const token = getSessionToken(req);
   if (!token) return false;
   const created = activeSessions.get(token);
@@ -161,6 +166,16 @@ export async function handleLogin(req: IncomingMessage, res: ServerResponse): Pr
       const now = Date.now();
       for (const [t, created] of activeSessions) {
         if (now - created > SESSION_TTL) activeSessions.delete(t);
+      }
+
+      // Cap active sessions to 100 — evict the oldest when exceeded
+      const MAX_SESSIONS = 100;
+      if (activeSessions.size > MAX_SESSIONS) {
+        const sorted = Array.from(activeSessions.entries()).sort((a, b) => a[1] - b[1]);
+        const excess = activeSessions.size - MAX_SESSIONS;
+        for (let i = 0; i < excess; i++) {
+          activeSessions.delete(sorted[i][0]);
+        }
       }
 
       saveSessions();

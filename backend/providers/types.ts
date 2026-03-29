@@ -53,6 +53,8 @@ export interface AIProvider {
   ask(message: string, options: ProviderAskOptions): Promise<AgentResult>;
   askStreaming(message: string, onDelta: (text: string) => void, options: ProviderAskOptions): Promise<AgentResult>;
   resetSession(): void;
+  /** Optional session ID accessor — avoids casting to concrete provider types */
+  getSessionId?(): string | null;
 }
 
 export interface ProviderAskOptions {

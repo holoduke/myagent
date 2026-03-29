@@ -20,6 +20,11 @@ const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 const OBS_FILE = `${BRAIN_DIR}/observations.jsonl`;
 const RETENTION_DAYS = Number(process.env.BRAIN_OBSERVATION_DAYS ?? 7);
 
+// Guard against concurrent append + prune on the observations file.
+// When pruneObservations() is active, appends are buffered and flushed after prune completes.
+let pruneInProgress = false;
+let appendBuffer: string[] = [];
+
 export interface EmailMeta {
   from: string;
   to: string;
@@ -236,17 +241,26 @@ export function recordObservation(obs: Observation): void {
       }
     }).catch(err => {
       log(`Evaluation error for ${obs.sender}: ${err}`);
+      // Flag observation as unevaluated so downstream consumers know intent is missing
+      obs.intentClassification = { intent: "noise", confidence: 0, method: "heuristic", reason: `evaluation_failed: ${err}` };
     });
   }
 
   // ── User-defined message handlers (independent pipeline) ──
   runMessageHandlers(obs).catch(err => {
-    log(`Message handler error for ${obs.sender}: ${err}`);
+    log(`Message handler error for ${obs.sender} [${obs.source || "whatsapp"}]: ${err}`);
   });
 
   try {
     ensureBrainDir();
-    appendFileSync(OBS_FILE, JSON.stringify(obs) + "\n");
+    const line = JSON.stringify(obs) + "\n";
+
+    if (pruneInProgress) {
+      // Buffer appends while prune is rewriting the file
+      appendBuffer.push(line);
+    } else {
+      appendFileSync(OBS_FILE, line);
+    }
 
     // Score urgency eagerly and trigger an immediate brain tick if critical
     scoreAndMaybeInterrupt(obs);
@@ -443,6 +457,11 @@ export function getObservationCount(since: number): number {
 
 export function pruneObservations(days?: number): void {
   const cutoff = Date.now() - (days ?? RETENTION_DAYS) * 86400000;
+
+  // Activate prune lock -- appends will be buffered until prune completes
+  pruneInProgress = true;
+  appendBuffer = [];
+
   try {
     if (!existsSync(OBS_FILE)) return;
     const lines = readFileSync(OBS_FILE, "utf-8").split("\n");
@@ -466,11 +485,20 @@ export function pruneObservations(days?: number): void {
       atomicWriteFile(OBS_FILE, kept.join("\n") + (kept.length ? "\n" : ""));
       log(`Pruned ${pruned} old observations, kept ${kept.length}`);
     }
+
+    // Flush any observations that arrived during prune
+    if (appendBuffer.length > 0) {
+      appendFileSync(OBS_FILE, appendBuffer.join(""));
+      log(`Flushed ${appendBuffer.length} buffered observation(s) after prune`);
+    }
   } catch (err) {
     throw new BrainError(`Failed to prune observations: ${err}`, {
       phase: "observer",
       transient: false,
       metadata: { cutoffDays: days ?? RETENTION_DAYS },
     }, err);
+  } finally {
+    appendBuffer = [];
+    pruneInProgress = false;
   }
 }

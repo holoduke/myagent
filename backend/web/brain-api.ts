@@ -470,10 +470,10 @@ export function handleBrainRoutes(
           tools: agent.tools,
           timeout: agent.timeout,
         }, null, 2));
-        markRunning(id, undefined);
         const child = spawn("npx", ["tsx", "backend/sub-agent-worker.ts", id], {
           detached: true, stdio: "ignore", cwd: "/app", env: { ...process.env },
         });
+        markRunning(id, child.pid);
         child.unref();
         respondJson(res, 200, { ok: true, message: "Run triggered" });
       }

@@ -106,7 +106,11 @@ export function handleContactRoutes(
     const directiveDeleteMatch = pathname.match(/^\/api\/directives\/([^/]+)$/);
     if (directiveDeleteMatch) {
       const removed = removeDirective(directiveDeleteMatch[1]);
-      respondJson(res, removed ? 200 : 404, { success: removed });
+      if (!removed) {
+        respondJson(res, 404, { error: "Directive not found" });
+      } else {
+        respondJson(res, 200, { success: true });
+      }
       return true;
     }
   }
@@ -144,7 +148,11 @@ export function handleContactRoutes(
     const rdDeleteMatch = pathname.match(/^\/api\/reply-directives\/([^/]+)$/);
     if (rdDeleteMatch) {
       const removed = removeReplyDirective(rdDeleteMatch[1]);
-      respondJson(res, removed ? 200 : 400, { success: removed });
+      if (!removed) {
+        respondJson(res, 404, { error: "Reply directive not found" });
+      } else {
+        respondJson(res, 200, { success: true });
+      }
       return true;
     }
   }
@@ -192,7 +200,11 @@ export function handleContactRoutes(
     const mhDeleteMatch = pathname.match(/^\/api\/message-handlers\/([^/]+)$/);
     if (mhDeleteMatch) {
       const removed = removeHandler(mhDeleteMatch[1]);
-      respondJson(res, removed ? 200 : 400, { success: removed });
+      if (!removed) {
+        respondJson(res, 404, { error: "Message handler not found" });
+      } else {
+        respondJson(res, 200, { success: true });
+      }
       return true;
     }
   }

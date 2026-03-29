@@ -89,78 +89,89 @@ export function appendConsolidationLog(entry: ConsolidationLogEntry): void {
  * Full consolidation pass: decay -> edge decay -> orphan prune -> emergency prune -> archive rescan.
  */
 export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): ConsolidationResult {
-  // Auto-infer salience on nodes before decay — protects important content
-  autoInferSalience(graph);
+  // Save pre-consolidation snapshot for rollback safety
+  const preNodeCount = graph.nodeCount;
+  const preEdgeCount = graph.edgeCount;
 
-  const tierCache = new Map<string, RetentionTier>();
-  const nodeResult = applyDecay(graph, tierCache);
-  const edgeResult = applyEdgeDecay(graph);
-  const orphansPruned = pruneOrphans(graph);
-  const emergencyPruned = emergencyPrune(graph, 500, tierCache);
+  try {
+    // Auto-infer salience on nodes before decay — protects important content
+    autoInferSalience(graph);
 
-  // Periodic archive rescan — check if any archived memories match current context
-  const archiveRestored = wm ? rescanArchive(graph, wm) : 0;
+    const tierCache = new Map<string, RetentionTier>();
+    const nodeResult = applyDecay(graph, tierCache);
+    const edgeResult = applyEdgeDecay(graph);
+    const orphansPruned = pruneOrphans(graph);
+    const emergencyPruned = emergencyPrune(graph, 500, tierCache);
 
-  // Log-based reconstruction — try to recover recently archived nodes from observation logs
-  const logReconstructed = reconstructFromLogs(graph, nodeResult.prunedIds, 48);
+    // Periodic archive rescan — check if any archived memories match current context
+    const archiveRestored = wm ? rescanArchive(graph, wm) : 0;
 
-  // Log audit — scan observations for uncaptured signals
-  const uncapturedSignals = auditObservationLogs(graph, 24);
+    // Log-based reconstruction — try to recover recently archived nodes from observation logs
+    const logReconstructed = reconstructFromLogs(graph, nodeResult.prunedIds, 48);
 
-  // Memory gap detection — find silently disappearing topics
-  const memoryGaps = detectMemoryGaps(graph, wm);
+    // Log audit — scan observations for uncaptured signals
+    const uncapturedSignals = auditObservationLogs(graph, 24);
 
-  // Graph snapshot — save current state for future delta comparison
-  saveGraphSnapshot(graph);
+    // Memory gap detection — find silently disappearing topics
+    const memoryGaps = detectMemoryGaps(graph, wm);
 
-  // Delta audit — compare current state with ~24h ago snapshot
-  const deltaReport = compareWithSnapshot(graph, 24);
+    // Graph snapshot — save current state for future delta comparison
+    saveGraphSnapshot(graph);
 
-  // Reconstruction fidelity — validate quality of restored memories
-  const fidelityResults = validateReconstructionFidelity(graph);
+    // Delta audit — compare current state with ~24h ago snapshot
+    const deltaReport = compareWithSnapshot(graph, 24);
 
-  // Build tier distribution from cache
-  const tierDistribution: Record<RetentionTier, number> = { core: 0, important: 0, work: 0, standard: 0, ephemeral: 0 };
-  for (const tier of tierCache.values()) {
-    tierDistribution[tier]++;
+    // Reconstruction fidelity — validate quality of restored memories
+    const fidelityResults = validateReconstructionFidelity(graph);
+
+    // Build tier distribution from cache
+    const tierDistribution: Record<RetentionTier, number> = { core: 0, important: 0, work: 0, standard: 0, ephemeral: 0 };
+    for (const tier of tierCache.values()) {
+      tierDistribution[tier]++;
+    }
+
+    const result: ConsolidationResult = {
+      nodesDecayed: nodeResult.decayed,
+      nodesPruned: nodeResult.pruned,
+      edgesDecayed: edgeResult.decayed,
+      edgesPruned: edgeResult.pruned,
+      orphansPruned,
+      emergencyPruned,
+      archiveRestored,
+      logReconstructed,
+      uncapturedSignals,
+      memoryGaps,
+      deltaReport,
+      fidelityResults,
+    };
+
+    // Append health metrics to consolidation log
+    appendConsolidationLog({
+      timestamp: new Date().toISOString(),
+      nodeCount: graph.nodeCount,
+      edgeCount: graph.edgeCount,
+      archiveSize: graph.archiveSize,
+      tierDistribution,
+      nodesDecayed: result.nodesDecayed,
+      nodesPruned: result.nodesPruned,
+      edgesDecayed: result.edgesDecayed,
+      edgesPruned: result.edgesPruned,
+      orphansPruned: result.orphansPruned,
+      emergencyPruned: result.emergencyPruned,
+      archiveRestored: result.archiveRestored,
+      logReconstructed: result.logReconstructed,
+      lossRate: deltaReport?.lossRate,
+      uncapturedCount: uncapturedSignals.length,
+      fidelityChecked: fidelityResults.length,
+      lowFidelityCount: fidelityResults.filter(r => r.lowFidelity).length,
+      gapCount: memoryGaps.length,
+    });
+
+    return result;
+  } catch (err) {
+    const postNodeCount = graph.nodeCount;
+    const postEdgeCount = graph.edgeCount;
+    log(`Consolidation failed: pre(${preNodeCount} nodes, ${preEdgeCount} edges) post(${postNodeCount} nodes, ${postEdgeCount} edges) error: ${err}`);
+    throw err;
   }
-
-  const result: ConsolidationResult = {
-    nodesDecayed: nodeResult.decayed,
-    nodesPruned: nodeResult.pruned,
-    edgesDecayed: edgeResult.decayed,
-    edgesPruned: edgeResult.pruned,
-    orphansPruned,
-    emergencyPruned,
-    archiveRestored,
-    logReconstructed,
-    uncapturedSignals,
-    memoryGaps,
-    deltaReport,
-    fidelityResults,
-  };
-
-  // Append health metrics to consolidation log
-  appendConsolidationLog({
-    timestamp: new Date().toISOString(),
-    nodeCount: graph.nodeCount,
-    edgeCount: graph.edgeCount,
-    archiveSize: graph.archiveSize,
-    tierDistribution,
-    nodesDecayed: result.nodesDecayed,
-    nodesPruned: result.nodesPruned,
-    edgesDecayed: result.edgesDecayed,
-    edgesPruned: result.edgesPruned,
-    orphansPruned: result.orphansPruned,
-    emergencyPruned: result.emergencyPruned,
-    archiveRestored: result.archiveRestored,
-    logReconstructed: result.logReconstructed,
-    lossRate: deltaReport?.lossRate,
-    uncapturedCount: uncapturedSignals.length,
-    fidelityChecked: fidelityResults.length,
-    lowFidelityCount: fidelityResults.filter(r => r.lowFidelity).length,
-    gapCount: memoryGaps.length,
-  });
-
-  return result;
 }

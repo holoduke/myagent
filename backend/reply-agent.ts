@@ -80,6 +80,7 @@ const MAX_REPLIES_PER_WINDOW = 5;
 const WINDOW_SIZE_MS = 3_600_000;
 const GROUP_COOLDOWN_MULTIPLIER = 3;
 
+const MAX_COOLDOWN_ENTRIES = 500;
 const cooldowns = new Map<string, ChatCooldown>();
 
 function canReply(chatJid: string, isGroup: boolean): boolean {
@@ -88,6 +89,13 @@ function canReply(chatJid: string, isGroup: boolean): boolean {
 
   const now = Date.now();
   const interval = isGroup ? MIN_REPLY_INTERVAL_MS * GROUP_COOLDOWN_MULTIPLIER : MIN_REPLY_INTERVAL_MS;
+
+  // Periodic cleanup of expired cooldowns to prevent unbounded growth
+  if (cooldowns.size > 200) {
+    for (const [key, entry] of cooldowns) {
+      if (now - entry.lastReplyAt > WINDOW_SIZE_MS) cooldowns.delete(key);
+    }
+  }
 
   if (now - cd.lastReplyAt < interval) return false;
   if (now - cd.windowStart > WINDOW_SIZE_MS) return true;
@@ -104,6 +112,16 @@ function recordReplyEvent(chatJid: string): void {
   } else {
     cd.lastReplyAt = now;
     cd.repliesInWindow++;
+  }
+
+  // Evict stale cooldown entries when map exceeds max size
+  if (cooldowns.size > MAX_COOLDOWN_ENTRIES) {
+    const cutoff = now - WINDOW_SIZE_MS;
+    for (const [key, entry] of cooldowns) {
+      if (entry.lastReplyAt < cutoff) {
+        cooldowns.delete(key);
+      }
+    }
   }
 }
 

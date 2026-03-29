@@ -74,26 +74,47 @@ export class MemoryGraph {
   save(): void {
     ensureDir(GRAPH_DIR);
 
-    const nodesObj: Record<string, MemoryNode> = {};
-    for (const [id, node] of this.nodes) {
-      nodesObj[id] = node;
+    try {
+      const nodesObj: Record<string, MemoryNode> = {};
+      for (const [id, node] of this.nodes) {
+        nodesObj[id] = node;
+      }
+      atomicWriteJSON(NODES_FILE, nodesObj, 0);
+    } catch (err) {
+      log(`Failed to save nodes — aborting remaining saves: ${err}`);
+      throw err;
     }
-    atomicWriteJSON(NODES_FILE, nodesObj, 0);
-    atomicWriteJSON(EDGES_FILE, this.edges, 0);
 
-    // Save archive
-    const archiveObj: Record<string, ArchivedNode> = {};
-    for (const [id, node] of this.archive) {
-      archiveObj[id] = node;
+    try {
+      atomicWriteJSON(EDGES_FILE, this.edges, 0);
+    } catch (err) {
+      log(`Failed to save edges — aborting remaining saves: ${err}`);
+      throw err;
     }
-    atomicWriteJSON(ARCHIVE_FILE, archiveObj, 0);
 
-    // Save ghost graph
-    const ghostObj: Record<string, GhostNode> = {};
-    for (const [id, node] of this.ghosts) {
-      ghostObj[id] = node;
+    try {
+      // Save archive
+      const archiveObj: Record<string, ArchivedNode> = {};
+      for (const [id, node] of this.archive) {
+        archiveObj[id] = node;
+      }
+      atomicWriteJSON(ARCHIVE_FILE, archiveObj, 0);
+    } catch (err) {
+      log(`Failed to save archive — aborting remaining saves: ${err}`);
+      throw err;
     }
-    atomicWriteJSON(GHOST_FILE, ghostObj, 0);
+
+    try {
+      // Save ghost graph
+      const ghostObj: Record<string, GhostNode> = {};
+      for (const [id, node] of this.ghosts) {
+        ghostObj[id] = node;
+      }
+      atomicWriteJSON(GHOST_FILE, ghostObj, 0);
+    } catch (err) {
+      log(`Failed to save ghost graph: ${err}`);
+      throw err;
+    }
   }
 
   // ── Write-Ahead Log ──

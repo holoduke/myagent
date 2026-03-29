@@ -1,6 +1,35 @@
 import { IncomingMessage, ServerResponse } from "http";
 import { readBody } from "../web/auth.js";
 
+// ── Simple per-IP rate limiter ──
+
+const requestCounts = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_WINDOW = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 120; // 120 requests per minute per IP
+
+export function isRateLimited(req: IncomingMessage): boolean {
+  const ip = req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const entry = requestCounts.get(ip);
+
+  if (!entry || now > entry.resetAt) {
+    requestCounts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+    return false;
+  }
+
+  entry.count++;
+  if (entry.count > RATE_LIMIT_MAX) return true;
+  return false;
+}
+
+// Cleanup stale entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of requestCounts) {
+    if (now > entry.resetAt) requestCounts.delete(ip);
+  }
+}, 300_000);
+
 /**
  * Send a JSON response with the given status code and data.
  */
