@@ -1712,6 +1712,7 @@ async function deliverScheduledMessages(
   const dueMessages = getDueMessages();
   const deliveredIds: string[] = [];
   const failedIds: string[] = [];
+  let anyDelivered = false;
 
   // Build set of JIDs that have recent chat-sourced deliveries (for dedup)
   const recentDeliveries = getRecentDeliveries(DEDUP_WINDOW_MS);
@@ -1752,6 +1753,7 @@ async function deliverScheduledMessages(
       ]);
       state.lastMessageTime = Date.now();
       state.messagesToday++;
+      anyDelivered = true;
       deliveredIds.push(msg.id);
       logDelivery(jid, msg.source, msg.message);
       log(`Delivered scheduled message ${msg.id} to ${jid} (${msg.message.length} chars, source: ${msg.source})`);
@@ -1800,6 +1802,7 @@ async function deliverScheduledMessages(
       ]);
       state.lastMessageTime = Date.now();
       state.messagesToday++;
+      anyDelivered = true;
       unlinkSync(pendingPath);
       log(`Sent legacy pending message (${pending.message.length} chars)`);
     }
@@ -1808,7 +1811,7 @@ async function deliverScheduledMessages(
     try { unlinkSync(pendingPath); } catch (cleanupErr) { log(`Failed to clean up legacy pending message file: ${cleanupErr}`); }
   }
 
-  if (dueMessages.length > 0) saveState(state);
+  if (anyDelivered) saveState(state);
 }
 
 // ── Message Sending with Limits ──
