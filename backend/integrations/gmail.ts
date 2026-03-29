@@ -1,10 +1,12 @@
 import { google, gmail_v1 } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
-import { FileStore, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
+import { FileStore, ensureDir } from "../utils/file-store.js";
+import { DedupCache } from "../utils/dedup-cache.js";
 import { recordObservation } from "../observer.js";
 import { isIntegrationEnabled } from "./integration-config.js";
 import { logDelivery } from "../scheduler.js";
 import { createLogger } from "../logger.js";
+import { withTimeout } from "../utils/async.js";
 
 const log = createLogger("gmail");
 
@@ -72,23 +74,9 @@ function saveState(state: GmailState): void {
   stateStore.save(state);
 }
 
-function loadSeenIds(): void {
-  const ids = seenIdsStore.load();
-  seenMessageIds.clear();
-  for (const id of ids) {
-    seenMessageIds.add(id);
-  }
-  if (ids.length > 0) {
-    log(`Loaded ${seenMessageIds.size} seen message IDs from disk`);
-  }
-}
+// ── Seen IDs (dedup) ──
 
-function saveSeenIds(): void {
-  // Keep only the most recent MAX_SEEN_IDS entries (tail of the set = newest)
-  const allIds = Array.from(seenMessageIds);
-  const toSave = allIds.length > MAX_SEEN_IDS ? allIds.slice(allIds.length - MAX_SEEN_IDS) : allIds;
-  atomicWriteJSON(SEEN_IDS_FILE, toSave, 0);
-}
+const dedupCache = new DedupCache(200, 50);
 
 // ── OAuth2 Client Factory ──
 
@@ -156,38 +144,6 @@ export async function handleAuthCallback(code: string, accountId: string): Promi
     log(`OAuth token exchange failed for ${accountId}: ${err}`);
     return false;
   }
-}
-
-// Track recently seen message IDs to avoid duplicates at timestamp boundaries
-const seenMessageIds = new Set<string>();
-const MAX_SEEN_IDS = 200;
-
-function trackMessageId(id: string): boolean {
-  if (seenMessageIds.has(id)) return false;
-  seenMessageIds.add(id);
-  // Prune if too large
-  if (seenMessageIds.size > MAX_SEEN_IDS) {
-    const iter = seenMessageIds.values();
-    for (let i = 0; i < 50; i++) {
-      const val = iter.next().value;
-      if (val) seenMessageIds.delete(val);
-    }
-  }
-  return true;
-}
-
-// ── Timeout Helper ──
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${ms / 1000}s`));
-    }, ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
 }
 
 // ── Gmail API Operations ──
@@ -297,7 +253,7 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
 
       // Skip messages we've already seen (by timestamp and message ID)
       if (internalDate < accountState.lastMessageTimestamp) return;
-      if (!trackMessageId(msgRef.id!)) return;
+      if (!dedupCache.track(msgRef.id!)) return;
 
       const headers = msg.payload?.headers;
       const from = getHeader(headers, "From");
@@ -425,7 +381,9 @@ export async function sendEmail(
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 export function startGmailPolling(): void {
-  loadSeenIds();
+  const ids = seenIdsStore.load();
+  dedupCache.load(ids);
+  if (ids.length > 0) log(`Loaded ${dedupCache.size} seen message IDs from disk`);
 
   const accounts = loadAccounts();
   const authenticated = accounts.filter(a => a.tokens?.refresh_token || a.tokens?.access_token);
@@ -471,7 +429,7 @@ async function pollAllAccounts(): Promise<void> {
   }
 
   saveState(state);
-  saveSeenIds();
+  dedupCache.saveTo(SEEN_IDS_FILE);
 }
 
 // ── Account Management ──

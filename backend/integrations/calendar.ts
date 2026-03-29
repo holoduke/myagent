@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import { FileStore } from "../utils/file-store.js";
+import { DedupCache } from "../utils/dedup-cache.js";
 import { recordObservation } from "../observer.js";
 import { loadAccounts, createOAuth2Client } from "./gmail.js";
 import { isIntegrationEnabled } from "./integration-config.js";
@@ -72,7 +73,7 @@ async function fetchUpcomingEvents(accountId: string): Promise<void> {
 
       // Dedup key: eventId + start time + updated timestamp (catches reschedules/edits)
       const dedupKey = `${event.id}:${start}:${event.updated || ""}`;
-      if (!trackEventKey(dedupKey)) continue;
+      if (!dedupCache.track(dedupKey)) continue;
       newCount++;
 
       const startDisplay = start ? new Date(start).toLocaleString() : "unknown";
@@ -98,7 +99,7 @@ async function fetchUpcomingEvents(accountId: string): Promise<void> {
       });
     }
 
-    if (newCount > 0) saveSeenEvents();
+    if (newCount > 0) dedupCache.saveTo(SEEN_EVENTS_FILE);
     log(`Fetched ${events.length} upcoming events for ${accountId} (${newCount} new)`);
   } catch (err: any) {
     if (err.code === 401) {
@@ -149,37 +150,8 @@ export async function listCalendars(accountId: string): Promise<Array<{ id: stri
 // ── Seen event dedup (prevents re-emitting same events every poll) ──
 
 const SEEN_EVENTS_FILE = `${CALENDAR_DIR}/seen-events.json`;
-const MAX_SEEN_EVENTS = 500;
-const seenEventKeys = new Set<string>();
-
-function loadSeenEvents(): void {
-  try {
-    const data = new FileStore<string[]>({ filePath: SEEN_EVENTS_FILE, defaultValue: [] }).load();
-    seenEventKeys.clear();
-    for (const key of data) seenEventKeys.add(key);
-    if (data.length > 0) log(`Loaded ${seenEventKeys.size} seen event keys from disk`);
-  } catch { /* first run — no file yet */ }
-}
-
-function saveSeenEvents(): void {
-  const allKeys = Array.from(seenEventKeys);
-  new FileStore<string[]>({ filePath: SEEN_EVENTS_FILE, defaultValue: [] }).save(allKeys);
-}
-
-function trackEventKey(key: string): boolean {
-  if (seenEventKeys.has(key)) return false;
-  seenEventKeys.add(key);
-  // Evict oldest entries if set grows too large
-  if (seenEventKeys.size > MAX_SEEN_EVENTS) {
-    const iter = seenEventKeys.values();
-    const excess = seenEventKeys.size - MAX_SEEN_EVENTS;
-    for (let i = 0; i < excess; i++) {
-      const val = iter.next().value;
-      if (val) seenEventKeys.delete(val);
-    }
-  }
-  return true;
-}
+const seenEventsStore = new FileStore<string[]>({ filePath: SEEN_EVENTS_FILE, defaultValue: [] });
+const dedupCache = new DedupCache(500, 50);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -199,7 +171,11 @@ export function startCalendarPolling(): void {
 
   log(`Starting calendar polling for ${authenticated.length} account(s) (every ${POLL_INTERVAL / 1000}s)`);
 
-  loadSeenEvents();
+  try {
+    const data = seenEventsStore.load();
+    dedupCache.load(data);
+    if (data.length > 0) log(`Loaded ${dedupCache.size} seen event keys from disk`);
+  } catch { /* first run — no file yet */ }
   setTimeout(() => pollAll(), 10000);
   pollTimer = setInterval(() => pollAll(), POLL_INTERVAL);
 }
