@@ -183,7 +183,7 @@ function parseTwilioBody(req: IncomingMessage): Promise<Record<string, string>> 
   });
 }
 
-function validateTwilioSignature(req: IncomingMessage, params: Record<string, string>): boolean {
+function _validateTwilioSignature(req: IncomingMessage, params: Record<string, string>): boolean {
   const cfg = loadConfig();
   if (!cfg) return false;
 

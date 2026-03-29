@@ -325,6 +325,6 @@ export function pruneBaselines(): void {
     try {
       unlinkSync(`${BASELINE_DIR}/${f}`);
       log(`Pruned old baseline: ${f}`);
-    } catch {}
+    } catch (err) { log(`Failed to prune baseline ${f}: ${err}`); }
   }
 }

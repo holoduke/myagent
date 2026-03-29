@@ -1,0 +1,336 @@
+import type { MemoryGraph } from "./graph.js";
+import type { MemoryNode, RetentionTier } from "./types.js";
+import {
+  DECAY_LAMBDA,
+  PRUNE_NODE_THRESHOLD,
+  PRUNE_EDGE_THRESHOLD,
+  ORPHAN_GRACE_HOURS,
+  MAX_NODES_HARD,
+  RETENTION_MULTIPLIER,
+  TIER_TAG_SIGNALS,
+  TIER_CONTENT_SIGNALS,
+} from "./types.js";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("decay");
+
+// ── Retention Tier Classification ──
+
+export const TIER_PRIORITY: RetentionTier[] = ["core", "important", "work", "ephemeral", "standard"];
+
+/**
+ * Classify a node into a retention tier based on its tags, content, and connections.
+ * Checks from highest priority (core) to lowest (ephemeral).
+ * Falls back to "standard" if no signals match.
+ */
+export function classifyRetentionTier(node: MemoryNode, graph: MemoryGraph): RetentionTier {
+  const tagsLower = new Set(node.tags.map(t => t.toLowerCase().replace(/^#/, "")));
+  const contentLower = node.content.toLowerCase();
+
+  // Check tag signals (highest tier wins)
+  for (const tier of TIER_PRIORITY) {
+    const tagSignals = TIER_TAG_SIGNALS[tier];
+    if (tagSignals.length === 0) continue;
+    for (const signal of tagSignals) {
+      if (tagsLower.has(signal.toLowerCase())) return tier;
+    }
+  }
+
+  // Check content signals
+  for (const tier of TIER_PRIORITY) {
+    const contentSignals = TIER_CONTENT_SIGNALS[tier];
+    if (contentSignals.length === 0) continue;
+    for (const signal of contentSignals) {
+      if (contentLower.includes(signal.toLowerCase())) return tier;
+    }
+  }
+
+  // Connection-based promotion: if a node has social edges to core/important nodes,
+  // promote it one tier up from standard — but only if the neighbor is strong enough
+  const edges = graph.edgesFor(node.id);
+  for (const edge of edges) {
+    if (edge.type !== "social") continue;
+    const otherId = edge.from === node.id ? edge.to : edge.from;
+    const other = graph.getNode(otherId);
+    if (!other) continue;
+    if (other.strength < 0.3) continue; // skip weak/dying neighbors
+    const otherTags = new Set(other.tags.map(t => t.toLowerCase().replace(/^#/, "")));
+    const coreSignals = TIER_TAG_SIGNALS.core;
+    for (const signal of coreSignals) {
+      if (otherTags.has(signal.toLowerCase())) return "important";
+    }
+  }
+
+  return "standard";
+}
+
+/**
+ * Apply exponential decay to all unpinned nodes.
+ * strength = strength * e^(-lambda * hours)
+ * Nodes with high accessCount decay slower (logarithmic resistance).
+ * Retention tier applies a multiplier to the decay rate.
+ */
+export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, RetentionTier>): { decayed: number; pruned: number; prunedIds: string[] } {
+  const now = Date.now();
+  let decayed = 0;
+  let pruned = 0;
+  const toPrune: string[] = [];
+  const tierCounts: Record<RetentionTier, number> = { core: 0, important: 0, work: 0, standard: 0, ephemeral: 0 };
+
+  for (const node of graph.allNodes()) {
+    if (node.pinned) continue;
+
+    // Guard against undefined/NaN lastAccessedAt — reset to now and skip this cycle
+    if (!Number.isFinite(node.lastAccessedAt)) {
+      log(`NaN guard: node ${node.id} has invalid lastAccessedAt (${node.lastAccessedAt}), resetting to now`);
+      node.lastAccessedAt = now;
+      continue;
+    }
+
+    const hoursSinceAccess = Math.max(0, (now - node.lastAccessedAt) / 3600000);
+    if (hoursSinceAccess === 0) continue;
+
+    // Classify retention tier (populate cache if provided)
+    const tier = tierCache?.get(node.id) ?? classifyRetentionTier(node, graph);
+    if (tierCache) tierCache.set(node.id, tier);
+    tierCounts[tier]++;
+    const tierMultiplier = RETENTION_MULTIPLIER[tier];
+
+    const lambda = DECAY_LAMBDA[node.type] ?? 0.004;
+    // Logarithmic resistance: more accesses = slower decay
+    const resistance = 1 / (1 + Math.log2(1 + node.accessCount));
+    // Importance-based resistance: high-importance nodes decay slower regardless of frequency
+    // importance=1.0 → 0.2x decay, importance=0.5 → 0.6x decay, importance=0 → 1.0x (no effect)
+    const importanceResistance = node.importance ? (1 - 0.8 * node.importance) : 1;
+    let effectiveLambda = lambda * resistance * tierMultiplier * importanceResistance;
+
+    // Concept nodes with children decay slower — they're structurally important
+    if (node.type === "concept") {
+      const childCount = graph.getChildren(node.id).length;
+      if (childCount > 0) {
+        effectiveLambda *= 0.5;
+      }
+    }
+
+    const newStrength = node.strength * Math.exp(-effectiveLambda * hoursSinceAccess);
+    // Guard against NaN/Infinity propagating into strength
+    if (!Number.isFinite(newStrength)) {
+      log(`NaN guard: node ${node.id} decay produced ${newStrength} (strength=${node.strength}, lambda=${effectiveLambda}, hours=${hoursSinceAccess}), skipping`);
+      continue;
+    }
+    if (newStrength !== node.strength) {
+      node.strength = Math.max(0, newStrength);
+      decayed++;
+    }
+
+    if (node.strength < PRUNE_NODE_THRESHOLD) {
+      toPrune.push(node.id);
+    }
+  }
+
+  // Archive weak nodes (move to long-term cold storage instead of deleting)
+  for (const id of toPrune) {
+    graph.archiveNode(id, "decay");
+    pruned++;
+  }
+
+  log(`Decay pass: ${decayed} decayed, ${pruned} archived | tiers: core=${tierCounts.core} important=${tierCounts.important} work=${tierCounts.work} standard=${tierCounts.standard} ephemeral=${tierCounts.ephemeral}`);
+  return { decayed, pruned, prunedIds: toPrune };
+}
+
+/**
+ * Decay edge weights — pulled toward weaker endpoint.
+ * Prune edges below threshold.
+ */
+export function applyEdgeDecay(graph: MemoryGraph): { decayed: number; pruned: number } {
+  let decayed = 0;
+  let pruned = 0;
+  const toRemove: { from: string; to: string }[] = [];
+
+  for (const edge of graph.allEdges()) {
+    const fromNode = graph.getNode(edge.from);
+    const toNode = graph.getNode(edge.to);
+    if (!fromNode || !toNode) {
+      toRemove.push({ from: edge.from, to: edge.to });
+      continue;
+    }
+
+    // Protect edges between pinned nodes from decay
+    const bothPinned = fromNode.pinned && toNode.pinned;
+    const onePinned = fromNode.pinned || toNode.pinned;
+
+    if (bothPinned) {
+      // Both endpoints pinned — skip decay entirely (core memory link)
+      continue;
+    }
+
+    // Edge weight drifts toward the weaker endpoint
+    const minStrength = Math.min(fromNode.strength, toNode.strength);
+    if (edge.weight > minStrength) {
+      // One pinned endpoint — decay at 50% rate to preserve important connections
+      const rate = onePinned ? 0.025 : 0.05;
+      edge.weight = edge.weight * (1 - rate) + minStrength * rate;
+      decayed++;
+    }
+
+    if (edge.weight < PRUNE_EDGE_THRESHOLD) {
+      toRemove.push({ from: edge.from, to: edge.to });
+    }
+  }
+
+  for (const { from, to } of toRemove) {
+    graph.removeEdge(from, to);
+    pruned++;
+  }
+
+  log(`Edge decay: ${decayed} decayed, ${pruned} pruned (below ${PRUNE_EDGE_THRESHOLD})`);
+  return { decayed, pruned };
+}
+
+/**
+ * Prune orphan nodes (no edges) that have existed beyond grace period.
+ */
+export function pruneOrphans(graph: MemoryGraph): number {
+  const now = Date.now();
+  const graceMs = ORPHAN_GRACE_HOURS * 3600000;
+  let pruned = 0;
+
+  for (const node of graph.allNodes()) {
+    if (node.pinned) continue;
+    const edges = graph.edgesFor(node.id);
+    if (edges.length > 0) continue;
+    // Skip concept nodes with children — they're not truly orphaned
+    if (node.type === "concept" && graph.getChildren(node.id).length > 0) continue;
+    if (now - node.createdAt < graceMs) continue;
+
+    graph.archiveNode(node.id, "orphan");
+    pruned++;
+  }
+
+  if (pruned > 0) {
+    log(`Orphan pruning: ${pruned} orphan nodes archived`);
+  }
+  return pruned;
+}
+
+// Numeric priority for sorting: lower = more protected
+export const TIER_SORT_PRIORITY: Record<RetentionTier, number> = {
+  core: 0,
+  important: 1,
+  work: 2,
+  standard: 3,
+  ephemeral: 4,
+};
+
+/**
+ * Emergency pruning when node count exceeds hard limit.
+ * Removes weakest non-pinned nodes, but respects retention tiers:
+ * ephemeral nodes are pruned first, then standard, then work, etc.
+ */
+export function emergencyPrune(graph: MemoryGraph, softLimit: number, tierCache?: Map<string, RetentionTier>): number {
+  const count = graph.nodeCount;
+  if (count <= MAX_NODES_HARD) return 0;
+
+  const nodes = graph.allNodes()
+    .filter(n => !n.pinned)
+    .map(n => ({ node: n, tier: tierCache?.get(n.id) ?? classifyRetentionTier(n, graph) }))
+    .sort((a, b) => {
+      // Sort by tier priority descending (ephemeral first), then by strength ascending
+      const tierDiff = TIER_SORT_PRIORITY[b.tier] - TIER_SORT_PRIORITY[a.tier];
+      if (tierDiff !== 0) return tierDiff;
+      return a.node.strength - b.node.strength;
+    });
+
+  let pruned = 0;
+  const target = softLimit;
+  for (const { node } of nodes) {
+    if (graph.nodeCount <= target) break;
+    graph.archiveNode(node.id, "emergency");
+    pruned++;
+  }
+
+  log(`Emergency prune: archived ${pruned} weakest nodes (was ${count}, now ${graph.nodeCount})`);
+  return pruned;
+}
+
+// ── Auto-Salience Inference ──
+
+/** Salience signal keywords — emotional language, milestones, decisions */
+export const SALIENCE_SIGNALS: { pattern: RegExp; weight: number }[] = [
+  // High salience — life events, medical, legal
+  { pattern: /\b(ziekenhuis|hospital|dokter|doctor|spoed|emergency|operatie|surgery)\b/i, weight: 0.9 },
+  { pattern: /\b(zwanger|pregnant|geboren|born|bevalling|delivery)\b/i, weight: 0.9 },
+  { pattern: /\b(overlijden|overleden|died|death|funeral|begrafenis)\b/i, weight: 0.95 },
+  { pattern: /\b(trouwen|wedding|huwelijk|married|verloving|engaged)\b/i, weight: 0.85 },
+  { pattern: /\b(ontslagen|fired|ontslag|layoff|promotie|promotion)\b/i, weight: 0.8 },
+
+  // Medium-high salience — decisions, agreements, milestones
+  { pattern: /\b(besloten|decided|afgesproken|agreed|definitief|final)\b/i, weight: 0.7 },
+  { pattern: /\b(eerste keer|first time|voor het eerst|milestone|doorbraak|breakthrough)\b/i, weight: 0.7 },
+  { pattern: /\b(deadline|contract|getekend|signed|akkoord|approved)\b/i, weight: 0.65 },
+  { pattern: /\b(verhuizen|moving|moved|nieuw huis|new house)\b/i, weight: 0.65 },
+
+  // Medium salience — emotional intensity markers
+  { pattern: /!!+/i, weight: 0.4 },
+  { pattern: /\b(heel erg|super|amazing|incredible|ongelofelijk|geweldig|fantastic)\b/i, weight: 0.35 },
+  { pattern: /\b(sorry|excuses|spijt|regret|boos|angry|verdrietig|sad|huilen|crying)\b/i, weight: 0.5 },
+  { pattern: /\b(trots|proud|gefeliciteerd|congratulations|feest|celebration)\b/i, weight: 0.45 },
+
+  // Lower salience — plans, appointments
+  { pattern: /\b(afspraak|appointment|vergadering|meeting|planning)\b/i, weight: 0.3 },
+  { pattern: /\b(morgen|tomorrow|volgende week|next week|vandaag|today)\b/i, weight: 0.2 },
+];
+
+/**
+ * Infer content salience from text — returns 0.0-1.0 score based on
+ * emotional language, milestone keywords, and decision signals.
+ *
+ * This addresses the frequency bias problem: important one-off events
+ * (medical decisions, milestones, key conversations) often don't repeat
+ * but should be preserved. Salience scoring catches what frequency misses.
+ */
+export function inferContentSalience(text: string): number {
+  let maxWeight = 0;
+  let hitCount = 0;
+
+  for (const { pattern, weight } of SALIENCE_SIGNALS) {
+    if (pattern.test(text)) {
+      maxWeight = Math.max(maxWeight, weight);
+      hitCount++;
+    }
+  }
+
+  if (hitCount === 0) return 0;
+
+  // Score is dominated by the strongest signal, with a small bonus for multiple signals
+  const multiSignalBonus = Math.min(0.15, (hitCount - 1) * 0.05);
+  return Math.min(1, maxWeight + multiSignalBonus);
+}
+
+/**
+ * Auto-apply salience to nodes during decay pass.
+ * Scans nodes that have no explicit importance set and infers it from content.
+ * Only sets importance for nodes scoring above threshold — avoids noise.
+ */
+export function autoInferSalience(graph: MemoryGraph, threshold = 0.25): number {
+  let updated = 0;
+
+  for (const node of graph.allNodes()) {
+    // Skip nodes that already have explicit importance
+    if (node.importance !== null && node.importance !== undefined && node.importance > 0) continue;
+    // Skip pinned nodes — they don't need decay protection
+    if (node.pinned) continue;
+
+    const salience = inferContentSalience(node.content);
+    if (salience >= threshold) {
+      node.importance = salience;
+      updated++;
+    }
+  }
+
+  if (updated > 0) {
+    log(`Auto-salience: set importance on ${updated} nodes`);
+  }
+
+  return updated;
+}

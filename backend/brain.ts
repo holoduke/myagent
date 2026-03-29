@@ -9,12 +9,10 @@ import type { Observation } from "./observer.js";
 import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./brain-prompt.js";
 import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
-import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, ImprovementProposal, RequestFlag } from "./memory/types.js";
+import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, ImprovementProposal } from "./memory/types.js";
 import { createFlaggedRequest } from "./actionable-tracker.js";
 import { getDueMessages, getScheduledMessages, markDelivered, markFailed, logDelivery, getRecentDeliveries, DEDUP_WINDOW_MS } from "./scheduler.js";
 import { isWhatsAppConnected } from "./integrations/whatsapp.js";
-import { isWhitelisted } from "./contact-whitelist.js";
-import { MAX_NODES_SOFT } from "./memory/types.js";
 import { runConsolidation } from "./memory/decay.js";
 import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory, populateTemporalContext, updateConversationThreads, scanFollowUpsForResolution } from "./memory/working-memory.js";
 import {
@@ -26,14 +24,12 @@ import { scoreObservations, getPendingUrgency, clearPendingUrgency, setUrgencyIn
 import { GoalTracker } from "./goals.js";
 import { scanAndProcessCommitments } from "./accountability.js";
 import { getDueRecurringTasks, markExecuted } from "./recurring.js";
-import type { RecurringTask } from "./recurring.js";
 import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
 import { withTimeout } from "./utils/async.js";
 import { ensureSSHKey } from "./integrations/ssh.js";
 import { verify, rotateAuditLog } from "./action-verifier.js";
-import type { ActionContext } from "./action-verifier.js";
 import { runDriftAudit, getLatestDriftReport, pruneBaselines } from "./drift-audit.js";
-import { BrainError, TickError, ProviderError, SchedulerError, wrapError } from "./brain-errors.js";
+import { BrainError, wrapError } from "./brain-errors.js";
 import { getBrainConfig, getActivePreset, getOwnerLocalTime, getOwnerLocalDate } from "./brain-config.js";
 import type { BrainConfig } from "./brain-config.js";
 import {
@@ -970,7 +966,7 @@ async function handleRecurringTasks(
   queue: MessageQueue,
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
-  currentObs: Observation[],
+  _currentObs: Observation[],
 ): Promise<void> {
   const dueTasks = getDueRecurringTasks(ownerJid);
   if (dueTasks.length === 0) return;
@@ -1516,7 +1512,7 @@ async function reflectTick(
       // Notify owner if surprise level is medium or high
       if ((driftReport.surpriseLevel === "medium" || driftReport.surpriseLevel === "high") && ownerJid) {
         const alertMsg = `🔍 Weekly drift audit (surprise: ${driftReport.surpriseLevel})\n\n${driftReport.directionSummary}\n\n${driftReport.driftCharacterization}\n\nRecommendation: ${driftReport.recommendation}`;
-        try { await sendMessage(ownerJid, alertMsg); } catch {}
+        try { await sendMessage(ownerJid, alertMsg); } catch (err) { log(`Failed to send drift alert: ${err}`); }
       }
       pruneBaselines();
     } else {

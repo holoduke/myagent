@@ -15,7 +15,6 @@
 import { randomUUID } from "crypto";
 import { appendFileSync, readFileSync, existsSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
-import { isWhitelisted } from "./contact-whitelist.js";
 import { BaseProvider } from "./providers/base-provider.js";
 import { createLogger } from "./logger.js";
 import type { Observation } from "./observer.js";

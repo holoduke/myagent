@@ -27,7 +27,7 @@ function loadMemoryContext(): string {
         parts.push(`Working memory:\n${wmParts.join("\n")}`);
       }
     }
-  } catch {}
+  } catch { /* expected: working memory file may not exist yet */ }
 
   // Load key memory nodes (pinned + strongest)
   try {
@@ -53,7 +53,7 @@ function loadMemoryContext(): string {
         }
       }
     }
-  } catch {}
+  } catch { /* expected: graph files may not exist yet */ }
 
   if (parts.length === 0) return "";
   return `\n═══ YOUR CURRENT MEMORY STATE ═══\n\n${parts.join("\n\n")}`;

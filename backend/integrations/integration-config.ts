@@ -1,7 +1,7 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { createLogger } from "../logger.js";
 
-const log = createLogger("integration-config");
+const _log = createLogger("integration-config");
 const CONFIG_FILE = "/data/integrations-config.json";
 
 const INTEGRATION_KEYS = [

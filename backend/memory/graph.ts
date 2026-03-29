@@ -1,4 +1,4 @@
-import { existsSync, appendFileSync, statSync, renameSync } from "fs";
+import { appendFileSync, statSync, renameSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { randomBytes } from "crypto";
 import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode, ArchivedEdge, GhostNode, WALEntry, WALOperationType } from "./types.js";

@@ -2,7 +2,7 @@ import "dotenv/config";
 import { readFileSync, existsSync } from "fs";
 import { createServer } from "http";
 import { createLogger } from "./logger.js";
-import { startWhatsApp, sendMessage, sendImage, sendReaction, sendTypingIndicator, stopTypingIndicator, getLatestQr } from "./integrations/whatsapp.js";
+import { startWhatsApp, sendMessage, sendReaction, sendTypingIndicator, stopTypingIndicator, getLatestQr } from "./integrations/whatsapp.js";
 import { handleCaptchaReply } from "./captcha-verify.js";
 import { resetSession } from "./claude.js";
 import { getDefaultProvider, bootstrapDefaultProvider } from "./providers/index.js";
@@ -117,7 +117,7 @@ async function main() {
         const ef = `${BRAIN_DIR}/graph/edges.json`;
         if (existsSync(nf)) memoryNodeCount = Object.keys(JSON.parse(readFileSync(nf, "utf-8"))).length;
         if (existsSync(ef)) memoryEdgeCount = (JSON.parse(readFileSync(ef, "utf-8")) as unknown[]).length;
-      } catch {}
+      } catch { /* expected: graph files may not exist yet */ }
 
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
@@ -210,7 +210,7 @@ async function main() {
         // Check if this message is a captcha verification reply
         if (handleCaptchaReply(text)) {
           log("Message consumed as captcha answer");
-          try { await sendReaction(jid, message.key, "\u2705"); } catch {}
+          try { await sendReaction(jid, message.key, "\u2705"); } catch { /* intentionally ignored */ }
           return;
         }
 

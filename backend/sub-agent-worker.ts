@@ -40,7 +40,7 @@ function parseResult(raw: string, agentId: string): SubAgentResult {
           completedAt: Date.now(),
         };
       }
-    } catch {}
+    } catch { /* expected: response may not be valid JSON */ }
   }
 
   // Fallback: treat the whole response as a successful run with raw text details
@@ -132,7 +132,7 @@ Output ONLY a JSON object with your results (no markdown code fences):
   }
 
   // Clean up task file
-  try { unlinkSync(taskFile); } catch {}
+  try { unlinkSync(taskFile); } catch { /* expected: file may not exist */ }
   log(`Worker for ${agentId} complete`);
 }
 
