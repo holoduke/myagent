@@ -184,6 +184,7 @@ export interface GoalData {
   checkpoints: { label: string; done: boolean }[];
   createdBy: "brain" | "owner";
   lastCheckedAt: number;
+  reason?: string;
 }
 
 export type GoalOperation =

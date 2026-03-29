@@ -129,9 +129,9 @@ export class GoalTracker {
 
             data.status = "abandoned";
             data.lastCheckedAt = Date.now();
-            const reason = op.reason ? ` Reason: ${op.reason}` : "";
-            this.graph.updateNode(op.nodeId, { content: serializeGoalData(data) + reason });
-            log(`Abandoned goal: ${data.title} (${op.nodeId})${reason}`);
+            if (op.reason) data.reason = op.reason;
+            this.graph.updateNode(op.nodeId, { content: serializeGoalData(data) });
+            log(`Abandoned goal: ${data.title} (${op.nodeId})${op.reason ? ` Reason: ${op.reason}` : ""}`);
             break;
           }
         }
