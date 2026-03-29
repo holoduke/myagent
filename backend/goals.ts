@@ -40,7 +40,19 @@ export class GoalTracker {
       }
     }
 
-    return active.sort((a, b) => a.data.priority - b.data.priority);
+    return active.sort((a, b) => {
+      // Primary: priority (lower number = higher priority)
+      const priDiff = a.data.priority - b.data.priority;
+      if (priDiff !== 0) return priDiff;
+
+      // Secondary: deadline (earlier first, no-deadline last)
+      const aD = a.data.deadline ?? Infinity;
+      const bD = b.data.deadline ?? Infinity;
+      if (aD !== bD) return aD - bD;
+
+      // Tertiary: nodeId for full determinism
+      return a.nodeId.localeCompare(b.nodeId);
+    });
   }
 
   checkDeadlines(): { nodeId: string; data: GoalData; status: "approaching" | "overdue" }[] {
