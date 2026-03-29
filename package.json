@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "start": "tsx backend/index.ts",
-    "dev": "tsx watch backend/index.ts"
+    "dev": "tsx watch backend/index.ts",
+    "lint": "eslint backend/",
+    "lint:fix": "eslint backend/ --fix",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.16",
@@ -18,8 +21,11 @@
     "twilio": "^5.4.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.13.4",
+    "eslint": "^10.1.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.57.2"
   }
 }

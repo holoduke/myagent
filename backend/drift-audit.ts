@@ -7,7 +7,7 @@
  * /data/brain/drift-reports/.
  */
 
-import { readFileSync, existsSync, readdirSync } from "fs";
+import { readFileSync, existsSync, readdirSync, unlinkSync } from "fs";
 import { execSync } from "child_process";
 import { createLogger } from "./logger.js";
 import { askClaude } from "./claude.js";
@@ -323,7 +323,6 @@ export function pruneBaselines(): void {
 
   for (const f of files.slice(4)) {
     try {
-      const { unlinkSync } = require("fs");
       unlinkSync(`${BASELINE_DIR}/${f}`);
       log(`Pruned old baseline: ${f}`);
     } catch {}

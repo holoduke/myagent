@@ -401,7 +401,7 @@ export class MemoryGraph {
     return this.edgesFrom(id)
       .filter(e => e.type === "hierarchical")
       .map(e => this.nodes.get(e.to))
-      .filter((n): n is MemoryNode => n != null);
+      .filter((n): n is MemoryNode => n !== null && n !== undefined);
   }
 
   /** Get direct parents of a node (via hierarchical edges where this node is child) */
@@ -409,7 +409,7 @@ export class MemoryGraph {
     return this.edgesTo(id)
       .filter(e => e.type === "hierarchical")
       .map(e => this.nodes.get(e.from))
-      .filter((n): n is MemoryNode => n != null);
+      .filter((n): n is MemoryNode => n !== null && n !== undefined);
   }
 
   /** Get all ancestors up to maxDepth (BFS up through parents) */
@@ -743,7 +743,7 @@ export class MemoryGraph {
     ]);
     const newKeywords = new Set(
       newContentLower
-        .split(/[\s\-—,.:;!?()\[\]"'`/\\]+/)
+        .split(/[\s\-—,.:;!?()[\]"'`/\\]+/)
         .filter(w => w.length >= 3 && !stopWords.has(w) && !/^\d+$/.test(w))
     );
 
@@ -901,7 +901,7 @@ export class MemoryGraph {
               createdAt: now,
               lastAccessedAt: now,
               accessCount: 1,
-              ...(op.importance != null ? { importance: Math.max(0, Math.min(1, op.importance)) } : {}),
+              ...(op.importance !== null && op.importance !== undefined ? { importance: Math.max(0, Math.min(1, op.importance)) } : {}),
             };
             this.addNode(newNode);
             // Auto-correlate: find related nodes and create edges
@@ -946,11 +946,11 @@ export class MemoryGraph {
             if (!this.nodes.has(op.id)) { skipped++; break; }
             this.updateNode(op.id, { content: op.content, tags: op.tags, pinned: op.pinned });
             // Handle importance update separately (not part of updateNode's generic interface)
-            if (op.importance != null) {
+            if (op.importance !== null && op.importance !== undefined) {
               const node = this.nodes.get(op.id);
               if (node) node.importance = Math.max(0, Math.min(1, op.importance));
             }
-            this.walLog("update_node", { nodeId: op.id, meta: { hasContent: op.content != null, hasTags: op.tags != null } });
+            this.walLog("update_node", { nodeId: op.id, meta: { hasContent: op.content !== null && op.content !== undefined, hasTags: op.tags !== null && op.tags !== undefined } });
             applied++;
             break;
           }

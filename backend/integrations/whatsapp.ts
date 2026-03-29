@@ -8,7 +8,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
-// @ts-ignore - no types available
+// @ts-expect-error - no types available
 import qrcode from "qrcode-terminal";
 import { readFileSync, existsSync } from "fs";
 import { safeReadJSON, atomicWriteJSON } from "../utils/file-store.js";

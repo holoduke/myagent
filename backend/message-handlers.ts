@@ -309,11 +309,11 @@ class HandlerLLM extends BaseProvider {
   readonly supportsStreaming = false;
   readonly supportsSessions = false;
 
-  /* eslint-disable @typescript-eslint/no-unused-vars */
+   
   async ask(_msg: string) { return { messages: [] as string[] }; }
   async askStreaming(_msg: string, _cb: (t: string) => void) { return { messages: [] as string[] }; }
   resetSession() { /* no-op */ }
-  /* eslint-enable @typescript-eslint/no-unused-vars */
+   
 
   async run(prompt: string): Promise<string | null> {
     return new Promise((resolve) => {
@@ -557,7 +557,7 @@ export function getHandlerStats(): HandlerStats[] {
   const todayStart = new Date().setHours(0, 0, 0, 0);
 
   // Read today's log entries
-  let todayEntries: HandlerLogEntry[] = [];
+  const todayEntries: HandlerLogEntry[] = [];
   try {
     if (existsSync(LOG_FILE)) {
       const lines = readFileSync(LOG_FILE, "utf-8").split("\n").filter(l => l.trim());

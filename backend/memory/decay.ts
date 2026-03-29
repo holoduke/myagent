@@ -962,7 +962,7 @@ export function autoInferSalience(graph: MemoryGraph, threshold = 0.25): number 
 
   for (const node of graph.allNodes()) {
     // Skip nodes that already have explicit importance
-    if (node.importance != null && node.importance > 0) continue;
+    if (node.importance !== null && node.importance !== undefined && node.importance > 0) continue;
     // Skip pinned nodes — they don't need decay protection
     if (node.pinned) continue;
 
@@ -1057,7 +1057,7 @@ export function detectMemoryGaps(graph: MemoryGraph, wm?: WorkingMemory): Memory
       const linkedEdges = graph.edgesFor(goalRef.nodeId);
       const linkedNodes = linkedEdges
         .map(e => graph.getNode(e.from === goalRef.nodeId ? e.to : e.from))
-        .filter((n): n is MemoryNode => n != null && !n.pinned);
+        .filter((n): n is MemoryNode => n !== null && n !== undefined && !n.pinned);
       const weakLinked = linkedNodes.filter(n => n.strength < 0.3);
       if (weakLinked.length > 0 && weakLinked.length >= linkedNodes.length * 0.5) {
         gaps.push({
@@ -1141,7 +1141,7 @@ interface FidelityLogEntry {
  */
 function tokenJaccard(a: string, b: string): number {
   const tokenize = (s: string) => new Set(
-    s.toLowerCase().split(/[\s\-—,.:;!?()\[\]"'`/\\]+/).filter(w => w.length >= 2)
+    s.toLowerCase().split(/[\s\-—,.:;!?()[\]"'`/\\]+/).filter(w => w.length >= 2)
   );
   const setA = tokenize(a);
   const setB = tokenize(b);

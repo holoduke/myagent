@@ -226,7 +226,7 @@ export function saveBrainConfig(partial: Partial<BrainConfig>): BrainConfig {
     ensureDir(BRAIN_DIR);
     atomicWriteJSON(CONFIG_FILE, updated);
   } catch (err) {
-    throw new Error(`Failed to save brain config: ${err}`);
+    throw new Error(`Failed to save brain config: ${err}`, { cause: err });
   }
 
   // Invalidate cache
