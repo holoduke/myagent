@@ -7,13 +7,9 @@ import {
   restartSlackPolling,
 } from "./slack.js";
 import { createLogger } from "../logger.js";
+import { respondJson } from "../utils/api-helpers.js";
 
 const log = createLogger("slack-routes");
-
-function sendJson(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
-}
 
 /**
  * Handle Slack-related HTTP routes. Returns true if the route was handled.
@@ -25,7 +21,7 @@ export function handleSlackRoutes(req: IncomingMessage, res: ServerResponse): bo
   // GET /slack/workspaces — list workspaces and their status
   if (pathname === "/slack/workspaces" && req.method === "GET") {
     const status = getWorkspaceStatus();
-    sendJson(res, 200, { workspaces: status });
+    respondJson(res, 200, { workspaces: status });
     return true;
   }
 
@@ -37,7 +33,7 @@ export function handleSlackRoutes(req: IncomingMessage, res: ServerResponse): bo
     const workspace = workspaces.find(w => w.id === workspaceId);
 
     if (!workspace) {
-      sendJson(res, 404, { error: `Workspace "${workspaceId}" not found. Add it first via ARIA.` });
+      respondJson(res, 404, { error: `Workspace "${workspaceId}" not found. Add it first via ARIA.` });
       return true;
     }
 

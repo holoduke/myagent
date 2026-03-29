@@ -153,7 +153,23 @@ async function withPage<T>(fn: (page: Page) => Promise<T>, timeout = 30000): Pro
 
 // ── Task execution ──
 
-async function executeTask(task: BrowserTask): Promise<BrowserTaskResult> {
+async function navigateIfNeeded(
+  page: Page,
+  task: BrowserTask,
+  navigateRequired: boolean,
+): Promise<void> {
+  if (navigateRequired) {
+    await page.goto(task.url!, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
+  } else if (task.url) {
+    await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
+  }
+}
+
+async function runTaskOnPage(
+  page: Page,
+  task: BrowserTask,
+  navigateRequired: boolean,
+): Promise<BrowserTaskResult> {
   const start = Date.now();
   const resultId = randomUUID();
 
@@ -161,107 +177,86 @@ async function executeTask(task: BrowserTask): Promise<BrowserTaskResult> {
     switch (task.type) {
       case "navigate": {
         if (!task.url) throw new Error("url is required for navigate");
-        const result = await withPage(async (page) => {
-          await page.goto(task.url!, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-          if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
-          const title = await page.title();
-          const content = await page.evaluate(() => document.body?.innerText?.slice(0, 5000) || "");
-          return { title, content, url: page.url() };
-        }, task.timeout);
-
+        await navigateIfNeeded(page, task, navigateRequired);
+        if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
+        const title = await page.title();
+        const content = await page.evaluate(() => document.body?.innerText?.slice(0, 5000) || "");
         return {
           id: resultId, taskId: task.id, success: true, type: task.type,
-          url: result.url, title: result.title, content: result.content,
+          url: page.url(), title, content,
           durationMs: Date.now() - start, completedAt: Date.now(),
         };
       }
 
       case "screenshot": {
-        if (!task.url) throw new Error("url is required for screenshot");
+        if (navigateRequired && !task.url) throw new Error("url is required for screenshot");
         const screenshotPath = `${BROWSER_DIR}/screenshots/${resultId}.png`;
-        const result = await withPage(async (page) => {
-          await page.goto(task.url!, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-          if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
-          await page.screenshot({ path: screenshotPath, fullPage: false });
-          return { title: await page.title(), url: page.url() };
-        }, task.timeout);
-
+        await navigateIfNeeded(page, task, navigateRequired);
+        if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
+        await page.screenshot({ path: screenshotPath, fullPage: false });
         return {
           id: resultId, taskId: task.id, success: true, type: task.type,
-          url: result.url, title: result.title, screenshotPath,
+          url: page.url(), title: await page.title(), screenshotPath,
           durationMs: Date.now() - start, completedAt: Date.now(),
         };
       }
 
       case "extract": {
-        if (!task.url) throw new Error("url is required for extract");
+        if (navigateRequired && !task.url) throw new Error("url is required for extract");
         if (!task.selector) throw new Error("selector is required for extract");
-        const result = await withPage(async (page) => {
-          await page.goto(task.url!, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-          const elements = await page.$$(task.selector!);
-          const texts: string[] = [];
-          for (const el of elements) {
-            const text = await el.innerText().catch(() => "");
-            if (text.trim()) texts.push(text.trim());
-          }
-          return { title: await page.title(), url: page.url(), content: texts.join("\n---\n").slice(0, 10000) };
-        }, task.timeout);
-
+        await navigateIfNeeded(page, task, navigateRequired);
+        const elements = await page.$$(task.selector);
+        const texts: string[] = [];
+        for (const el of elements) {
+          const text = await el.innerText().catch(() => "");
+          if (text.trim()) texts.push(text.trim());
+        }
         return {
           id: resultId, taskId: task.id, success: true, type: task.type,
-          url: result.url, title: result.title, content: result.content,
+          url: page.url(), title: await page.title(), content: texts.join("\n---\n").slice(0, 10000),
           durationMs: Date.now() - start, completedAt: Date.now(),
         };
       }
 
       case "fill": {
-        if (!task.url) throw new Error("url is required for fill");
+        if (navigateRequired && !task.url) throw new Error("url is required for fill");
         if (!task.selector) throw new Error("selector is required for fill");
         if (task.value === undefined) throw new Error("value is required for fill");
-        const result = await withPage(async (page) => {
-          await page.goto(task.url!, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-          await page.fill(task.selector!, task.value!);
-          return { title: await page.title(), url: page.url() };
-        }, task.timeout);
-
+        await navigateIfNeeded(page, task, navigateRequired);
+        await page.fill(task.selector, task.value);
         return {
           id: resultId, taskId: task.id, success: true, type: task.type,
-          url: result.url, title: result.title, content: `Filled "${task.selector}" with value`,
+          url: page.url(), title: await page.title(), content: `Filled "${task.selector}" with value`,
           durationMs: Date.now() - start, completedAt: Date.now(),
         };
       }
 
       case "click": {
-        if (!task.url) throw new Error("url is required for click");
+        if (navigateRequired && !task.url) throw new Error("url is required for click");
         if (!task.selector) throw new Error("selector is required for click");
-        const result = await withPage(async (page) => {
-          await page.goto(task.url!, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-          await page.click(task.selector!);
-          if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
-          const content = await page.evaluate(() => document.body?.innerText?.slice(0, 5000) || "");
-          return { title: await page.title(), url: page.url(), content };
-        }, task.timeout);
-
+        await navigateIfNeeded(page, task, navigateRequired);
+        await page.click(task.selector);
+        if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
+        if (!navigateRequired) {
+          await page.waitForLoadState("domcontentloaded").catch(() => {});
+        }
+        const content = await page.evaluate(() => document.body?.innerText?.slice(0, 5000) || "");
         return {
           id: resultId, taskId: task.id, success: true, type: task.type,
-          url: result.url, title: result.title, content: result.content,
+          url: page.url(), title: await page.title(), content,
           durationMs: Date.now() - start, completedAt: Date.now(),
         };
       }
 
       case "script": {
-        if (!task.url) throw new Error("url is required for script");
+        if (navigateRequired && !task.url) throw new Error("url is required for script");
         if (!task.script) throw new Error("script is required for script");
-        const result = await withPage(async (page) => {
-          await page.goto(task.url!, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-          const evalResult = await page.evaluate(task.script!);
-          const content = typeof evalResult === "string" ? evalResult : JSON.stringify(evalResult, null, 2);
-          return { title: await page.title(), url: page.url(), content: (content || "").slice(0, 10000) };
-        }, task.timeout);
-
+        await navigateIfNeeded(page, task, navigateRequired);
+        const evalResult = await page.evaluate(task.script);
+        const scriptContent = typeof evalResult === "string" ? evalResult : JSON.stringify(evalResult, null, 2);
         return {
           id: resultId, taskId: task.id, success: true, type: task.type,
-          url: result.url, title: result.title, content: result.content,
+          url: page.url(), title: await page.title(), content: (scriptContent || "").slice(0, 10000),
           durationMs: Date.now() - start, completedAt: Date.now(),
         };
       }
@@ -272,12 +267,24 @@ async function executeTask(task: BrowserTask): Promise<BrowserTaskResult> {
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     log(`Task ${task.id} failed: ${errorMsg}`);
+    const errorUrl = navigateRequired ? task.url : (task.url || page.url());
     return {
       id: resultId, taskId: task.id, success: false, type: task.type,
-      url: task.url, error: errorMsg,
+      url: errorUrl, error: errorMsg,
       durationMs: Date.now() - start, completedAt: Date.now(),
     };
   }
+}
+
+async function executeTask(task: BrowserTask): Promise<BrowserTaskResult> {
+  return withPage(
+    (page) => runTaskOnPage(page, task, true),
+    task.timeout,
+  );
+}
+
+async function executeTaskOnPage(page: Page, task: BrowserTask): Promise<BrowserTaskResult> {
+  return runTaskOnPage(page, task, false);
 }
 
 // ── Multi-step workflow ──
@@ -317,115 +324,6 @@ export async function runWorkflow(tasks: BrowserTask[]): Promise<BrowserTaskResu
 }
 
 // ── Session-based workflow (same page across all tasks, with global timeout) ──
-
-async function executeTaskOnPage(page: Page, task: BrowserTask): Promise<BrowserTaskResult> {
-  const start = Date.now();
-  const resultId = randomUUID();
-
-  try {
-    switch (task.type) {
-      case "navigate": {
-        if (!task.url) throw new Error("url is required for navigate");
-        await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-        if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
-        const title = await page.title();
-        const content = await page.evaluate(() => document.body?.innerText?.slice(0, 5000) || "");
-        return {
-          id: resultId, taskId: task.id, success: true, type: task.type,
-          url: page.url(), title, content,
-          durationMs: Date.now() - start, completedAt: Date.now(),
-        };
-      }
-
-      case "screenshot": {
-        const screenshotPath = `${BROWSER_DIR}/screenshots/${resultId}.png`;
-        if (task.url) {
-          await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-        }
-        if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
-        await page.screenshot({ path: screenshotPath, fullPage: false });
-        return {
-          id: resultId, taskId: task.id, success: true, type: task.type,
-          url: page.url(), title: await page.title(), screenshotPath,
-          durationMs: Date.now() - start, completedAt: Date.now(),
-        };
-      }
-
-      case "extract": {
-        if (!task.selector) throw new Error("selector is required for extract");
-        if (task.url) {
-          await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-        }
-        const elements = await page.$$(task.selector);
-        const texts: string[] = [];
-        for (const el of elements) {
-          const text = await el.innerText().catch(() => "");
-          if (text.trim()) texts.push(text.trim());
-        }
-        return {
-          id: resultId, taskId: task.id, success: true, type: task.type,
-          url: page.url(), title: await page.title(), content: texts.join("\n---\n").slice(0, 10000),
-          durationMs: Date.now() - start, completedAt: Date.now(),
-        };
-      }
-
-      case "fill": {
-        if (!task.selector) throw new Error("selector is required for fill");
-        if (task.value === undefined) throw new Error("value is required for fill");
-        if (task.url) {
-          await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-        }
-        await page.fill(task.selector, task.value);
-        return {
-          id: resultId, taskId: task.id, success: true, type: task.type,
-          url: page.url(), title: await page.title(), content: `Filled "${task.selector}" with value`,
-          durationMs: Date.now() - start, completedAt: Date.now(),
-        };
-      }
-
-      case "click": {
-        if (!task.selector) throw new Error("selector is required for click");
-        if (task.url) {
-          await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-        }
-        await page.click(task.selector);
-        if (task.waitFor) await page.waitForSelector(task.waitFor, { timeout: 10000 });
-        await page.waitForLoadState("domcontentloaded").catch(() => {});
-        const content = await page.evaluate(() => document.body?.innerText?.slice(0, 5000) || "");
-        return {
-          id: resultId, taskId: task.id, success: true, type: task.type,
-          url: page.url(), title: await page.title(), content,
-          durationMs: Date.now() - start, completedAt: Date.now(),
-        };
-      }
-
-      case "script": {
-        if (!task.script) throw new Error("script is required for script");
-        if (task.url) {
-          await page.goto(task.url, { waitUntil: "domcontentloaded", timeout: task.timeout ?? 30000 });
-        }
-        const evalResult = await page.evaluate(task.script);
-        const content = typeof evalResult === "string" ? evalResult : JSON.stringify(evalResult, null, 2);
-        return {
-          id: resultId, taskId: task.id, success: true, type: task.type,
-          url: page.url(), title: await page.title(), content: (content || "").slice(0, 10000),
-          durationMs: Date.now() - start, completedAt: Date.now(),
-        };
-      }
-
-      default:
-        throw new Error(`Unknown task type: ${task.type}`);
-    }
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    log(`Task ${task.id} failed: ${errorMsg}`);
-    return {
-      id: resultId, taskId: task.id, success: false, type: task.type,
-      url: task.url || page.url(), error: errorMsg,
-      durationMs: Date.now() - start, completedAt: Date.now(),
-    };
-  }
-}
 
 export async function runSession(
   tasks: BrowserTask[],

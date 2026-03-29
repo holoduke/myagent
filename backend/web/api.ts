@@ -956,7 +956,7 @@ function getAriaStatus(): Record<string, unknown> {
     const ef = `${BRAIN_DIR}/graph/edges.json`;
     if (existsSync(nf)) {
       const nodesRaw = JSON.parse(readFileSync(nf, "utf-8")) as Record<string, MemoryNode>;
-      const nodeList = Object.values(nodesRaw).filter((n): n is MemoryNode => n != null && typeof n === "object" && typeof n.id === "string");
+      const nodeList = Object.values(nodesRaw).filter((n): n is MemoryNode => n !== null && n !== undefined && typeof n === "object" && typeof n.id === "string");
       const edges: MemoryEdge[] = existsSync(ef) ? JSON.parse(readFileSync(ef, "utf-8")) : [];
 
       const byType: Record<string, number> = {};
@@ -985,7 +985,7 @@ function getAriaStatus(): Record<string, unknown> {
           const children = edges
             .filter(e => e.from === concept.id && e.type === "hierarchical")
             .map(e => nodeList.find(n => n.id === e.to))
-            .filter((n): n is MemoryNode => n != null)
+            .filter((n): n is MemoryNode => n !== null && n !== undefined)
             .map(n => ({ id: n.id, type: n.type, content: n.content || "", tags: n.tags || [], strength: n.strength ?? 0 }));
           return {
             id: concept.id,

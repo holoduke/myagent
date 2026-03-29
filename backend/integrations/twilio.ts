@@ -381,7 +381,7 @@ export async function handleTwiml(req: IncomingMessage, res: ServerResponse): Pr
     const callSid = params.CallSid || "";
 
     // Look up the call
-    let call = activeCalls.get(callSid) || pendingCalls.get(callId);
+    const call = activeCalls.get(callSid) || pendingCalls.get(callId);
     if (call && !call.callSid && callSid) {
       call.callSid = callSid;
       activeCalls.set(callSid, call);

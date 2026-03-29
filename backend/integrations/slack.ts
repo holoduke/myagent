@@ -1,8 +1,10 @@
-import { FileStore, ensureDir, atomicWriteJSON } from "../utils/file-store.js";
+import { FileStore, ensureDir } from "../utils/file-store.js";
+import { DedupCache } from "../utils/dedup-cache.js";
 import { recordObservation } from "../observer.js";
 import { isIntegrationEnabled } from "./integration-config.js";
 import { logDelivery } from "../scheduler.js";
 import { createLogger } from "../logger.js";
+import { withTimeout } from "../utils/async.js";
 
 const log = createLogger("slack");
 
@@ -91,48 +93,7 @@ function saveState(state: SlackState): void {
 
 // ── Seen IDs (dedup) ──
 
-const seenMessageIds = new Set<string>();
-const MAX_SEEN_IDS = 200;
-
-function loadSeenIds(): void {
-  const ids = seenIdsStore.load();
-  seenMessageIds.clear();
-  for (const id of ids) seenMessageIds.add(id);
-  if (ids.length > 0) log(`Loaded ${seenMessageIds.size} seen message IDs from disk`);
-}
-
-function saveSeenIds(): void {
-  const allIds = Array.from(seenMessageIds);
-  const toSave = allIds.length > MAX_SEEN_IDS ? allIds.slice(allIds.length - MAX_SEEN_IDS) : allIds;
-  atomicWriteJSON(SEEN_IDS_FILE, toSave, 0);
-}
-
-function trackMessageId(id: string): boolean {
-  if (seenMessageIds.has(id)) return false;
-  seenMessageIds.add(id);
-  if (seenMessageIds.size > MAX_SEEN_IDS) {
-    const iter = seenMessageIds.values();
-    for (let i = 0; i < 50; i++) {
-      const val = iter.next().value;
-      if (val) seenMessageIds.delete(val);
-    }
-  }
-  return true;
-}
-
-// ── Timeout Helper ──
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${ms / 1000}s`));
-    }, ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
-}
+const dedupCache = new DedupCache(200, 50);
 
 // ── Slack API Helper ──
 
@@ -323,7 +284,7 @@ async function fetchNewMessages(workspace: SlackWorkspace, state: SlackState): P
 
       for (const msg of messages) {
         const dedupKey = `${workspace.id}:${channel.id}:${msg.ts}`;
-        if (!trackMessageId(dedupKey)) continue;
+        if (!dedupCache.track(dedupKey)) continue;
 
         const userName = msg.user
           ? await resolveUserName(token, msg.user)
@@ -385,7 +346,7 @@ async function pollAllWorkspaces(): Promise<void> {
   }
 
   saveState(state);
-  saveSeenIds();
+  dedupCache.saveTo(SEEN_IDS_FILE);
 }
 
 // ── Polling Lifecycle ──
@@ -393,7 +354,9 @@ async function pollAllWorkspaces(): Promise<void> {
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 export function startSlackPolling(): void {
-  loadSeenIds();
+  const ids = seenIdsStore.load();
+  dedupCache.load(ids);
+  if (ids.length > 0) log(`Loaded ${dedupCache.size} seen message IDs from disk`);
 
   const workspaces = loadWorkspaces();
   const authenticated = workspaces.filter(w => w.tokens?.access_token);

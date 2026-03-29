@@ -28,6 +28,7 @@ import { scanAndProcessCommitments } from "./accountability.js";
 import { getDueRecurringTasks, markExecuted } from "./recurring.js";
 import type { RecurringTask } from "./recurring.js";
 import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
+import { withTimeout } from "./utils/async.js";
 import { ensureSSHKey } from "./integrations/ssh.js";
 import { verify, rotateAuditLog } from "./action-verifier.js";
 import type { ActionContext } from "./action-verifier.js";
@@ -652,20 +653,6 @@ export function stopBrainLoop(): void {
     schedulerPollInterval = null;
   }
   log("Brain loop stopped");
-}
-
-// ── Tick Timeout Helper ──
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${ms / 1000}s`));
-    }, ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
 }
 
 // ── Tick Concurrency Guards ──

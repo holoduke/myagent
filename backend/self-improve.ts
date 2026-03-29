@@ -107,7 +107,7 @@ async function runImprove(): Promise<void> {
   graph.load();
   const memoryNodes = task.memoryContext
     .map(id => graph.getNode(id))
-    .filter((n): n is NonNullable<typeof n> => n != null);
+    .filter((n): n is NonNullable<typeof n> => n !== null && n !== undefined);
 
   const prompt = buildImprovementPrompt(task, memoryNodes);
 
@@ -162,7 +162,7 @@ async function runRecover(): Promise<void> {
   log("Starting recovery mode");
 
   // Read last 200 lines of log
-  let logs = "";
+  let logs: string;
   try {
     const fullLog = readFileSync(LOG_FILE, "utf-8");
     const lines = fullLog.split("\n");

@@ -3,27 +3,13 @@ import {
   loadAccounts,
   getAuthUrl,
   handleAuthCallback,
-  addAccount,
   getAccountStatus,
   restartGmailPolling,
 } from "./gmail.js";
 import { createLogger } from "../logger.js";
+import { respondJson } from "../utils/api-helpers.js";
 
 const log = createLogger("gmail-routes");
-
-function sendJson(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
-}
-
-function sendHtml(res: ServerResponse, status: number, html: string): void {
-  res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
-  res.end(html);
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
 /**
  * Handle Gmail-related HTTP routes. Returns true if the route was handled.
@@ -35,7 +21,7 @@ export function handleGmailRoutes(req: IncomingMessage, res: ServerResponse): bo
   // GET /gmail/accounts — list accounts and their status
   if (pathname === "/gmail/accounts" && req.method === "GET") {
     const status = getAccountStatus();
-    sendJson(res, 200, { accounts: status });
+    respondJson(res, 200, { accounts: status });
     return true;
   }
 
@@ -47,7 +33,7 @@ export function handleGmailRoutes(req: IncomingMessage, res: ServerResponse): bo
     const account = accounts.find(a => a.id === accountId);
 
     if (!account) {
-      sendJson(res, 404, { error: `Account "${accountId}" not found. Add it first via ARIA.` });
+      respondJson(res, 404, { error: `Account "${accountId}" not found. Add it first via ARIA.` });
       return true;
     }
 

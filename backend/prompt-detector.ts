@@ -102,11 +102,11 @@ class PromptDetectorProvider extends BaseProvider {
   readonly supportsStreaming = false;
   readonly supportsSessions = false;
 
-  /* eslint-disable @typescript-eslint/no-unused-vars */
+   
   async ask(_message: string) { return { messages: [] as string[] }; }
   async askStreaming(_message: string, _onDelta: (text: string) => void) { return { messages: [] as string[] }; }
   resetSession() { /* no-op */ }
-  /* eslint-enable @typescript-eslint/no-unused-vars */
+   
 
   async run(prompt: string): Promise<string | null> {
     const timeout = 30_000; // 30s max for detection
