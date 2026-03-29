@@ -3,7 +3,6 @@ import {
   loadAccounts,
   getAuthUrl,
   handleAuthCallback,
-  addAccount,
   getAccountStatus,
   restartGmailPolling,
 } from "./gmail.js";
@@ -11,15 +10,6 @@ import { createLogger } from "../logger.js";
 import { respondJson } from "../utils/api-helpers.js";
 
 const log = createLogger("gmail-routes");
-
-function sendHtml(res: ServerResponse, status: number, html: string): void {
-  res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
-  res.end(html);
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
 /**
  * Handle Gmail-related HTTP routes. Returns true if the route was handled.
