@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "fs";
 import { ensureDir } from "../utils/file-store.js";
-import { join, basename } from "path";
+import { join } from "path";
 import type { ProviderProfile } from "./types.js";
 import { createLogger } from "../logger.js";
 

@@ -3,7 +3,7 @@ import { getSystemPrompt, getMessageMemoryContext, resetMemoryContextTracker } f
 import { getRecentConversationRecap, getHistory } from "../history.js";
 import { ensureValidToken } from "../auth-refresh.js";
 import { MemoryGraph } from "../memory/graph.js";
-import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions, ClaudeConfig } from "./types.js";
+import type { AgentResult, AgentStats, ProviderAskOptions, ClaudeConfig } from "./types.js";
 import { BaseProvider } from "./base-provider.js";
 import { createLogger } from "../logger.js";
 

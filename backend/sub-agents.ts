@@ -141,8 +141,8 @@ export function deleteSubAgent(id: string): boolean {
   // Clean up any task/result files
   const taskFile = taskFilePath(id);
   const resultFile = resultFilePath(id);
-  try { if (existsSync(taskFile)) unlinkSync(taskFile); } catch {}
-  try { if (existsSync(resultFile)) unlinkSync(resultFile); } catch {}
+  try { if (existsSync(taskFile)) unlinkSync(taskFile); } catch (err) { log(`Failed to clean up task file for ${id}: ${err}`); }
+  try { if (existsSync(resultFile)) unlinkSync(resultFile); } catch (err) { log(`Failed to clean up result file for ${id}: ${err}`); }
 
   // Clear running state
   clearRunning(id);
@@ -164,7 +164,7 @@ export function isDue(agent: SubAgentConfig, now: Date): boolean {
 
   // Already ran during this scheduled hour — don't run again
   if (agent.lastRunAt > 0) {
-    const { hour: lastRunHour, dayOfWeek: lastRunDay } = getOwnerLocalTime(tz, new Date(agent.lastRunAt));
+    const { hour: lastRunHour, dayOfWeek: _lastRunDay } = getOwnerLocalTime(tz, new Date(agent.lastRunAt));
     const lastRunDate = new Date(agent.lastRunAt).toLocaleDateString("en-CA", { timeZone: tz });
     const nowDate = now.toLocaleDateString("en-CA", { timeZone: tz });
     if (nowDate === lastRunDate && lastRunHour === currentHour) return false;

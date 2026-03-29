@@ -7,9 +7,7 @@ import type { CharacterOverride } from "./aria-identity.js";
 import { getBrainConfig, getCharacterPreset } from "./brain-config.js";
 import type { InitiativeSignal } from "./initiative.js";
 import { sanitizeForPrompt, detectInjection } from "./trust.js";
-import type { TrustLevel } from "./trust.js";
-import { extractCommitments, extractAndClassifyCommitments } from "./commitments.js";
-import type { ActionableSignal } from "./actionable.js";
+import { extractAndClassifyCommitments } from "./commitments.js";
 import { formatPermissionRules, getActionMode } from "./contact-whitelist.js";
 
 function resolveCharacter(): CharacterOverride | undefined {

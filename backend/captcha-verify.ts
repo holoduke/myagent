@@ -13,7 +13,7 @@
 import { FileStore } from "./utils/file-store.js";
 import { randomUUID } from "crypto";
 import { createLogger } from "./logger.js";
-import { sendImage, sendMessage } from "./integrations/whatsapp.js";
+import { sendImage } from "./integrations/whatsapp.js";
 
 const log = createLogger("captcha-verify");
 
@@ -121,7 +121,7 @@ export function handleCaptchaReply(text: string): boolean {
   const trimmed = text.trim();
 
   // Strategy 1: message references a specific captcha ID
-  for (const [id, waiter] of waiters) {
+  for (const [id, _waiter] of waiters) {
     if (trimmed.toLowerCase().startsWith(id.toLowerCase())) {
       // Extract answer after the ID
       const answer = trimmed.slice(id.length).replace(/^[:\s-]+/, "").trim();

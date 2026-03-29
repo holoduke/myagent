@@ -20,7 +20,7 @@ import { classifyIntentSync } from "./intent-classifier.js";
 import type { IntentClassification, MessageIntent } from "./intent-classifier.js";
 import { detectActionableContent } from "./actionable.js";
 import type { ActionableSignal } from "./actionable.js";
-import type { DetectedEvent, DetectedRequest, PromptDetectionResult } from "./prompt-detector.js";
+import type { DetectedEvent, DetectedRequest } from "./prompt-detector.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { getBrainConfig } from "./brain-config.js";
 import { getReplyDirectives } from "./reply-agent.js";

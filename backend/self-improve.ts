@@ -152,7 +152,7 @@ async function runImprove(): Promise<void> {
   }
 
   // Clean up task file
-  try { unlinkSync(TASK_FILE); } catch {}
+  try { unlinkSync(TASK_FILE); } catch { /* expected: file may not exist */ }
   log("Improve mode complete");
 }
 
@@ -177,7 +177,7 @@ async function runRecover(): Promise<void> {
     if (existsSync(SELF_MOD_MARKER)) {
       recentChanges = readFileSync(SELF_MOD_MARKER, "utf-8");
     }
-  } catch {}
+  } catch { /* expected: marker file may not exist */ }
 
   // Read last good commit
   let lastGoodCommit: string | null = null;
@@ -185,7 +185,7 @@ async function runRecover(): Promise<void> {
     if (existsSync(LAST_GOOD_COMMIT_FILE)) {
       lastGoodCommit = readFileSync(LAST_GOOD_COMMIT_FILE, "utf-8").trim();
     }
-  } catch {}
+  } catch { /* expected: commit file may not exist */ }
 
   for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt++) {
     log(`Recovery attempt ${attempt}/${MAX_RECOVERY_ATTEMPTS}`);
