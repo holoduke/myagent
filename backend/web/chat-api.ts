@@ -48,9 +48,13 @@ export function handleChatRoutes(
     return true;
   }
 
-  // -- History --
+  // -- History (with optional pagination) --
   if (pathname === "/api/history" && isAuthenticated(req)) {
-    respondJson(res, 200, getHistory());
+    const historyUrl = new URL(req.url || "/", "http://localhost");
+    const limit = Math.min(parseInt(historyUrl.searchParams.get("limit") || "200", 10) || 200, 1000);
+    const offset = Math.max(parseInt(historyUrl.searchParams.get("offset") || "0", 10) || 0, 0);
+    const history = getHistory();
+    respondJson(res, 200, history.slice(offset, offset + limit));
     return true;
   }
 

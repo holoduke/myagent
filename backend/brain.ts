@@ -53,6 +53,7 @@ import {
   taskFilePath,
   resultFilePath,
   loadSubAgentHistory,
+  isProcessAlive,
 } from "./sub-agents.js";
 import type { SubAgentResult } from "./sub-agents.js";
 
@@ -441,10 +442,12 @@ function pickUpSubAgentResults(): void {
         try { unlinkSync(resFile); } catch (cleanupErr) { log(`Failed to clean up sub-agent result file ${resFile}: ${cleanupErr}`); }
       }
     } else {
-      // Check for stale workers
+      // Check for stale workers — use PID to distinguish dead vs still-running processes
       const elapsed = Math.max(0, Date.now() - info.startedAt);
-      if (elapsed > SUB_AGENT_STALE_TIMEOUT) {
-        log(`Sub-agent worker stale for ${agentId} (${Math.round(elapsed / 60000)}m) — clearing`);
+      const processAlive = info.pid ? isProcessAlive(info.pid) : false;
+
+      if (elapsed > SUB_AGENT_STALE_TIMEOUT && !processAlive) {
+        log(`Sub-agent worker stale for ${agentId} (${Math.round(elapsed / 60000)}m, pid=${info.pid ?? "unknown"}, alive=${processAlive}) — clearing`);
         addRunToHistory({
           id: `run_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           agentId,
@@ -452,13 +455,15 @@ function pickUpSubAgentResults(): void {
           completedAt: Date.now(),
           success: false,
           summary: "Worker timed out",
-          details: `Worker did not produce results within ${Math.round(SUB_AGENT_STALE_TIMEOUT / 60000)} minutes`,
+          details: `Worker did not produce results within ${Math.round(SUB_AGENT_STALE_TIMEOUT / 60000)} minutes (pid=${info.pid ?? "unknown"})`,
           error: "timeout",
         });
         clearRunning(agentId);
         // Clean up task file if still present
         const taskFile = taskFilePath(agentId);
         try { if (existsSync(taskFile)) unlinkSync(taskFile); } catch (err) { log(`Failed to clean up stale task file ${taskFile}: ${err}`); }
+      } else if (elapsed > SUB_AGENT_STALE_TIMEOUT && processAlive) {
+        log(`Sub-agent worker for ${agentId} exceeded timeout (${Math.round(elapsed / 60000)}m) but pid=${info.pid} still alive — skipping cleanup`);
       }
     }
   }
@@ -471,6 +476,9 @@ function spawnSubAgentWorker(agentId: string): void {
     cwd: "/app",
     env: { ...process.env },
   });
+  if (child.pid) {
+    markRunning(agentId, child.pid);
+  }
   child.unref();
   log(`Spawned sub-agent worker for ${agentId} (pid=${child.pid})`);
 }
@@ -495,7 +503,7 @@ function checkAndSpawnSubAgentWorkers(): void {
       continue;
     }
 
-    markRunning(agent.id, undefined);
+    // markRunning is called inside spawnSubAgentWorker with the actual PID
     spawnSubAgentWorker(agent.id);
   }
 }
@@ -640,6 +648,14 @@ export function startBrainLoop(
 }
 
 export function stopBrainLoop(): void {
+  // Save graph state before shutdown to prevent data loss
+  try {
+    graph.save();
+    log("Graph saved on shutdown");
+  } catch (err) {
+    log(`Failed to save graph on shutdown: ${err}`);
+  }
+
   if (brainInterval) {
     clearInterval(brainInterval);
     brainInterval = null;
@@ -893,34 +909,44 @@ async function tick(
     }
   }
 
-  // Update graph stats in state
-  state.nodeCount = graph.nodeCount;
-  state.edgeCount = graph.edgeCount;
-
-  // ── Merge scheduler-critical numeric fields to prevent race condition ──
+  // ── Selective state save to prevent race condition with scheduler ──
   // pollScheduledMessages() runs every 10s and may have updated state.json
-  // while this tick was running (Claude calls take 1-5 min). Re-read disk
-  // state and take the maximum values so delivered messages aren't lost.
+  // (messagesToday, lastMessageTime, etc.) while this tick was running
+  // (Claude calls take 1-5 min). Instead of overwriting the entire state,
+  // re-read from disk and only update the fields that THIS tick owns.
   const freshState = loadState();
-  const schedulerMaxFields: (keyof BrainState)[] = [
-    "messagesToday",
-    "lastMessageTime",
-    "recurringThinksToday",
-    "initiativeThinksToday",
-    "totalThinks",
-    "totalCost",
-    "nodeCount",
-    "edgeCount",
-  ];
-  for (const field of schedulerMaxFields) {
-    const diskVal = freshState[field];
-    const memVal = state[field];
-    if (typeof diskVal === "number" && typeof memVal === "number" && diskVal > memVal) {
-      (state as any)[field] = diskVal;
-    }
+
+  // Fields owned by tick — only tick updates these
+  freshState.lastThinkTick = state.lastThinkTick;
+  freshState.lastConsolidateTick = state.lastConsolidateTick;
+  freshState.lastReflectTick = state.lastReflectTick;
+  freshState.lastObservationTime = state.lastObservationTime;
+  freshState.consecutiveFailures = state.consecutiveFailures;
+  freshState.lastSuccessfulTick = state.lastSuccessfulTick;
+  freshState.messagesTodayDate = state.messagesTodayDate;
+  freshState.recurringBudgetDate = state.recurringBudgetDate;
+
+  // Graph stats — always use latest values from this tick
+  freshState.nodeCount = graph.nodeCount;
+  freshState.edgeCount = graph.edgeCount;
+
+  // Additive fields — apply delta from this tick rather than max()
+  // so both tick and scheduler increments are preserved
+  freshState.totalThinks = Math.max(freshState.totalThinks, state.totalThinks);
+  freshState.totalCost = Math.max(freshState.totalCost, state.totalCost);
+  freshState.recurringThinksToday = Math.max(freshState.recurringThinksToday, state.recurringThinksToday);
+  freshState.initiativeThinksToday = Math.max(freshState.initiativeThinksToday, state.initiativeThinksToday);
+
+  // messagesToday / lastMessageTime are owned by the scheduler —
+  // only take tick's value if the tick actually incremented it
+  if (state.messagesToday > freshState.messagesToday) {
+    freshState.messagesToday = state.messagesToday;
+  }
+  if (state.lastMessageTime > freshState.lastMessageTime) {
+    freshState.lastMessageTime = state.lastMessageTime;
   }
 
-  saveState(state);
+  saveState(freshState);
   graph.save();
 }
 
@@ -1639,7 +1665,7 @@ async function reflectTick(
 // Lightweight poller that runs every 10s independently of brain ticks.
 // Only checks getDueMessages() and delivers them — no full tick overhead.
 
-let schedulerPollRunning = false;
+let schedulerPollPromise: Promise<void> | null = null;
 let schedulerPollStartTime: number | null = null;
 const SCHEDULER_POLL_TIMEOUT_MS = 60_000; // 60s timeout for stuck polls
 
@@ -1647,28 +1673,33 @@ async function pollScheduledMessages(
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
 ): Promise<void> {
-  // Guard against overlapping polls — with timeout-based auto-recovery
-  if (schedulerPollRunning) {
+  // Guard against overlapping polls using promise reference
+  if (schedulerPollPromise) {
+    // Timeout-based auto-recovery for stuck polls
     if (
       schedulerPollStartTime !== null &&
       Date.now() - schedulerPollStartTime > SCHEDULER_POLL_TIMEOUT_MS
     ) {
-      console.warn(
-        `[brain] ⚠️ Scheduler poll stuck for >${SCHEDULER_POLL_TIMEOUT_MS / 1000}s — auto-clearing guard to resume delivery`,
-      );
-      schedulerPollRunning = false;
+      log(`Scheduler poll stuck for >${SCHEDULER_POLL_TIMEOUT_MS / 1000}s — auto-clearing guard to resume delivery`);
+      schedulerPollPromise = null;
       schedulerPollStartTime = null;
     } else {
-      return;
+      return; // previous poll still running
     }
   }
-  schedulerPollRunning = true;
+
   schedulerPollStartTime = Date.now();
-  try {
+
+  const doPoll = async (): Promise<void> => {
     const state = loadState();
     await deliverScheduledMessages(state, sendMessage, ownerJid);
+  };
+
+  schedulerPollPromise = doPoll();
+  try {
+    await schedulerPollPromise;
   } finally {
-    schedulerPollRunning = false;
+    schedulerPollPromise = null;
     schedulerPollStartTime = null;
   }
 }

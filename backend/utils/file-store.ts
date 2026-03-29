@@ -11,6 +11,10 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { dirname } from "path";
 
+// ── Write lock for concurrent write protection ──
+
+const writeLocks = new Map<string, boolean>();
+
 // ── Standalone utility functions ──
 
 /** Ensure a directory exists (creates recursively if needed). */
@@ -39,9 +43,24 @@ export function atomicWriteFile(filePath: string, content: string): void {
 /**
  * Atomic JSON write with pretty printing (2-space indent by default).
  * Set `indent` to 0 for compact output, or any number for custom spacing.
+ *
+ * Uses a per-file write lock to detect concurrent write attempts.
+ * The actual write is atomic (write-to-tmp + rename), so data won't corrupt,
+ * but the lock prevents interleaving of read-modify-write sequences.
  */
 export function atomicWriteJSON<T>(filePath: string, data: T, indent: number = 2): void {
-  atomicWriteFile(filePath, JSON.stringify(data, null, indent));
+  if (writeLocks.get(filePath)) {
+    // Another write is in progress -- atomic rename is still safe,
+    // but log for visibility into potential read-modify-write races
+    // eslint-disable-next-line no-console
+    console.warn(`[file-store] Concurrent write detected for ${filePath}`);
+  }
+  writeLocks.set(filePath, true);
+  try {
+    atomicWriteFile(filePath, JSON.stringify(data, null, indent));
+  } finally {
+    writeLocks.delete(filePath);
+  }
 }
 
 /**

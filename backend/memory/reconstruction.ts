@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "fs";
+import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, openSync, readSync, fstatSync, closeSync } from "fs";
 import { dirname } from "path";
 import type { MemoryGraph } from "./graph.js";
 import type { MemoryNode, WorkingMemory } from "./types.js";
@@ -43,7 +43,8 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
   if (uniqueContextTerms.length === 0) return 0;
 
   // Step 2: Run spreading activation on active graph to get current activation pattern
-  const activated = spreadingActivation(graph, uniqueContextTerms, 15);
+  // maxHops=3 to avoid excessive graph traversal (15 hops causes O(n^k) worst case)
+  const activated = spreadingActivation(graph, uniqueContextTerms, 3);
 
   // Step 3: Build activation-weighted term set from activated nodes
   // Terms from highly-activated nodes matter more than terms from weakly-activated ones
@@ -148,6 +149,38 @@ export interface UncapturedSignal {
 }
 
 /**
+ * Read recent lines from a JSONL file by reading backwards from the end.
+ * Much more memory-efficient than loading the entire file for large logs.
+ */
+function readRecentLines(filePath: string, maxLines: number): string[] {
+  if (!existsSync(filePath)) return [];
+
+  const fd = openSync(filePath, "r");
+  try {
+    const stat = fstatSync(fd);
+    const fileSize = stat.size;
+    if (fileSize === 0) return [];
+
+    // Read up to 1MB from the end (should cover recent observations)
+    const chunkSize = Math.min(fileSize, 1024 * 1024);
+    const buffer = Buffer.alloc(chunkSize);
+    readSync(fd, buffer, 0, chunkSize, fileSize - chunkSize);
+
+    const text = buffer.toString("utf-8");
+    const lines = text.split("\n").filter(Boolean);
+
+    // If we didn't read from the start, the first line may be partial -- drop it
+    if (chunkSize < fileSize && lines.length > 0) {
+      lines.shift();
+    }
+
+    return lines.slice(-maxLines);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
  * Audit observation logs for significant signals that may not have corresponding memory nodes.
  *
  * Scans recent observations (last N hours) and extracts:
@@ -160,9 +193,9 @@ export function auditObservationLogs(graph: MemoryGraph, hoursBack = 24, maxSign
   if (!existsSync(OBSERVATIONS_FILE)) return [];
 
   const cutoff = Date.now() - hoursBack * 3600000;
-  const lines = readFileSync(OBSERVATIONS_FILE, "utf-8").trimEnd().split("\n");
+  const lines = readRecentLines(OBSERVATIONS_FILE, 5000);
 
-  // Parse recent observations
+  // Parse recent observations (lines are oldest-first, iterate in reverse)
   const recent: ObservationLogEntry[] = [];
   for (let i = lines.length - 1; i >= 0; i--) {
     try {
@@ -426,9 +459,9 @@ export function reconstructFromLogs(
   if (!existsSync(OBSERVATIONS_FILE)) return 0;
 
   const cutoff = Date.now() - logHoursBack * 3600000;
-  const lines = readFileSync(OBSERVATIONS_FILE, "utf-8").trimEnd().split("\n");
+  const lines = readRecentLines(OBSERVATIONS_FILE, 5000);
 
-  // Parse recent observations
+  // Parse recent observations (lines are oldest-first, iterate in reverse)
   const recentObs: ObservationLogEntry[] = [];
   for (let i = lines.length - 1; i >= 0; i--) {
     try {

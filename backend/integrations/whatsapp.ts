@@ -85,6 +85,7 @@ const CONTACTS_PATH = process.env.DATA_DIR
   ? `${process.env.DATA_DIR}/brain/contacts.json`
   : "/data/brain/contacts.json";
 
+const MAX_CONTACT_STORE_SIZE = 10_000;
 const contactStore = new Map<string, Contact>();
 
 function loadContacts(): void {
@@ -99,6 +100,9 @@ function loadContacts(): void {
 }
 
 function saveContacts(): void {
+  if (contactStore.size > MAX_CONTACT_STORE_SIZE) {
+    log.warn(`Contact store size (${contactStore.size}) exceeds max (${MAX_CONTACT_STORE_SIZE}) — consider cleanup`);
+  }
   atomicWriteJSON(CONTACTS_PATH, Array.from(contactStore.values()));
 }
 

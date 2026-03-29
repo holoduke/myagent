@@ -3,6 +3,7 @@ import { MessageQueue } from "../queue.js";
 import { handleLogin } from "./auth.js";
 import { handleApiRoutes } from "./api.js";
 import { handleProviderRoutes } from "./providers-api.js";
+import { isRateLimited, respondJson } from "../utils/api-helpers.js";
 
 export function handleWebRoutes(
   req: IncomingMessage,
@@ -10,6 +11,12 @@ export function handleWebRoutes(
   queue: MessageQueue,
 ): boolean {
   const pathname = (req.url || "/").split("?")[0];
+
+  // ── Rate limiting ──
+  if (isRateLimited(req)) {
+    respondJson(res, 429, { error: "Too many requests" });
+    return true;
+  }
 
   // ── Login API ──
   if (pathname === "/api/login" && req.method === "POST") {

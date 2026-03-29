@@ -204,6 +204,19 @@ export function clearRunning(agentId: string): void {
   saveSubAgentState(state);
 }
 
+/**
+ * Check if a process with the given PID is still alive.
+ * Uses `kill(pid, 0)` which checks existence without sending a signal.
+ */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function isRunning(agentId: string): boolean {
   const state = loadSubAgentState();
   return !!state.runningAgents[agentId];

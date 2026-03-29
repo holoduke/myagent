@@ -55,7 +55,8 @@ export function getClaudeProvider(): ClaudeProvider {
 
 export function invalidateProviderCache(): void {
   // Preserve session ID before destroying provider so chat doesn't lose context
-  if (cachedDefaultProvider && cachedDefaultProvider instanceof ClaudeProvider) {
+  // Uses the AIProvider interface method instead of casting to ClaudeProvider
+  if (cachedDefaultProvider?.getSessionId) {
     savedSessionId = cachedDefaultProvider.getSessionId();
   }
   cachedDefaultProvider = null;
