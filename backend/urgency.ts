@@ -55,6 +55,7 @@ const COMPILED_URGENCY_PATTERNS: { pattern: RegExp; score: number }[] = Object.e
 import { OWNER_NAME as RAW_OWNER_NAME } from "./config.js";
 
 const OWNER_NAME = RAW_OWNER_NAME.toLowerCase();
+const OWNER_NAME_PATTERN = new RegExp(`\\b${OWNER_NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
 
 // ── Urgency Scoring (zero Claude cost) ──
 
@@ -83,8 +84,8 @@ export function scoreUrgency(obs: Observation): number {
     }
   }
 
-  // Owner mentioned in group
-  if (obs.isGroup && text.toLowerCase().includes(OWNER_NAME)) {
+  // Owner mentioned in group (word-boundary match to avoid substring false positives)
+  if (obs.isGroup && OWNER_NAME_PATTERN.test(text)) {
     score = Math.max(score, 0.5);
   }
 
@@ -111,7 +112,7 @@ export function scoreUrgency(obs: Observation): number {
     score *= decayFactor;
   }
 
-  return Math.min(score, 1.0);
+  return Math.max(0, Math.min(score, 1.0));
 }
 
 // ── Urgency Interrupt Callback ──
