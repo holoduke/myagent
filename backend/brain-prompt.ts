@@ -658,6 +658,7 @@ export interface ConsolidateContext {
   uncapturedSignals?: import("./memory/decay.js").UncapturedSignal[];
   deltaReport?: import("./memory/decay.js").DeltaReport | null;
   lowFidelityReconstructions?: import("./memory/decay.js").FidelityResult[];
+  gistClusters?: MemoryNode[][];
 }
 
 export function buildConsolidatePrompt(ctx: ConsolidateContext): string {
@@ -691,7 +692,15 @@ ${ctx.orphanNodes.length > 0 ? formatNodeList(ctx.orphanNodes) : "(none)"}
 
 ═══ POTENTIAL DUPLICATES ═══
 ${ctx.duplicateCandidates.length > 0 ? formatDuplicates(ctx.duplicateCandidates) : "(none)"}
-${ctx.uncapturedSignals && ctx.uncapturedSignals.length > 0 ? `
+${ctx.gistClusters && ctx.gistClusters.length > 0 ? `
+═══ GIST EXTRACTION CANDIDATES ═══
+These clusters of old, weakening nodes share themes and could be summarized into semantic "gist" nodes.
+Consider using merge_nodes to condense each cluster into a single summary node that captures the essence:
+${ctx.gistClusters.map((cluster, i) => {
+    const sharedTags = cluster[0].tags.filter(t => cluster.slice(1).every(n => n.tags.some(nt => nt.toLowerCase() === t.toLowerCase())));
+    return `  Cluster ${i + 1} (${cluster.length} ${cluster[0].type} nodes, shared: ${sharedTags.join(", ") || "various"}):\n${cluster.map(n => `    [${n.id}] str:${n.strength.toFixed(2)} "${n.content.slice(0, 80)}"`).join("\n")}`;
+  }).join("\n")}
+` : ""}${ctx.uncapturedSignals && ctx.uncapturedSignals.length > 0 ? `
 ═══ UNCAPTURED SIGNALS (from observation log audit) ═══
 These signals were found in recent observation logs but have no corresponding memory nodes.
 Consider creating nodes for significant ones:
@@ -741,6 +750,7 @@ CONSOLIDATION GUIDELINES:
 - IMPORTANCE: When creating or updating nodes for significant one-off events (milestones, medical, legal, major decisions), set "importance" (0.3–1.0) to protect them from frequency-based decay.
 - MEMORY DELTA: If the loss rate is high (>10%), consider whether important nodes are decaying too fast and whether they need importance boosts or pinning.
 - LOW-FIDELITY RECONSTRUCTIONS: If listed, these nodes were restored from archive/logs but have changed significantly (content drift or lost edges). Low fidelity (< 0.5) means the reconstruction may be unreliable. Consider: updating the node content to be more accurate, boosting edges to restore topology, or re-archiving if the reconstruction is no longer trustworthy.
+- GIST EXTRACTION: If "GIST EXTRACTION CANDIDATES" lists clusters, consider merging each cluster into a single summary node using merge_nodes. The summary should capture the semantic essence ("Gillis regularly meets with X on Thursdays") rather than individual episodes. Set type to "fact" or "concept" and boost importance if the pattern is significant.
 
 Respond with ONLY the JSON object.`;
 }

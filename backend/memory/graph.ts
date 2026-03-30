@@ -847,6 +847,26 @@ export class MemoryGraph {
       });
     }
 
+    // Backlink enrichment: strong matches get cross-reference tags
+    for (const match of topCorrelations.filter(c => c.score > 0.3)) {
+      const existing = this.nodes.get(match.id);
+      if (!existing) continue;
+
+      const existingTagsLower = new Set(existing.tags.map(t => t.toLowerCase()));
+      const enrichTags = newNode.tags
+        .filter(t => !existingTagsLower.has(t.toLowerCase()) && t.length > 1)
+        .slice(0, 2);
+
+      if (enrichTags.length > 0) {
+        existing.tags = [...existing.tags, ...enrichTags];
+        for (const tag of enrichTags) {
+          const key = tag.toLowerCase();
+          if (!this.byTag.has(key)) this.byTag.set(key, new Set());
+          this.byTag.get(key)!.add(existing.id);
+        }
+      }
+    }
+
     if (topCorrelations.length > 0) {
       log(`Auto-correlated node ${newNode.id} → ${topCorrelations.length} edge(s) created [${topCorrelations.map(c => c.id + ":" + c.score.toFixed(2)).join(", ")}]`);
     }
@@ -928,6 +948,33 @@ export class MemoryGraph {
             this.addNode(newNode);
             // Auto-correlate: find related nodes and create edges
             this.correlateNode(newNode);
+            // Temporal episode chaining: link sequential event nodes from same conversation
+            if (newNode.type === "event") {
+              const recentEvents = this.findByType("event")
+                .filter(e => e.id !== newNode.id && (now - e.createdAt) < 24 * 3600000)
+                .map(e => {
+                  const overlap = newNode.tags.filter(t =>
+                    e.tags.some(et => et.toLowerCase() === t.toLowerCase()),
+                  ).length;
+                  return { node: e, overlap };
+                })
+                .filter(e => e.overlap >= 2)
+                .sort((a, b) => b.node.createdAt - a.node.createdAt)
+                .slice(0, 1);
+              for (const { node: recent } of recentEvents) {
+                this.addEdge({
+                  from: recent.id,
+                  to: newNode.id,
+                  type: "temporal",
+                  weight: 0.6,
+                  createdAt: now,
+                  lastReinforcedAt: now,
+                });
+              }
+              if (recentEvents.length > 0) {
+                log(`Temporal chain: linked ${newNode.id} → ${recentEvents[0].node.id}`);
+              }
+            }
             this.walLog("add_node", { nodeId: op.id, meta: { type: op.type, tags: op.tags } });
             applied++;
             break;

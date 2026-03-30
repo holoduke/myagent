@@ -186,6 +186,15 @@ export function spreadingActivation(
     }
   }
 
+  // Emotional salience boost: emotionally charged memories are naturally more
+  // salient and accessible (matches memory research on emotional encoding).
+  for (const [id, activation] of activations) {
+    const node = graph.getNode(id);
+    if (!node?.emotionalValence) continue;
+    const emotionalBoost = Math.abs(node.emotionalValence) * 0.15;
+    activations.set(id, activation * (1 + emotionalBoost));
+  }
+
   // Collect and sort by activation
   const results: ActivatedNode[] = [];
   for (const [id, activation] of activations) {

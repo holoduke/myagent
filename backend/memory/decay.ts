@@ -15,12 +15,16 @@ export {
   emergencyPrune,
   autoInferSalience,
   inferContentSalience,
+  inferEmotionalValence,
+  spacedRepetitionRefresh,
+  autoAssignConfidence,
   SALIENCE_SIGNALS,
 } from "./retention.js";
 
 // ── consolidation.ts ──
 export {
   runConsolidation,
+  detectGistClusters,
   appendConsolidationLog,
   CONSOLIDATION_LOG_PATH,
   CONSOLIDATION_LOG_MAX_ENTRIES,

@@ -9,6 +9,8 @@ import {
   pruneOrphans,
   emergencyPrune,
   autoInferSalience,
+  spacedRepetitionRefresh,
+  autoAssignConfidence,
 } from "./retention.js";
 import {
   rescanArchive,
@@ -85,6 +87,66 @@ export function appendConsolidationLog(entry: ConsolidationLogEntry): void {
   }
 }
 
+// ── Episodic→Semantic Gist Extraction ──
+
+import type { MemoryNode } from "./types.js";
+
+/**
+ * Detect clusters of similar nodes that could be summarized into semantic gist nodes.
+ * Targets old (>7 days), weakening nodes of the same type with significant tag overlap.
+ * Returns groups of 3+ nodes suitable for Claude to merge into summary nodes.
+ */
+export function detectGistClusters(graph: MemoryGraph): MemoryNode[][] {
+  const now = Date.now();
+  const MIN_AGE_MS = 7 * 24 * 3600000;
+
+  const candidates = graph.allNodes()
+    .filter(n => !n.pinned && n.strength < 0.5 && (now - n.createdAt) > MIN_AGE_MS);
+
+  const byType = new Map<string, MemoryNode[]>();
+  for (const node of candidates) {
+    if (!byType.has(node.type)) byType.set(node.type, []);
+    byType.get(node.type)!.push(node);
+  }
+
+  const clusters: MemoryNode[][] = [];
+
+  for (const [, nodes] of byType) {
+    if (nodes.length < 3) continue;
+
+    const used = new Set<string>();
+
+    for (let i = 0; i < nodes.length && clusters.length < 5; i++) {
+      if (used.has(nodes[i].id)) continue;
+
+      const cluster = [nodes[i]];
+
+      for (let j = i + 1; j < nodes.length; j++) {
+        if (used.has(nodes[j].id)) continue;
+
+        const overlap = nodes[i].tags.filter(t =>
+          nodes[j].tags.some(t2 => t2.toLowerCase() === t.toLowerCase()),
+        );
+
+        if (overlap.length >= 2) {
+          cluster.push(nodes[j]);
+        }
+      }
+
+      if (cluster.length >= 3) {
+        for (const n of cluster) used.add(n.id);
+        clusters.push(cluster.slice(0, 8));
+      }
+    }
+  }
+
+  if (clusters.length > 0) {
+    log(`Gist clusters: found ${clusters.length} cluster(s) of ${clusters.reduce((s, c) => s + c.length, 0)} total nodes`);
+  }
+
+  return clusters;
+}
+
 /**
  * Full consolidation pass: decay -> edge decay -> orphan prune -> emergency prune -> archive rescan.
  */
@@ -96,6 +158,12 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): Consol
   try {
     // Auto-infer salience on nodes before decay — protects important content
     autoInferSalience(graph);
+
+    // Auto-assign confidence scores based on source signals
+    autoAssignConfidence(graph);
+
+    // Spaced repetition: boost high-importance but declining-strength nodes before decay
+    spacedRepetitionRefresh(graph);
 
     const tierCache = new Map<string, RetentionTier>();
     const nodeResult = applyDecay(graph, tierCache);

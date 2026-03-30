@@ -18,6 +18,7 @@ import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js"
 import { HaikuRunner } from "./providers/haiku-runner.js";
 import { createLogger } from "./logger.js";
 import type { Observation } from "./observer.js";
+import { verify } from "./action-verifier.js";
 import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("reply-agent");
@@ -298,6 +299,13 @@ export async function dispatchReply(
   directiveId: string,
 ): Promise<void> {
   const chatJid = obs.chatJid || obs.senderJid;
+  const replyText = decision.reply;
+
+  // Guard: no reply text
+  if (!replyText || !replyText.trim()) {
+    log(`Skipping reply to ${chatJid}: empty reply text`);
+    return;
+  }
 
   // Rate limit
   if (!canReply(chatJid, obs.isGroup ?? false)) {
@@ -308,6 +316,19 @@ export async function dispatchReply(
   // Opt-out
   if (isOptOut(obs.text)) {
     log(`Opt-out detected from ${obs.sender} in ${chatJid}`);
+    return;
+  }
+
+  // Action verifier gate — same safety checks as all other outgoing messages
+  const verifyResult = verify({
+    type: "send_message",
+    source: "reply-agent",
+    targetJid: chatJid,
+    messageText: replyText,
+    metadata: { directiveId, senderJid: obs.senderJid },
+  });
+  if (verifyResult.verdict === "blocked") {
+    log(`Verifier blocked auto-reply to ${chatJid}: ${verifyResult.reasons.join("; ")}`);
     return;
   }
 
@@ -329,10 +350,10 @@ export async function dispatchReply(
     log("Reply agent: send function not initialized");
   } else {
     try {
-      await sendFn(chatJid, decision.reply!);
+      await sendFn(chatJid, replyText);
       logEntry.sent = true;
       recordReplyEvent(chatJid);
-      log(`Replied to ${obs.sender} in ${chatJid}: "${decision.reply!.slice(0, 80)}"`);
+      log(`Replied to ${obs.sender} in ${chatJid}: "${replyText.slice(0, 80)}"`);
     } catch (err) {
       logEntry.error = String(err);
       log(`Failed to send reply to ${chatJid}: ${err}`);

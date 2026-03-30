@@ -201,7 +201,11 @@ export async function trySendMessage(
   const cfg = getBrainConfig();
   const now = Date.now();
   const { hour: currentHour } = getOwnerLocalTime(cfg.ownerTimezone);
-  const isQuiet = cfg.quietStart !== cfg.quietEnd && (currentHour >= cfg.quietStart || currentHour < cfg.quietEnd);
+  const isQuiet = cfg.quietStart !== cfg.quietEnd && (
+    cfg.quietStart > cfg.quietEnd
+      ? (currentHour >= cfg.quietStart || currentHour < cfg.quietEnd)   // overnight range (e.g. 23→7)
+      : (currentHour >= cfg.quietStart && currentHour < cfg.quietEnd)   // same-day range (e.g. 8→22)
+  );
   const messageIntervalOk = (now - state.lastMessageTime) >= cfg.minMessageInterval;
   const underDailyLimit = state.messagesToday < cfg.maxMessagesPerDay;
   const bypass = options?.bypassLimits === true;
