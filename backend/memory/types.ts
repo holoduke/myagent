@@ -22,6 +22,9 @@ export interface MemoryNode {
   lastAccessedAt: number;  // unix ms, updated on reinforce
   accessCount: number;
   importance?: number;     // 0.0 – 1.0, explicit salience signal (independent of frequency)
+  emotionalValence?: number;   // -1.0 (negative) to 1.0 (positive), emotional direction
+  confidence?: number;         // 0.0 – 1.0, source reliability signal
+  uselessRetrievalCount?: number; // times included in context but not referenced by Claude
   reconstructedAt?: number;    // unix ms — set when restored from archive/logs
   reconstructedFrom?: "archive" | "log";  // source of reconstruction
   reconstructionOriginal?: {   // snapshot of original state at archive time (for fidelity validation)

@@ -14,7 +14,7 @@ import type { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, ImprovementProposal } from "./memory/types.js";
 import { createFlaggedRequest } from "./actionable-tracker.js";
 import { getRecentDeliveries, DEDUP_WINDOW_MS } from "./scheduler.js";
-import { runConsolidation } from "./memory/decay.js";
+import { runConsolidation, detectGistClusters } from "./memory/decay.js";
 import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory, populateTemporalContext } from "./memory/working-memory.js";
 import {
   selectContextForThink,
@@ -233,18 +233,41 @@ export async function thinkTick(
       wm.activeGoals = goalTracker.getWorkingGoalRefs();
     }
 
+    // Retrieval utility tracking: differential reinforcement based on whether
+    // Claude actually referenced each context node in its response
+    const referencedNodeIds = new Set<string>();
+    for (const node of contextNodes) {
+      if (responseText.includes(node.id)) {
+        referencedNodeIds.add(node.id);
+      }
+    }
+
     let reinforced = 0;
+    let uselessTracked = 0;
     for (const node of contextNodes) {
       if (node.pinned) continue;
       const current = graph.getNode(node.id);
       if (!current) continue;
       current.lastAccessedAt = now;
       current.accessCount++;
-      current.strength = Math.min(1, current.strength + 0.02);
+
+      if (referencedNodeIds.has(node.id)) {
+        // Referenced by Claude — stronger reinforcement
+        current.strength = Math.min(1, current.strength + 0.05);
+        // Successful retrieval reduces useless counter
+        if (current.uselessRetrievalCount && current.uselessRetrievalCount > 0) {
+          current.uselessRetrievalCount = Math.max(0, current.uselessRetrievalCount - 1);
+        }
+      } else {
+        // In context but not referenced — minimal reinforcement + track
+        current.strength = Math.min(1, current.strength + 0.01);
+        current.uselessRetrievalCount = (current.uselessRetrievalCount ?? 0) + 1;
+        uselessTracked++;
+      }
       reinforced++;
     }
     if (reinforced > 0) {
-      log(`Think: reinforced ${reinforced} activated context nodes`);
+      log(`Think: reinforced ${reinforced} context nodes (${referencedNodeIds.size} referenced, ${uselessTracked} unreferenced)`);
     }
 
     if (response.workingMemory) {
@@ -332,15 +355,19 @@ export async function consolidateTick(
   }
   const { weakNodes, orphanNodes, duplicateCandidates, stats } = selectContextForConsolidate(graph);
 
+  // Detect gist extraction candidates — clusters of similar old nodes
+  const gistClusters = detectGistClusters(graph);
+
   const hasUncaptured = decayResult.uncapturedSignals.length > 0;
   const hasLowFidelity = decayResult.fidelityResults.some(r => r.lowFidelity);
-  if (weakNodes.length === 0 && orphanNodes.length === 0 && duplicateCandidates.length === 0 && !hasUncaptured && !hasLowFidelity) {
+  const hasGistClusters = gistClusters.length > 0;
+  if (weakNodes.length === 0 && orphanNodes.length === 0 && duplicateCandidates.length === 0 && !hasUncaptured && !hasLowFidelity && !hasGistClusters) {
     log("Consolidate: nothing for Claude to review, decay-only cycle");
     state.lastConsolidateTick = now;
     return true;
   }
 
-  log(`Consolidate: ${weakNodes.length} weak, ${orphanNodes.length} orphans, ${duplicateCandidates.length} duplicates → calling Claude`);
+  log(`Consolidate: ${weakNodes.length} weak, ${orphanNodes.length} orphans, ${duplicateCandidates.length} duplicates, ${gistClusters.length} gist clusters → calling Claude`);
 
   const prompt = buildConsolidatePrompt({
     ownerName: OWNER_NAME,
@@ -354,6 +381,7 @@ export async function consolidateTick(
     uncapturedSignals: decayResult.uncapturedSignals,
     deltaReport: decayResult.deltaReport,
     lowFidelityReconstructions: decayResult.fidelityResults.filter(r => r.lowFidelity),
+    gistClusters,
   });
 
   try {

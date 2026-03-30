@@ -173,7 +173,7 @@ function parseLLMResponse(raw: string): LLMResponse | null {
  * 4. Return structured result
  */
 export async function evaluateMessage(obs: Observation): Promise<EvaluationResult> {
-  const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
+  const ownerJid = `${OWNER_PHONE}@s.whatsapp.net`;
   const isOwner = obs.senderJid === ownerJid;
   const isWA = !obs.source || obs.source === "whatsapp";
 
@@ -283,7 +283,7 @@ export async function evaluateMessage(obs: Observation): Promise<EvaluationResul
   if (replyDirective) {
     result.reply = {
       shouldReply: !!parsed.shouldReply,
-      reply: parsed.reply || null,
+      reply: parsed.reply?.trim() || null,
       reason: parsed.replyReason || "no reason given",
     };
     result.replyDirectiveId = replyDirective.id;

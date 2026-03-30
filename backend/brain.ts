@@ -705,6 +705,8 @@ async function handleRecurringTasks(
           });
           if (verifyResult.verdict === "blocked") {
             log(`[recurring] Verifier blocked message for "${task.label}": ${verifyResult.reasons.join("; ")}`);
+            // Mark as executed even when blocked to prevent retry loop every tick
+            markExecuted(task.id);
           } else {
             await sendMessage(action.targetJid, action.template);
             state.lastMessageTime = Date.now();

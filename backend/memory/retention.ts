@@ -102,7 +102,11 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
     // Importance-based resistance: high-importance nodes decay slower regardless of frequency
     // importance=1.0 → 0.2x decay, importance=0.5 → 0.6x decay, importance=0 → 1.0x (no effect)
     const importanceResistance = node.importance ? (1 - 0.8 * node.importance) : 1;
-    let effectiveLambda = lambda * resistance * tierMultiplier * importanceResistance;
+    // Useless retrieval penalty: nodes repeatedly included in context but never referenced by Claude decay faster
+    const uselessPenalty = (node.uselessRetrievalCount ?? 0) > 3
+      ? 1 + Math.min(1, ((node.uselessRetrievalCount ?? 0) - 3) * 0.25)
+      : 1;
+    let effectiveLambda = lambda * resistance * tierMultiplier * importanceResistance * uselessPenalty;
 
     // Concept nodes with children decay slower — they're structurally important
     if (node.type === "concept") {
@@ -311,25 +315,149 @@ export function inferContentSalience(text: string): number {
  * Auto-apply salience to nodes during decay pass.
  * Scans nodes that have no explicit importance set and infers it from content.
  * Only sets importance for nodes scoring above threshold — avoids noise.
+ * Also infers emotional valence for nodes without it.
  */
 export function autoInferSalience(graph: MemoryGraph, threshold = 0.25): number {
   let updated = 0;
 
   for (const node of graph.allNodes()) {
-    // Skip nodes that already have explicit importance
-    if (node.importance !== null && node.importance !== undefined && node.importance > 0) continue;
     // Skip pinned nodes — they don't need decay protection
     if (node.pinned) continue;
 
-    const salience = inferContentSalience(node.content);
-    if (salience >= threshold) {
-      node.importance = salience;
-      updated++;
+    // Importance inference
+    if (node.importance === null || node.importance === undefined || node.importance === 0) {
+      const salience = inferContentSalience(node.content);
+      if (salience >= threshold) {
+        node.importance = salience;
+        updated++;
+      }
+    }
+
+    // Emotional valence inference (separate concern, always infer if missing)
+    if (node.emotionalValence === undefined || node.emotionalValence === null) {
+      const valence = inferEmotionalValence(node.content);
+      if (valence !== 0) {
+        node.emotionalValence = valence;
+      }
     }
   }
 
   if (updated > 0) {
     log(`Auto-salience: set importance on ${updated} nodes`);
+  }
+
+  return updated;
+}
+
+// ── Emotional Valence Inference ──
+
+const POSITIVE_PATTERNS: RegExp[] = [
+  /\b(gefeliciteerd|congratulations|trots|proud|geweldig|amazing|fantastic)\b/i,
+  /\b(feest|celebration|party|blij|happy|love|liefde|dankbaar|grateful)\b/i,
+  /\b(promotie|promotion|breakthrough|doorbraak|success|succes|winst|win)\b/i,
+  /\b(trouwen|wedding|huwelijk|married|verloving|engaged)\b/i,
+  /\b(geboren|born|bevalling|baby)\b/i,
+  /\b(mooi|beautiful|perfect|excellent|fantastisch|wonderful)\b/i,
+];
+
+const NEGATIVE_PATTERNS: RegExp[] = [
+  /\b(overlijden|overleden|died|death|funeral|begrafenis|rouw|mourning)\b/i,
+  /\b(boos|angry|verdrietig|sad|huilen|crying|teleurgesteld|disappointed)\b/i,
+  /\b(sorry|excuses|spijt|regret|fout|mistake|schuld|guilt)\b/i,
+  /\b(ontslagen|fired|ontslag|layoff|verlies|loss)\b/i,
+  /\b(ziekenhuis|hospital|spoed|emergency|operatie|surgery|pijn|pain|ziek|sick)\b/i,
+  /\b(conflict|ruzie|argument|fight|probleem|problem|crisis)\b/i,
+];
+
+/**
+ * Infer emotional direction from text content.
+ * Returns -1.0 (strongly negative) to 1.0 (strongly positive), 0 for neutral.
+ */
+export function inferEmotionalValence(text: string): number {
+  let positive = 0;
+  let negative = 0;
+
+  for (const p of POSITIVE_PATTERNS) {
+    if (p.test(text)) positive++;
+  }
+  for (const p of NEGATIVE_PATTERNS) {
+    if (p.test(text)) negative++;
+  }
+
+  if (positive === 0 && negative === 0) return 0;
+
+  const total = positive + negative;
+  return (positive - negative) / total;
+}
+
+// ── Spaced Repetition Refresh ──
+
+/**
+ * Boost high-importance but declining-strength nodes.
+ * Prevents important one-off memories from fading when they haven't been
+ * reinforced through repeated access. Based on spaced repetition research:
+ * periodic small boosts are more effective than letting memories fully decay.
+ */
+export function spacedRepetitionRefresh(graph: MemoryGraph): number {
+  let refreshed = 0;
+
+  for (const node of graph.allNodes()) {
+    if (node.pinned) continue;
+    const importance = node.importance ?? 0;
+    if (importance < 0.6) continue;
+    if (node.strength >= 0.4) continue;
+
+    // Boost strength toward importance level, capped at importance * 0.8
+    const ceiling = importance * 0.8;
+    const boost = Math.min(0.1, ceiling - node.strength);
+    if (boost <= 0) continue;
+
+    node.strength = Math.min(ceiling, node.strength + boost);
+    node.lastAccessedAt = Date.now();
+    refreshed++;
+  }
+
+  if (refreshed > 0) {
+    log(`Spaced repetition: refreshed ${refreshed} high-importance declining nodes`);
+  }
+
+  return refreshed;
+}
+
+// ── Auto-Confidence Assignment ──
+
+/**
+ * Assign confidence scores to nodes based on source signals in their tags.
+ * Owner-sourced content gets highest confidence; inferences get lowest.
+ * Only sets confidence on nodes that don't already have it.
+ */
+export function autoAssignConfidence(graph: MemoryGraph): number {
+  let updated = 0;
+
+  for (const node of graph.allNodes()) {
+    if (node.confidence !== undefined && node.confidence !== null) continue;
+
+    const tagsLower = new Set(node.tags.map(t => t.toLowerCase()));
+
+    if (tagsLower.has("owner") || tagsLower.has("gillis") || tagsLower.has("gillis-family")) {
+      node.confidence = 1.0;
+    } else if (tagsLower.has("whitelisted") || tagsLower.has("family") || tagsLower.has("friend")) {
+      node.confidence = 0.8;
+    } else if (tagsLower.has("work") || tagsLower.has("colleague") || tagsLower.has("professional-life")) {
+      node.confidence = 0.7;
+    } else if (node.type === "insight" || node.type === "meta") {
+      node.confidence = 0.5;
+    } else if (node.type === "event" || node.type === "fact" || node.type === "person") {
+      node.confidence = 0.6;
+    } else {
+      node.confidence = 0.5;
+    }
+
+    updated++;
+  }
+
+  if (updated > 0) {
+    log(`Auto-confidence: assigned confidence to ${updated} nodes`);
   }
 
   return updated;
