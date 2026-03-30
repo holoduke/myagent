@@ -121,7 +121,9 @@ export function scanFollowUpsForResolution(wm: WorkingMemory, observations: Obse
     if (fu.potentiallyResolved) continue;
 
     // Build keyword set from the follow-up question + context + targetPerson
-    const keywords = extractKeywords(fu.question + " " + fu.context + " " + (fu.targetPerson || ""));
+    // Filter out short keywords (< 4 chars) to avoid noise words that slip through stop-word filtering
+    const keywords = extractKeywords(fu.question + " " + fu.context + " " + (fu.targetPerson || ""))
+      .filter(kw => kw.length >= 4);
     if (keywords.length === 0) continue;
 
     // Check if any outgoing message has keyword overlap
@@ -133,8 +135,11 @@ export function scanFollowUpsForResolution(wm: WorkingMemory, observations: Obse
         : false;
 
       const keywordHits = keywords.filter(kw => obsText.includes(kw));
-      // Require either a person match + 1 keyword, or 2+ keyword hits
-      if ((senderMatch && keywordHits.length >= 1) || keywordHits.length >= 2) {
+      const overlapRatio = keywordHits.length / keywords.length;
+      // Require minimum 30% keyword overlap AND either:
+      // - sender match + 2 keyword hits, or
+      // - 3+ keyword hits without sender match
+      if (overlapRatio >= 0.3 && ((senderMatch && keywordHits.length >= 2) || keywordHits.length >= 3)) {
         fu.potentiallyResolved = true;
         fu.potentiallyResolvedAt = now;
         marked++;
