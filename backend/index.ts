@@ -1,16 +1,10 @@
 import "dotenv/config";
-import { readFileSync, existsSync } from "fs";
 import { createServer } from "http";
 import { createLogger } from "./logger.js";
-import { validateConfig, BRAIN_DIR, CLAUDE_TIMEOUT, WA_STARTUP_DELAY, OWNER_PHONE } from "./config.js";
+import { validateConfig, CLAUDE_TIMEOUT, WA_STARTUP_DELAY, OWNER_PHONE } from "./config.js";
 import { startWhatsApp, sendMessage, sendReaction, sendTypingIndicator, stopTypingIndicator, getLatestQr } from "./integrations/whatsapp.js";
-import { handleCaptchaReply } from "./captcha-verify.js";
-import { resetSession } from "./claude.js";
-import { getDefaultProvider, bootstrapDefaultProvider } from "./providers/index.js";
-import { splitMessage } from "./providers/util.js";
 import { MessageQueue } from "./queue.js";
 import { handleWebRoutes } from "./web.js";
-import { addMessage, clearHistory, getUsageStats } from "./history.js";
 import { startTokenRefreshLoop } from "./auth-refresh.js";
 import { recordObservation } from "./observer.js";
 import { startBrainLoop, stopBrainLoop, getBrainHealth } from "./brain.js";
@@ -26,10 +20,24 @@ import { initReplyAgent } from "./reply-agent.js";
 import { initMessageHandlers } from "./message-handlers.js";
 import { initBrowser, closeBrowser } from "./integrations/browser.js";
 import { handleTwiml, handleTurn, handleStatus as handleTwilioStatus } from "./integrations/twilio.js";
+import { createOwnerHandler } from "./owner-handler.js";
+import { bootstrapDefaultProvider } from "./providers/index.js";
 
 const queue = new MessageQueue();
 const log = createLogger("index");
 const startedAt = Date.now();
+
+// ── Service Lifecycle ──
+
+function cleanupServices(): void {
+  stopBrainLoop();
+  stopGmailPolling();
+  stopSlackPolling();
+  stopCalendarPolling();
+  stopHAPolling();
+  stopRSSPolling();
+  closeBrowser();
+}
 
 async function main() {
   validateConfig();
@@ -51,10 +59,8 @@ async function main() {
   // Initialize message handlers (user-defined filters)
   initMessageHandlers(sendMessage);
 
-  // Start Gmail polling (if accounts configured)
+  // Start integration pollers
   startGmailPolling();
-
-  // Start new integration pollers
   startCalendarPolling();
   startHAPolling();
   startRSSPolling();
@@ -63,7 +69,7 @@ async function main() {
   // Initialize browser automation (lazy — launches on first task)
   initBrowser();
 
-  // HTTP server: health check, QR code, web chat, and Gmail OAuth
+  // ── HTTP server ──
   const server = createServer((req, res) => {
     // Security headers
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -71,52 +77,25 @@ async function main() {
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("Content-Security-Policy", "script-src 'none'; frame-ancestors 'none';");
 
-    // Web chat routes
     if (handleWebRoutes(req, res, queue)) return;
-
-    // Gmail OAuth routes
     if (handleGmailRoutes(req, res)) return;
-
-    // Slack OAuth routes
     if (handleSlackRoutes(req, res)) return;
 
-    // Twilio webhooks (public endpoints — Twilio needs access without auth)
-    if (req.url?.startsWith("/twilio/twiml") && req.method === "POST") {
-      handleTwiml(req, res);
-      return;
-    }
-    if (req.url?.startsWith("/twilio/turn") && req.method === "POST") {
-      handleTurn(req, res);
-      return;
-    }
-    if (req.url?.startsWith("/twilio/status") && req.method === "POST") {
-      handleTwilioStatus(req, res);
-      return;
-    }
+    // Twilio webhooks (public endpoints)
+    if (req.url?.startsWith("/twilio/twiml") && req.method === "POST") { handleTwiml(req, res); return; }
+    if (req.url?.startsWith("/twilio/turn") && req.method === "POST") { handleTurn(req, res); return; }
+    if (req.url?.startsWith("/twilio/status") && req.method === "POST") { handleTwilioStatus(req, res); return; }
 
     // OwnTracks webhook (public endpoint)
-    if (req.url === "/owntracks" && req.method === "POST") {
-      handleOwnTracksWebhook(req, res);
-      return;
-    }
+    if (req.url === "/owntracks" && req.method === "POST") { handleOwnTracksWebhook(req, res); return; }
 
-    // Public status endpoint (no auth needed)
+    // Public status endpoint — uses cached stats from BrainState, no file I/O
     if (req.url === "/status") {
       const health = getBrainHealth();
       const uptime = Date.now() - startedAt;
       const uptimeHours = Math.floor(uptime / 3600000);
       const uptimeMinutes = Math.floor((uptime % 3600000) / 60000);
       const gmailAccounts = getAccountStatus();
-      // BRAIN_DIR imported from config
-
-      let memoryNodeCount = 0;
-      let memoryEdgeCount = 0;
-      try {
-        const nf = `${BRAIN_DIR}/graph/nodes.json`;
-        const ef = `${BRAIN_DIR}/graph/edges.json`;
-        if (existsSync(nf)) memoryNodeCount = Object.keys(JSON.parse(readFileSync(nf, "utf-8"))).length;
-        if (existsSync(ef)) memoryEdgeCount = (JSON.parse(readFileSync(ef, "utf-8")) as unknown[]).length;
-      } catch { /* expected: graph files may not exist yet */ }
 
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
@@ -132,8 +111,8 @@ async function main() {
           lastSuccessfulTick: health.lastSuccessfulTick,
         },
         memory: {
-          nodes: memoryNodeCount,
-          edges: memoryEdgeCount,
+          nodes: health.nodeCount,
+          edges: health.edgeCount,
         },
         queue: {
           depth: queue.size,
@@ -165,7 +144,8 @@ async function main() {
 <script>setTimeout(()=>location.reload(),20000);</script></body></html>`);
       return;
     }
-    // Health endpoint with brain status
+
+    // Default: health endpoint with brain status
     const health = getBrainHealth();
     const statusCode = health.healthy ? 200 : 503;
     res.writeHead(statusCode, { "Content-Type": "application/json" });
@@ -178,8 +158,7 @@ async function main() {
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
       log("Port 3000 already in use — exiting so process manager can restart cleanly");
-      stopBrainLoop();
-      stopGmailPolling();
+      cleanupServices();
       process.exit(1);
     }
     log(`HTTP server error: ${err.message}`);
@@ -199,146 +178,12 @@ async function main() {
     await new Promise((r) => setTimeout(r, WA_STARTUP_DELAY));
   }
 
+  const ownerHandler = createOwnerHandler({
+    sendMessage, sendReaction, sendTypingIndicator, stopTypingIndicator,
+  });
+
   await startWhatsApp(
-    // Owner message handler (direct responses)
-    async (jid, text, message) => {
-      await queue.add(async () => {
-        log(`Received from ${jid}: "${text}"`);
-
-        // Check if this message is a captcha verification reply
-        if (handleCaptchaReply(text)) {
-          log("Message consumed as captcha answer");
-          try { await sendReaction(jid, message.key, "\u2705"); } catch { /* intentionally ignored */ }
-          return;
-        }
-
-        try {
-          await sendReaction(jid, message.key, "\u23f3");
-          log("Sent hourglass reaction");
-        } catch (err) {
-          log(`Failed to send reaction: ${err}`);
-        }
-
-        try {
-          // Handle /reset command to start a fresh conversation
-          if (text.trim().toLowerCase() === "/reset") {
-            resetSession();
-            clearHistory();
-            await sendMessage(jid, "Session reset. Starting fresh conversation.");
-            await sendReaction(jid, message.key, "\u2705");
-            return;
-          }
-
-          // Handle /usage command
-          if (text.trim().toLowerCase() === "/usage") {
-            const stats = getUsageStats();
-            await sendMessage(jid, stats);
-            await sendReaction(jid, message.key, "\u2705");
-            return;
-          }
-
-          // Save user message to history
-          addMessage({ role: "user", content: text, timestamp: Date.now(), source: "whatsapp" });
-
-          const provider = getDefaultProvider();
-          log(`Calling ${provider.name} with: "${text.slice(0, 80)}"`);
-
-          let fullResponse = "";
-          let result;
-
-          if (provider.supportsStreaming) {
-            // Streaming mode with intermediate chunk delivery
-            let chunkBuffer = "";
-            let lastSendTime = Date.now();
-            const SEND_INTERVAL_MS = 15_000; // Send intermediate chunks every ~15s
-            const MIN_CHUNK_LENGTH = 50;
-
-            // Start typing indicator
-            await sendTypingIndicator(jid);
-            const typingInterval = setInterval(() => {
-              sendTypingIndicator(jid).catch(() => {});
-            }, 10_000);
-
-            result = await provider.askStreaming(text, (delta) => {
-              fullResponse += delta;
-              chunkBuffer += delta;
-
-              const now = Date.now();
-              if (now - lastSendTime >= SEND_INTERVAL_MS && chunkBuffer.length >= MIN_CHUNK_LENGTH) {
-                // Find a clean sentence boundary to split on
-                let splitIdx = -1;
-                // Look for last period followed by space/newline, or last newline
-                for (let i = chunkBuffer.length - 1; i >= MIN_CHUNK_LENGTH / 2; i--) {
-                  if (chunkBuffer[i] === "\n" || (chunkBuffer[i] === "." && (i === chunkBuffer.length - 1 || chunkBuffer[i + 1] === " " || chunkBuffer[i + 1] === "\n"))) {
-                    splitIdx = i + 1;
-                    break;
-                  }
-                }
-
-                if (splitIdx > 0) {
-                  const toSend = chunkBuffer.slice(0, splitIdx).trim();
-                  chunkBuffer = chunkBuffer.slice(splitIdx);
-                  lastSendTime = now;
-
-                  if (toSend.length > 0) {
-                    // Send intermediate chunks (fire-and-forget, don't abort stream on failure)
-                    const chunks = splitMessage(toSend);
-                    for (const c of chunks) {
-                      sendMessage(jid, c).catch((err) => {
-                        log(`Warning: failed to send intermediate chunk: ${err}`);
-                      });
-                    }
-                    log(`Sent intermediate chunk (${toSend.length} chars) to ${jid}`);
-                  }
-                }
-              }
-            }, {});
-
-            clearInterval(typingInterval);
-            await stopTypingIndicator(jid);
-
-            // Send remaining buffer as the final message
-            const remaining = chunkBuffer.trim();
-            if (remaining.length > 0) {
-              const chunks = splitMessage(remaining);
-              for (const c of chunks) {
-                log(`Sending final chunk (${c.length} chars) to ${jid}`);
-                await sendMessage(jid, c);
-                log("Final chunk sent successfully");
-              }
-            }
-          } else {
-            // Non-streaming fallback
-            result = await provider.ask(text, {});
-            fullResponse = result.messages.join("\n");
-            for (const chunk of result.messages) {
-              log(`Sending chunk (${chunk.length} chars) to ${jid}`);
-              await sendMessage(jid, chunk);
-              log("Chunk sent successfully");
-            }
-          }
-
-          log(`${provider.name} returned, response ${fullResponse.length} chars, first 200: ${fullResponse.slice(0, 200)}`);
-
-          // Save FULL concatenated response to history (not individual chunks)
-          addMessage({ role: "assistant", content: fullResponse || result.messages.join("\n"), timestamp: Date.now(), source: "whatsapp" });
-
-          await sendReaction(jid, message.key, "\u2705");
-          log(`Done - responded to ${jid}`);
-        } catch (err) {
-          log(`ERROR: ${err}`);
-          const errorMsg =
-            err instanceof Error ? err.message : "Unknown error occurred";
-          try {
-            await sendMessage(jid, `Error: ${errorMsg}`);
-            await sendReaction(jid, message.key, "\u274c");
-          } catch (sendErr) {
-            log(`Failed to send error message: ${sendErr}`);
-          }
-        }
-      });
-    },
-    // Observation handler (ALL messages → brain memory)
+    (jid, text, message) => queue.add(() => ownerHandler(jid, text, message)),
     (obs) => {
       recordObservation({
         timestamp: Date.now(),
@@ -356,16 +201,11 @@ async function main() {
   );
 }
 
-// Graceful shutdown
+// ── Graceful Shutdown ──
+
 function shutdown() {
   log.info("Shutting down...");
-  stopBrainLoop();
-  stopGmailPolling();
-  stopSlackPolling();
-  stopCalendarPolling();
-  stopHAPolling();
-  stopRSSPolling();
-  closeBrowser();
+  cleanupServices();
   process.exit(0);
 }
 
@@ -373,15 +213,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 process.on("uncaughtException", (err) => {
   log(`Uncaught exception: ${err.message}\n${err.stack || ""}`);
-  // Exit so process manager can restart cleanly.
-  // Continuing after uncaughtException leaves the process in undefined state.
-  stopBrainLoop();
-  stopGmailPolling();
-  stopSlackPolling();
-  stopCalendarPolling();
-  stopHAPolling();
-  stopRSSPolling();
-  closeBrowser();
+  cleanupServices();
   process.exit(1);
 });
 process.on("unhandledRejection", (err) => {

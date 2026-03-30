@@ -46,7 +46,8 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
     } catch {
-      // Silently fail
+      // Allow retry on next mount/visibility change
+      return
     }
 
     historyLoaded.value = true
@@ -68,7 +69,12 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
 
-    const reader = res.body!.getReader()
+    if (!res.body) {
+      addMessage({ role: 'error', content: 'Empty response from server', timestamp: Date.now() })
+      return
+    }
+
+    const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buf = ''
     let lastStats: ChatStats | null = null
@@ -179,10 +185,12 @@ export const useChatStore = defineStore('chat', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: '/reset' }),
       })
-      const reader = res.body!.getReader()
-      while (true) {
-        const { done } = await reader.read()
-        if (done) break
+      if (res.body) {
+        const reader = res.body.getReader()
+        while (true) {
+          const { done } = await reader.read()
+          if (done) break
+        }
       }
       clearMessages()
       addMessage({ role: 'system', content: 'Session reset. Starting fresh.', timestamp: Date.now() })

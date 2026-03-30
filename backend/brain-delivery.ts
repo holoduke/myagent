@@ -10,8 +10,24 @@ import { isWhatsAppConnected } from "./integrations/whatsapp.js";
 import { verify } from "./action-verifier.js";
 import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
 import type { BrainState } from "./memory/types.js";
+import { isOwnerInMeeting } from "./integrations/calendar.js";
 
 const log = createLogger("brain-delivery");
+
+const SEND_TIMEOUT_MS = 30_000;
+
+function sendWithTimeout(
+  sendMessage: (jid: string, text: string) => Promise<void>,
+  jid: string,
+  text: string,
+): Promise<void> {
+  return Promise.race([
+    sendMessage(jid, text),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`sendMessage timed out after ${SEND_TIMEOUT_MS / 1000}s`)), SEND_TIMEOUT_MS),
+    ),
+  ]);
+}
 
 // ── Fast Scheduled Message Polling ──
 // Lightweight poller that runs every 10s independently of brain ticks.
@@ -112,13 +128,7 @@ async function deliverScheduledMessages(
         deliveredIds.push(msg.id);
         continue;
       }
-      const SEND_TIMEOUT_MS = 30_000;
-      await Promise.race([
-        sendMessage(jid, msg.message),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`sendMessage timed out after ${SEND_TIMEOUT_MS / 1000}s`)), SEND_TIMEOUT_MS),
-        ),
-      ]);
+      await sendWithTimeout(sendMessage, jid, msg.message);
       state.lastMessageTime = Date.now();
       state.messagesToday++;
       anyDelivered = true;
@@ -164,13 +174,7 @@ async function deliverScheduledMessages(
         return;
       }
 
-      const SEND_TIMEOUT_MS = 30_000;
-      await Promise.race([
-        sendMessage(ownerJid, pending.message),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`sendMessage timed out after ${SEND_TIMEOUT_MS / 1000}s`)), SEND_TIMEOUT_MS),
-        ),
-      ]);
+      await sendWithTimeout(sendMessage, ownerJid, pending.message);
       state.lastMessageTime = Date.now();
       state.messagesToday++;
       anyDelivered = true;
@@ -215,8 +219,13 @@ export async function trySendMessage(
     return;
   }
 
+  // Check if owner is in a meeting — suppress non-bypass proactive messages
+  const inMeeting = !bypass && isOwnerInMeeting();
+
   if (!bypass && isQuiet) {
     log("Suppressed message: quiet hours");
+  } else if (inMeeting) {
+    log("Suppressed message: owner is in a meeting");
   } else if (!bypass && !messageIntervalOk) {
     log(`Suppressed message: too soon (${Math.round((now - state.lastMessageTime) / 60000)}m since last)`);
   } else if (!bypass && !underDailyLimit) {

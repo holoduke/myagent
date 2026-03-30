@@ -10,6 +10,10 @@ export const WEB_PASSWORD = process.env.WEB_PASSWORD || "";
 export const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 export const DATA_DIR = process.env.DATA_DIR || "/data";
 
+// -- Identity --
+export const OWNER_NAME = process.env.OWNER_NAME || "Owner";
+export const GITHUB_REPO = process.env.GITHUB_REPO || "";
+
 // -- Timeouts & Limits --
 export const CLAUDE_TIMEOUT = Number(process.env.CLAUDE_TIMEOUT) || 300_000;
 export const WA_STARTUP_DELAY = Math.min(Math.max(Number(process.env.WA_STARTUP_DELAY) || 40, 0), 120) * 1000;

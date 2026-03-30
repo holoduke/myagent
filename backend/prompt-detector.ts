@@ -6,7 +6,7 @@
  * via brain config and editable from the dashboard.
  */
 
-import { BaseProvider } from "./providers/base-provider.js";
+import { HaikuRunner } from "./providers/haiku-runner.js";
 import { createLogger } from "./logger.js";
 import { getBrainConfig } from "./brain-config.js";
 
@@ -66,7 +66,7 @@ export async function detectWithPrompt(
   const fullPrompt = `${prompt}\n\nMessage from ${senderName}:\n"${text}"`;
 
   try {
-    const detector = new PromptDetectorProvider();
+    const detector = new HaikuRunner({ name: "prompt-detector", timeout: 30_000 });
     const result = await detector.run(fullPrompt);
 
     if (!result) {
@@ -87,76 +87,13 @@ export async function detectWithPrompt(
 
     log(`Prompt detector found ${parsed.events.length} events, ${parsed.requests.length} requests in: "${text.slice(0, 60)}"`);
     return parsed;
-  } catch (err: any) {
-    log(`Prompt detection failed: ${err.message || err}`);
+  } catch (err: unknown) {
+    log(`Prompt detection failed: ${err instanceof Error ? err.message : err}`);
     return { events: [], requests: [] };
   }
 }
 
-/**
- * Lightweight provider that spawns claude CLI with haiku model.
- * No session, no tools — just a single prompt -> JSON response.
- */
-class PromptDetectorProvider extends BaseProvider {
-  readonly name = "prompt-detector";
-  readonly supportsStreaming = false;
-  readonly supportsSessions = false;
-
-   
-  async ask(_message: string) { return { messages: [] as string[] }; }
-  async askStreaming(_message: string, _onDelta: (text: string) => void) { return { messages: [] as string[] }; }
-  resetSession() { /* no-op */ }
-   
-
-  async run(prompt: string): Promise<string | null> {
-    const timeout = 30_000; // 30s max for detection
-
-    return new Promise((resolve) => {
-      const { promise } = this.spawnWithTimeout({
-        command: "claude",
-        args: [
-          "-p", prompt,
-          "--output-format", "json",
-          "--model", "haiku",
-          "--allowedTools", "",  // no tools needed
-        ],
-        env: {
-          ANTHROPIC_API_KEY: "",
-          CLAUDECODE: "",
-          HOME: process.env.CLAUDE_HOME || process.env.HOME || "/root",
-        },
-        timeout,
-        onTimeout: () => {
-          log("Prompt detector timed out");
-        },
-      });
-
-      promise.then(({ code, stdout, stderr }) => {
-        if (code !== 0) {
-          log(`Prompt detector exited ${code}: ${stderr.slice(0, 200)}`);
-          resolve(null);
-          return;
-        }
-
-        try {
-          const response = JSON.parse(stdout) as { result: string; is_error: boolean };
-          if (response.is_error) {
-            log(`Prompt detector error: ${response.result.slice(0, 200)}`);
-            resolve(null);
-            return;
-          }
-          resolve(response.result);
-        } catch {
-          // Try raw stdout
-          resolve(stdout.trim() || null);
-        }
-      }).catch((err) => {
-        log(`Prompt detector spawn failed: ${err}`);
-        resolve(null);
-      });
-    });
-  }
-}
+// Lightweight LLM for prompt detection — uses shared HaikuRunner.
 
 export function getDefaultDetectionPrompt(): string {
   return DEFAULT_DETECTION_PROMPT;

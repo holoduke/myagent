@@ -272,6 +272,7 @@
 import type { MessageHandler, HandlerLogEntry, HandlerStats, HandlerTestResult, HandlerActionType } from '~/types/aria'
 
 const { api } = useApi()
+const { showToast } = useToast()
 
 const loaded = ref(false)
 const error = ref('')
@@ -416,7 +417,7 @@ async function saveHandler() {
     await loadData()
     cancelEdit()
   } catch (e) {
-    console.error('Save failed:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to save handler', 'error')
   } finally {
     saving.value = false
   }
@@ -427,7 +428,7 @@ async function toggleHandler(h: MessageHandler) {
     await api(`/api/message-handlers/${h.id}`, { method: 'PATCH', body: { enabled: !h.enabled } })
     await loadData()
   } catch (e) {
-    console.error('Toggle failed:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to toggle handler', 'error')
   }
 }
 
@@ -437,7 +438,7 @@ async function deleteHandler(id: string) {
     await api(`/api/message-handlers/${id}`, { method: 'DELETE' })
     await loadData()
   } catch (e) {
-    console.error('Delete failed:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to delete handler', 'error')
   }
 }
 

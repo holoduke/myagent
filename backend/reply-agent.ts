@@ -15,7 +15,7 @@
 import { randomUUID } from "crypto";
 import { appendFileSync, readFileSync, existsSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
-import { BaseProvider } from "./providers/base-provider.js";
+import { HaikuRunner } from "./providers/haiku-runner.js";
 import { createLogger } from "./logger.js";
 import type { Observation } from "./observer.js";
 import { BRAIN_DIR } from "./config.js";
@@ -381,7 +381,7 @@ Message: "${params.testMessage}"
 Respond ONLY with valid JSON, no markdown, no code fences:
 {"shouldReply": true or false, "reply": "your reply text or null if shouldReply is false", "reason": "brief reason for your decision"}`;
 
-  const tester = new TestLLM();
+  const tester = new HaikuRunner({ name: "reply-test" });
   const raw = await tester.run(prompt);
   if (!raw) {
     return { shouldReply: false, reply: null, reason: "LLM evaluation failed" };
@@ -403,39 +403,4 @@ Respond ONLY with valid JSON, no markdown, no code fences:
 
 // ── Test-only LLM provider ──
 
-class TestLLM extends BaseProvider {
-  readonly name = "reply-test";
-  readonly supportsStreaming = false;
-  readonly supportsSessions = false;
-
-   
-  async ask(_msg: string) { return { messages: [] as string[] }; }
-  async askStreaming(_msg: string, _cb: (t: string) => void) { return { messages: [] as string[] }; }
-  resetSession() { /* no-op */ }
-   
-
-  async run(prompt: string): Promise<string | null> {
-    return new Promise((resolve) => {
-      const { promise } = this.spawnWithTimeout({
-        command: "claude",
-        args: ["-p", prompt, "--output-format", "json", "--model", "haiku", "--allowedTools", ""],
-        env: {
-          ANTHROPIC_API_KEY: "",
-          CLAUDECODE: "",
-          HOME: process.env.CLAUDE_HOME || process.env.HOME || "/root",
-        },
-        timeout: 15_000,
-        onTimeout: () => log("Test LLM timed out"),
-      });
-
-      promise.then(({ code, stdout, stderr }) => {
-        if (code !== 0) { log(`Test LLM exited ${code}: ${stderr.slice(0, 200)}`); resolve(null); return; }
-        try {
-          const resp = JSON.parse(stdout) as { result: string; is_error: boolean };
-          if (resp.is_error) { resolve(null); return; }
-          resolve(resp.result);
-        } catch { resolve(stdout.trim() || null); }
-      }).catch(() => resolve(null));
-    });
-  }
-}
+// Lightweight LLM for reply testing — uses shared HaikuRunner.

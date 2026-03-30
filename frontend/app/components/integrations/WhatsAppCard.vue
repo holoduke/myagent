@@ -303,11 +303,14 @@ async function removeContact(jid: string) {
 let refreshInterval: ReturnType<typeof setInterval> | null = null
 
 watch(() => props.whatsapp.connected, (connected) => {
+  if (refreshInterval) {
+    clearInterval(refreshInterval)
+    refreshInterval = null
+  }
   if (!connected) {
     fetchQr()
     refreshInterval = setInterval(fetchQr, 15000)
   } else {
-    if (refreshInterval) clearInterval(refreshInterval)
     qrData.value = null
   }
 }, { immediate: true })

@@ -35,13 +35,12 @@ import {
 } from "./self-improve-queue.js";
 import { loadSubAgents, loadSubAgentHistory } from "./sub-agents.js";
 import { trySendMessage } from "./brain-delivery.js";
+import { OWNER_NAME, GITHUB_REPO } from "./config.js";
 
 const log = createLogger("brain-ticks");
 
 // ── Config ──
 
-const OWNER_NAME = process.env.OWNER_NAME || "Owner";
-const GITHUB_REPO = process.env.GITHUB_REPO || "";
 const BRAIN_TOOLS = process.env.BRAIN_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch";
 
 // ── Response Parsing ──

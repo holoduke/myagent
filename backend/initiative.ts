@@ -32,13 +32,19 @@ export function detectInitiativeSignals(
   const absenceMultiplier = isWeekend ? 1.5 : 1;
   const staleMultiplier = isWeekend ? 2 : 1;
 
-  // 1. Follow-up due
+  // 1. Follow-up due — priority scales inversely with how overdue it is.
+  // A follow-up due 1 hour ago is more actionable than one due 30 days ago.
+  // Fresh overdue: 0.7, after 7 days: ~0.35, after 30 days: ~0.1
+  const FOLLOW_UP_DECAY_DAYS = 7; // half-life in days
   for (const followUp of wm.pendingFollowUps) {
     if (followUp.dueAt && followUp.dueAt <= now) {
+      const overdueDays = (now - followUp.dueAt) / (24 * 60 * 60 * 1000);
+      const decayFactor = Math.pow(0.5, overdueDays / FOLLOW_UP_DECAY_DAYS);
+      const priority = Math.max(0.1, 0.7 * decayFactor); // floor at 0.1 so it never fully disappears
       signals.push({
         type: "follow_up_due",
-        priority: 0.7,
-        description: `Follow-up due: "${followUp.question}"${followUp.targetPerson ? ` (for ${followUp.targetPerson})` : ""}`,
+        priority,
+        description: `Follow-up due${overdueDays >= 1 ? ` (${Math.floor(overdueDays)}d overdue)` : ""}: "${followUp.question}"${followUp.targetPerson ? ` (for ${followUp.targetPerson})` : ""}`,
         relatedNodeIds: [],
         suggestedAction: `Ask about: ${followUp.question}`,
       });

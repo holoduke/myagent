@@ -96,12 +96,11 @@ export function addDirective(
     d => d.contactJid === contactJid && d.actionType === actionType,
   );
   if (existingIdx >= 0) {
-    directives[existingIdx].policy = policy;
-    directives[existingIdx].enabled = true;
-    directives[existingIdx].note = note;
-    save(directives);
+    const updated = { ...directives[existingIdx], policy, enabled: true, note };
+    const updatedDirectives = [...directives.slice(0, existingIdx), updated, ...directives.slice(existingIdx + 1)];
+    save(updatedDirectives);
     log(`Updated directive for ${contactName}: ${actionType} → ${policy}`);
-    return directives[existingIdx];
+    return updated;
   }
 
   const directive: Directive = {
@@ -123,16 +122,20 @@ export function addDirective(
 
 export function updateDirective(id: string, updates: Partial<Pick<Directive, "policy" | "enabled" | "note">>): Directive | null {
   const directives = load();
-  const directive = directives.find(d => d.id === id);
-  if (!directive) return null;
+  const idx = directives.findIndex(d => d.id === id);
+  if (idx < 0) return null;
 
-  if (updates.policy !== undefined) directive.policy = updates.policy;
-  if (updates.enabled !== undefined) directive.enabled = updates.enabled;
-  if (updates.note !== undefined) directive.note = updates.note;
+  const updated: Directive = {
+    ...directives[idx],
+    ...(updates.policy !== undefined && { policy: updates.policy }),
+    ...(updates.enabled !== undefined && { enabled: updates.enabled }),
+    ...(updates.note !== undefined && { note: updates.note }),
+  };
 
-  save(directives);
+  const updatedDirectives = [...directives.slice(0, idx), updated, ...directives.slice(idx + 1)];
+  save(updatedDirectives);
   log(`Updated directive ${id}: ${JSON.stringify(updates)}`);
-  return directive;
+  return updated;
 }
 
 export function removeDirective(id: string): boolean {

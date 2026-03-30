@@ -166,11 +166,12 @@ export function getDueRecurringTasks(ownerJid: string): RecurringTask[] {
 
 export function markExecuted(taskId: string): void {
   const tasks = loadTasks();
-  const task = tasks.find(t => t.id === taskId);
-  if (task) {
-    task.lastRunAt = Date.now();
-    saveTasks(tasks);
-    log(`Marked recurring task executed: ${task.label} (${taskId})`);
+  const idx = tasks.findIndex(t => t.id === taskId);
+  if (idx >= 0) {
+    const updated = { ...tasks[idx], lastRunAt: Date.now() };
+    const updatedTasks = [...tasks.slice(0, idx), updated, ...tasks.slice(idx + 1)];
+    saveTasks(updatedTasks);
+    log(`Marked recurring task executed: ${updated.label} (${taskId})`);
   } else {
     log(`WARN markExecuted called with unknown taskId: ${taskId}`);
   }
@@ -202,20 +203,25 @@ export function updateRecurringTask(
   updates: Partial<Pick<RecurringTask, "label" | "pattern" | "action" | "enabled">>,
 ): RecurringTask | null {
   const tasks = loadTasks();
-  const task = tasks.find(t => t.id === id);
-  if (!task) return null;
+  const idx = tasks.findIndex(t => t.id === id);
+  if (idx < 0) return null;
 
-  if (updates.label !== undefined) task.label = updates.label;
   if (updates.pattern !== undefined) {
     validatePattern(updates.pattern);
-    task.pattern = updates.pattern;
   }
-  if (updates.action !== undefined) task.action = updates.action;
-  if (updates.enabled !== undefined) task.enabled = updates.enabled;
 
-  saveTasks(tasks);
-  log(`Updated recurring task: ${task.label} (${id})`);
-  return task;
+  const updated: RecurringTask = {
+    ...tasks[idx],
+    ...(updates.label !== undefined && { label: updates.label }),
+    ...(updates.pattern !== undefined && { pattern: updates.pattern }),
+    ...(updates.action !== undefined && { action: updates.action }),
+    ...(updates.enabled !== undefined && { enabled: updates.enabled }),
+  };
+
+  const updatedTasks = [...tasks.slice(0, idx), updated, ...tasks.slice(idx + 1)];
+  saveTasks(updatedTasks);
+  log(`Updated recurring task: ${updated.label} (${id})`);
+  return updated;
 }
 
 export function deleteRecurringTask(id: string): boolean {

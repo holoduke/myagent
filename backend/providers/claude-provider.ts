@@ -158,31 +158,11 @@ export class ClaudeProvider extends BaseProvider {
   }
 
   async ask(message: string, options: ProviderAskOptions = {}): Promise<AgentResult> {
-    const timeout = options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 120_000);
-    const allowedTools = options.allowedTools ?? this.config.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
-    const noSession = options.noSession ?? false;
-
-    await ensureValidToken();
-
-    const result = await this.runClaude(message, { timeout, allowedTools, noSession });
-    if (result.isAuthError) {
-      log("Auth error detected, refreshing token and retrying...");
-      await ensureValidToken();
-      const retry = await this.runClaude(message, { timeout, allowedTools, noSession });
-      if (retry.isAuthError) {
-        throw new Error("Authentication failed after retry. OAuth tokens may need manual refresh.");
-      }
-      if (!noSession) {
-        this.accumulateStats(retry.stats);
-        this.checkAutoReset();
-      }
-      return retry;
-    }
-    if (!noSession) {
-      this.accumulateStats(result.stats);
-      this.checkAutoReset();
-    }
-    return result;
+    const { timeout, allowedTools, noSession } = this.resolveOptions(options);
+    return this.withAuthRetry(
+      () => this.runClaude(message, { timeout, allowedTools, noSession }),
+      noSession,
+    );
   }
 
   async askStreaming(
@@ -190,17 +170,32 @@ export class ClaudeProvider extends BaseProvider {
     onDelta: (text: string) => void,
     options: ProviderAskOptions = {},
   ): Promise<AgentResult> {
-    const timeout = options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 120_000);
-    const allowedTools = options.allowedTools ?? this.config.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit";
-    const noSession = options.noSession ?? false;
+    const { timeout, allowedTools, noSession } = this.resolveOptions(options);
+    return this.withAuthRetry(
+      () => this.runClaudeStreaming(message, onDelta, { timeout, allowedTools, noSession }),
+      noSession,
+    );
+  }
 
+  private resolveOptions(options: ProviderAskOptions): { timeout: number; allowedTools: string; noSession: boolean } {
+    return {
+      timeout: options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 120_000),
+      allowedTools: options.allowedTools ?? this.config.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit",
+      noSession: options.noSession ?? false,
+    };
+  }
+
+  private async withAuthRetry(
+    operation: () => Promise<AgentResult & { isAuthError?: boolean }>,
+    noSession: boolean,
+  ): Promise<AgentResult> {
     await ensureValidToken();
+    const result = await operation();
 
-    const result = await this.runClaudeStreaming(message, onDelta, { timeout, allowedTools, noSession });
     if (result.isAuthError) {
-      log("Auth error in streaming, refreshing token and retrying...");
+      log("Auth error detected, refreshing token and retrying...");
       await ensureValidToken();
-      const retry = await this.runClaudeStreaming(message, onDelta, { timeout, allowedTools, noSession });
+      const retry = await operation();
       if (retry.isAuthError) {
         throw new Error("Authentication failed after retry. OAuth tokens may need manual refresh.");
       }
@@ -210,6 +205,7 @@ export class ClaudeProvider extends BaseProvider {
       }
       return retry;
     }
+
     if (!noSession) {
       this.accumulateStats(result.stats);
       this.checkAutoReset();

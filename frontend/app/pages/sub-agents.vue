@@ -205,6 +205,7 @@
 import type { SubAgentConfig, SubAgentRun, SubAgentsResponse } from '~/types/aria'
 
 const { api } = useApi()
+const { showToast } = useToast()
 const { timeAgo, fmtDate } = useTimeAgo()
 
 const data = ref<SubAgentsResponse | null>(null)
@@ -306,7 +307,9 @@ async function doCreate() {
     })
     showCreate.value = false
     await load()
-  } catch { /* silent */ } finally { saving.value = false }
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to create agent', 'error')
+  } finally { saving.value = false }
 }
 
 async function doUpdate() {
@@ -323,7 +326,9 @@ async function doUpdate() {
     })
     editAgent.value = null
     await load()
-  } catch { /* silent */ } finally { saving.value = false }
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to save agent', 'error')
+  } finally { saving.value = false }
 }
 
 async function doDelete() {
@@ -334,21 +339,27 @@ async function doDelete() {
     editAgent.value = null
     selectedAgent.value = null
     await load()
-  } catch { /* silent */ } finally { deleting.value = false }
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to delete agent', 'error')
+  } finally { deleting.value = false }
 }
 
 async function doToggle(agent: SubAgentConfig) {
   try {
     await api(`/api/sub-agents/${agent.id}/toggle`, { method: 'POST' })
     await load()
-  } catch { /* silent */ }
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to toggle agent', 'error')
+  }
 }
 
 async function doManualRun(agentId: string) {
   try {
     await api(`/api/sub-agents/${agentId}/run`, { method: 'POST' })
     await load()
-  } catch { /* silent */ }
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to run agent', 'error')
+  }
 }
 
 async function load() {

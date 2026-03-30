@@ -1,7 +1,7 @@
 import { google } from "googleapis";
 import { FileStore } from "../utils/file-store.js";
 import { DedupCache } from "../utils/dedup-cache.js";
-import { recordObservation } from "../observer.js";
+import { recordObservation, getObservationsSince } from "../observer.js";
 import { loadAccounts, createOAuth2Client } from "./gmail.js";
 import { isIntegrationEnabled } from "./integration-config.js";
 import { createLogger } from "../logger.js";
@@ -253,6 +253,34 @@ export async function createEvent(
     log(`Failed to create calendar event: ${msg}`);
     return { success: false, error: msg };
   }
+}
+
+/**
+ * Check if the owner is currently in a meeting based on recent calendar observations.
+ * Uses the observation stream (no extra API calls) to determine if any
+ * calendar event's start ≤ now ≤ end.
+ */
+export function isOwnerInMeeting(): boolean {
+  if (!ENABLED) return false;
+
+  try {
+    // Check observations from the last 25 hours (calendar polls upcoming 24h)
+    const since = Date.now() - 25 * 60 * 60 * 1000;
+    const observations = getObservationsSince(since, { source: "calendar" });
+    const now = Date.now();
+
+    for (const obs of observations) {
+      if (!obs.calendarMeta?.start || !obs.calendarMeta?.end) continue;
+      const start = new Date(obs.calendarMeta.start).getTime();
+      const end = new Date(obs.calendarMeta.end).getTime();
+      if (isNaN(start) || isNaN(end)) continue;
+      if (start <= now && now <= end) return true;
+    }
+  } catch {
+    // If observation lookup fails, don't block delivery
+  }
+
+  return false;
 }
 
 export function getCalendarStatus(): { enabled: boolean; accounts: Array<{ id: string; email: string; lastSync: number }>; nextEventCount: number } {

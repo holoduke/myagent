@@ -52,9 +52,15 @@ const COMPILED_URGENCY_PATTERNS: { pattern: RegExp; score: number }[] = Object.e
     score,
   }));
 
-const OWNER_NAME = (process.env.OWNER_NAME || "Owner").toLowerCase();
+import { OWNER_NAME as RAW_OWNER_NAME } from "./config.js";
+
+const OWNER_NAME = RAW_OWNER_NAME.toLowerCase();
 
 // ── Urgency Scoring (zero Claude cost) ──
+
+// Urgency decays over time — a 3-hour-old "emergency" is less urgent than a fresh one.
+// Half-life of 1 hour: after 1h score is halved, after 2h quartered, etc.
+const URGENCY_HALF_LIFE_MS = 60 * 60 * 1000; // 1 hour
 
 export function scoreUrgency(obs: Observation): number {
   if (obs.isFromMe) return 0; // Own messages have no urgency
@@ -92,9 +98,17 @@ export function scoreUrgency(obs: Observation): number {
   }
 
   // High punctuation density (3+ ! or ? marks)
-  const punctCount = (text.match(/[!?]{1}/g) || []).length;
+  const punctCount = (text.match(/[!?]/g) || []).length;
   if (punctCount >= 3) {
     score = Math.max(score, 0.4);
+  }
+
+  // Apply time decay — stale urgent messages lose urgency over time.
+  // Only decay messages older than 5 minutes (fresh messages keep full score).
+  const ageMs = Date.now() - obs.timestamp;
+  if (ageMs > 5 * 60 * 1000) {
+    const decayFactor = Math.pow(0.5, ageMs / URGENCY_HALF_LIFE_MS);
+    score *= decayFactor;
   }
 
   return Math.min(score, 1.0);
@@ -130,7 +144,10 @@ export function scoreObservations(observations: Observation[]): void {
     }
   }
 
-  pendingUrgency = Math.max(pendingUrgency, maxUrgency);
+  // Replace (not accumulate) pending urgency so stale scores don't persist.
+  // scoreObservations is called at tick start with current observations,
+  // which already have time-decay applied via scoreUrgency().
+  pendingUrgency = maxUrgency;
 }
 
 /**

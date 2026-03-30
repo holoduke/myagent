@@ -74,14 +74,12 @@ export function processObservation(obs: Observation): void {
   if (!obs.actionableSignals || obs.actionableSignals.length === 0) return;
 
   let hasConfirm = false;
-  let _hasAuto = false;
   const keptSignals: ActionableSignal[] = [];
 
   for (const signal of obs.actionableSignals) {
     const mode = getActionMode(obs.senderJid, signal.category);
     if (mode === "ignore") continue;
     if (mode === "confirm") hasConfirm = true;
-    if (mode === "auto") _hasAuto = true;
     keptSignals.push(signal);
   }
 

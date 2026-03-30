@@ -89,9 +89,9 @@ async function runImprove(): Promise<void> {
     return;
   }
 
-  let task: ImprovementTask;
+  let task: ImprovementTask | null;
   try {
-    task = safeReadJSON<ImprovementTask>(TASK_FILE, null as unknown as ImprovementTask);
+    task = safeReadJSON<ImprovementTask | null>(TASK_FILE, null);
     if (!task) {
       log("Failed to read task file");
       return;

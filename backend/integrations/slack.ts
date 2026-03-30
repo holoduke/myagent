@@ -97,6 +97,7 @@ const dedupCache = new DedupCache(200, 50);
 
 // ── Slack API Helper ──
 
+const USER_NAME_CACHE_MAX = 500;
 const userNameCache = new Map<string, string>();
 
 async function slackApi(token: string, method: string, params: Record<string, unknown> = {}): Promise<SlackApiResponse> {
@@ -135,13 +136,22 @@ async function resolveUserName(token: string, userId: string): Promise<string> {
     const res = await slackApi(token, "users.info", { user: userId });
     const user = res.user as { real_name?: string; name?: string; profile?: { display_name?: string } } | undefined;
     const name = user?.real_name || user?.profile?.display_name || user?.name || userId;
-    userNameCache.set(userId, name);
+    cacheUserName(userId, name);
     return name;
   } catch (err) {
     log(`Failed to resolve user ${userId}: ${err}`);
-    userNameCache.set(userId, userId);
+    cacheUserName(userId, userId);
     return userId;
   }
+}
+
+function cacheUserName(userId: string, name: string): void {
+  // Evict oldest entries when cache is full (Map preserves insertion order)
+  if (userNameCache.size >= USER_NAME_CACHE_MAX) {
+    const firstKey = userNameCache.keys().next().value;
+    if (firstKey !== undefined) userNameCache.delete(firstKey);
+  }
+  userNameCache.set(userId, name);
 }
 
 async function getJoinedChannels(token: string): Promise<SlackChannel[]> {
@@ -319,12 +329,13 @@ async function fetchNewMessages(workspace: SlackWorkspace, state: SlackState): P
       if (newestTs > oldest) {
         wsState.channelCursors[channel.id] = newestTs;
       }
-    } catch (err: any) {
-      if (err.message?.includes("not_in_channel") || err.message?.includes("channel_not_found")) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("not_in_channel") || msg.includes("channel_not_found")) {
         // Bot was removed from channel, skip silently
         continue;
       }
-      log(`Failed to fetch history for #${channel.name} in ${workspace.id}: ${err}`);
+      log(`Failed to fetch history for #${channel.name} in ${workspace.id}: ${msg}`);
     }
   }
 
@@ -401,8 +412,8 @@ export async function sendSlackMessage(
     log(`Message sent to ${channel} in ${workspaceId}`);
     logDelivery(channel, "slack", `[SLACK → ${channel}] ${text}`);
     return { success: true };
-  } catch (err: any) {
-    const errMsg = err.message || String(err);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
     log(`Failed to send to ${channel} in ${workspaceId}: ${errMsg}`);
     return { success: false, error: errMsg };
   }

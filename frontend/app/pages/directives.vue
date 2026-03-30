@@ -250,6 +250,7 @@
 import type { ActionableRequest, ActionableRequestStatus, ContactRequest, Directive, DirectiveActionType, DirectivePolicy, WhitelistContact } from '~/types/aria'
 
 const { api } = useApi()
+const { showToast } = useToast()
 
 // ── State ──
 const loaded = ref(false)
@@ -411,7 +412,7 @@ async function handleApprove(id: string) {
     await api(`/api/contact-requests/${id}/approve`, { method: 'POST' })
     await loadRequests()
   } catch (e) {
-    console.error('Failed to approve request:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to approve request', 'error')
   } finally {
     actingId.value = ''
   }
@@ -423,7 +424,7 @@ async function handleReject(id: string) {
     await api(`/api/contact-requests/${id}/reject`, { method: 'POST' })
     await loadRequests()
   } catch (e) {
-    console.error('Failed to reject request:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to reject request', 'error')
   } finally {
     actingId.value = ''
   }
@@ -436,7 +437,7 @@ async function handleArApprove(id: string) {
     await api(`/api/actionable-requests/${id}/approve`, { method: 'POST' })
     await loadActionableRequests()
   } catch (e) {
-    console.error('Failed to approve actionable request:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to approve request', 'error')
   } finally {
     arActingId.value = ''
   }
@@ -448,7 +449,7 @@ async function handleArReject(id: string) {
     await api(`/api/actionable-requests/${id}/reject`, { method: 'POST' })
     await loadActionableRequests()
   } catch (e) {
-    console.error('Failed to reject actionable request:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to reject request', 'error')
   } finally {
     arActingId.value = ''
   }
@@ -479,7 +480,7 @@ async function handleSaveDirective(data: { contactJid: string; contactName: stri
     editingDirective.value = undefined
     await loadDirectives()
   } catch (e) {
-    console.error('Failed to save directive:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to save directive', 'error')
   } finally {
     directiveSaving.value = false
   }
@@ -492,7 +493,7 @@ async function handleDeleteDirective(id: string) {
     editingDirective.value = undefined
     await loadDirectives()
   } catch (e) {
-    console.error('Failed to delete directive:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to delete directive', 'error')
   }
 }
 
@@ -502,7 +503,7 @@ async function toggleReplyDirective(dir: ReplyDirective) {
     await api(`/api/reply-directives/${dir.id}`, { method: 'PATCH', body: { enabled: !dir.enabled } })
     await loadReplyDirectives()
   } catch (e) {
-    console.error('Toggle failed:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to toggle directive', 'error')
   }
 }
 
@@ -515,7 +516,7 @@ async function saveReplyDirective(dir: ReplyDirective) {
     })
     await loadReplyDirectives()
   } catch (e) {
-    console.error('Save failed:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to save directive', 'error')
   } finally {
     rdSavingId.value = ''
   }
@@ -527,7 +528,7 @@ async function deleteReplyDirective(id: string) {
     await api(`/api/reply-directives/${id}`, { method: 'DELETE' })
     await loadReplyDirectives()
   } catch (e) {
-    console.error('Delete failed:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to delete directive', 'error')
   }
 }
 
@@ -549,7 +550,7 @@ async function createReplyDirective() {
     newReplyForm.enabled = true
     await loadReplyDirectives()
   } catch (e) {
-    console.error('Create failed:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to create directive', 'error')
   } finally {
     rdCreating.value = false
   }
@@ -557,15 +558,21 @@ async function createReplyDirective() {
 
 // ── Loaders ──
 async function loadRequests() {
-  try { requests.value = await api<ContactRequest[]>('/api/contact-requests') } catch {}
+  try { requests.value = await api<ContactRequest[]>('/api/contact-requests') } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to load requests', 'error')
+  }
 }
 
 async function loadDirectives() {
-  try { directives.value = await api<Directive[]>('/api/directives') } catch {}
+  try { directives.value = await api<Directive[]>('/api/directives') } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to load directives', 'error')
+  }
 }
 
 async function loadActionableRequests() {
-  try { actionableRequests.value = await api<ActionableRequest[]>('/api/actionable-requests') } catch {}
+  try { actionableRequests.value = await api<ActionableRequest[]>('/api/actionable-requests') } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to load actionable requests', 'error')
+  }
 }
 
 async function loadReplyDirectives() {
@@ -576,7 +583,9 @@ async function loadReplyDirectives() {
     ])
     replyDirectives.value = dirs
     replyLogEntries.value = log
-  } catch {}
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to load reply directives', 'error')
+  }
 }
 
 async function load() {

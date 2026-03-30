@@ -26,7 +26,7 @@ import { verify } from "./action-verifier.js";
 import { BrainError, wrapError } from "./brain-errors.js";
 import { getBrainConfig, getOwnerLocalDate, getOwnerLocalTime } from "./brain-config.js";
 
-import { BRAIN_DIR } from "./config.js";
+import { BRAIN_DIR, OWNER_NAME, GITHUB_REPO } from "./config.js";
 
 // ── Extracted modules ──
 import { thinkTick, consolidateTick, reflectTick } from "./brain-ticks.js";
@@ -43,8 +43,6 @@ const log = createLogger("brain");
 
 // ── Config from env ──
 
-const OWNER_NAME = process.env.OWNER_NAME || "Owner";
-const GITHUB_REPO = process.env.GITHUB_REPO || "";
 const TIME_AWARENESS_INTERVAL = 30 * 60 * 1000; // 30 min
 const TICK_TIMEOUT = Number(process.env.BRAIN_TICK_TIMEOUT) || 120_000;
 const CB_MAX_FAILURES = Number(process.env.BRAIN_CB_MAX_FAILURES) || 3;
@@ -106,13 +104,22 @@ function saveState(state: BrainState): void {
 
 // ── Health & Boot Helpers ──
 
-export function getBrainHealth(): { healthy: boolean; consecutiveFailures: number; pendingSelfMod: boolean; lastSuccessfulTick: number } {
+export function getBrainHealth(): {
+  healthy: boolean;
+  consecutiveFailures: number;
+  pendingSelfMod: boolean;
+  lastSuccessfulTick: number;
+  nodeCount: number;
+  edgeCount: number;
+} {
   const state = loadState();
   return {
     healthy: state.consecutiveFailures < 5,
     consecutiveFailures: state.consecutiveFailures,
     pendingSelfMod: state.pendingSelfMod,
     lastSuccessfulTick: state.lastSuccessfulTick,
+    nodeCount: state.nodeCount,
+    edgeCount: state.edgeCount,
   };
 }
 
@@ -324,6 +331,7 @@ export function stopBrainLoop(): void {
 }
 
 // ── Tick Concurrency Guards ──
+let tickLock = false;
 let thinkRunning = false;
 let consolidateRunning = false;
 let reflectRunning = false;
@@ -335,6 +343,12 @@ async function tick(
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
 ): Promise<void> {
+  if (tickLock) {
+    log("Skipping tick — previous tick still running");
+    return;
+  }
+  tickLock = true;
+  try {
   const cfg = getBrainConfig();
   const state = loadState();
   const now = Date.now();
@@ -466,6 +480,30 @@ async function tick(
         } finally {
           consolidateRunning = false;
         }
+
+        // After consolidation, check if new observations arrived during it.
+        // Without this, ARIA goes blind for up to a full tick interval after a long consolidate.
+        if (tickSucceeded && !thinkRunning) {
+          const postConsolidateObs = getObservationsSince(state.lastObservationTime);
+          if (postConsolidateObs.length > 0) {
+            log(`Post-consolidate: ${postConsolidateObs.length} new observations arrived, chaining think tick`);
+            scoreObservations(postConsolidateObs);
+            observeTick(state, postConsolidateObs);
+            thinkRunning = true;
+            try {
+              const thinkOk = await withTimeout(
+                thinkTick(state, postConsolidateObs, queue, sendMessage, ownerJid, graph, signals),
+                TICK_TIMEOUT,
+                "thinkTick (post-consolidate)",
+              );
+              if (thinkOk) tickSucceeded = true;
+            } catch (err) {
+              log(`Post-consolidate think failed: ${err}`);
+            } finally {
+              thinkRunning = false;
+            }
+          }
+        }
       }
     } else if (
       (hasNewObs && timeSinceThink >= cfg.thinkCooldown) ||
@@ -477,8 +515,8 @@ async function tick(
         log("Skipping thinkTick — previous invocation still running");
       } else {
         tickRan = true;
-        if (initiativeTriggered && !hasNewObs) {
-          recordInitiativeThink(state);
+        const isInitiativeThink = initiativeTriggered && !hasNewObs;
+        if (isInitiativeThink) {
           log(`Initiative-triggered think (${highPrioritySignals.length} high-priority signals)`);
         }
         thinkRunning = true;
@@ -488,6 +526,12 @@ async function tick(
             TICK_TIMEOUT,
             "thinkTick",
           );
+          // Only consume initiative budget after successful execution.
+          // Previously, budget was consumed before the tick ran, so if the
+          // queue wasn't idle or the tick failed, budget was wasted.
+          if (isInitiativeThink && tickSucceeded) {
+            recordInitiativeThink(state);
+          }
         } finally {
           thinkRunning = false;
         }
@@ -575,6 +619,9 @@ async function tick(
 
   saveState(freshState);
   graph.save();
+  } finally {
+    tickLock = false;
+  }
 }
 
 // ── Observe Tick (free, no Claude call) ──
@@ -584,14 +631,37 @@ function observeTick(state: BrainState, observations: Observation[]): void {
     graph.addPendingObservation(obs);
   }
 
+  // Build name→nodeId index for O(1) sender lookup instead of O(persons×observations)
   const personNodes = graph.findByType("person");
+  const nameIndex = new Map<string, string[]>();
+  for (const node of personNodes) {
+    // Index by content words and tags
+    const words = node.content.toLowerCase().split(/\s+/);
+    for (const w of words) {
+      if (w.length < 2) continue;
+      const ids = nameIndex.get(w) ?? [];
+      ids.push(node.id);
+      nameIndex.set(w, ids);
+    }
+    for (const tag of node.tags) {
+      const t = tag.toLowerCase();
+      const ids = nameIndex.get(t) ?? [];
+      ids.push(node.id);
+      nameIndex.set(t, ids);
+    }
+  }
+
+  const accessedIds = new Set<string>();
   for (const obs of observations) {
     if (!obs.sender) continue;
     const senderLower = obs.sender.toLowerCase();
-    for (const node of personNodes) {
-      if (node.content.toLowerCase().includes(senderLower) ||
-          node.tags.some(t => t.toLowerCase() === senderLower)) {
-        graph.accessNode(node.id);
+    const matchedIds = nameIndex.get(senderLower);
+    if (matchedIds) {
+      for (const id of matchedIds) {
+        if (!accessedIds.has(id)) {
+          graph.accessNode(id);
+          accessedIds.add(id);
+        }
       }
     }
   }
@@ -694,7 +764,7 @@ async function handleRecurringTasks(
         }
       }
     } catch (err) {
-      log(`[recurring] Error handling task "${task.label}": ${err}`);
+      log(`[recurring] Error handling task "${task.label}": ${err} — will retry on next matching tick`);
     }
   }
 }
