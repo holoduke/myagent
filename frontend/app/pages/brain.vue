@@ -205,6 +205,7 @@
 import type { BrainDashboardData, Goal, RecurringTask, InitiativeSignal, PendingFollowUp } from '~/types/aria'
 
 const { api } = useApi()
+const { showToast } = useToast()
 const { timeAgo, fmtDate } = useTimeAgo()
 
 const loaded = ref(false)
@@ -306,7 +307,7 @@ async function createGoal() {
     goalForm.checkpoints = []
     await load()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to create goal'
+    showToast(e instanceof Error ? e.message : 'Failed to create goal', 'error')
   } finally {
     savingGoal.value = false
   }
@@ -317,7 +318,7 @@ async function completeGoal(nodeId: string) {
     await api(`/api/brain/goals/${nodeId}/complete`, { method: 'POST' })
     await load()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to complete goal'
+    showToast(e instanceof Error ? e.message : 'Failed to complete goal', 'error')
   }
 }
 
@@ -326,7 +327,7 @@ async function abandonGoal(nodeId: string) {
     await api(`/api/brain/goals/${nodeId}/abandon`, { method: 'POST' })
     await load()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to abandon goal'
+    showToast(e instanceof Error ? e.message : 'Failed to abandon goal', 'error')
   }
 }
 
@@ -344,7 +345,7 @@ async function toggleCheckpoint(g: Goal, idx: number) {
     })
     await load()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to update goal'
+    showToast(e instanceof Error ? e.message : 'Failed to update goal', 'error')
   }
 }
 
@@ -356,7 +357,7 @@ async function toggleTask(t: RecurringTask) {
     })
     await load()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to update task'
+    showToast(e instanceof Error ? e.message : 'Failed to update task', 'error')
   }
 }
 
@@ -365,7 +366,7 @@ async function removeTask(id: string) {
     await api(`/api/brain/recurring/${id}`, { method: 'DELETE' })
     await load()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to delete task'
+    showToast(e instanceof Error ? e.message : 'Failed to delete task', 'error')
   }
 }
 
@@ -420,7 +421,7 @@ async function createTask() {
     taskForm.template = ''
     await load()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to create task'
+    showToast(e instanceof Error ? e.message : 'Failed to create task', 'error')
   } finally {
     savingTask.value = false
   }

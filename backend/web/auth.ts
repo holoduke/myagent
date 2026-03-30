@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import { ensureDir } from "../utils/file-store.js";
 import { dirname } from "path";
 import { createLogger } from "../logger.js";
+import { BRAIN_DIR, WEB_PASSWORD } from "../config.js";
 
 const log = createLogger("web");
 
@@ -12,7 +13,7 @@ const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_LOGIN_ATTEMPTS = 10;
 const LOGIN_WINDOW = 15 * 60 * 1000; // 15 minutes
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const SESSIONS_FILE = `${BRAIN_DIR}/sessions.json`;
 
 const activeSessions = new Map<string, number>(); // token → created timestamp
@@ -47,7 +48,6 @@ function saveSessions(): void {
 // Load persisted sessions on startup
 loadSessions();
 const loginAttempts: { ts: number }[] = [];
-const WEB_PASSWORD = process.env.WEB_PASSWORD || "";
 
 if (!WEB_PASSWORD) {
   log.warn("WEB_PASSWORD not set — all authenticated endpoints will be inaccessible");

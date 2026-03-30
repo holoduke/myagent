@@ -7,11 +7,12 @@ import { MemoryGraph } from "./memory/graph.js";
 import { buildImprovementPrompt, buildRecoveryPrompt } from "./self-improve-prompt.js";
 import type { ImprovementTask } from "./self-improve-prompt.js";
 import { createLogger } from "./logger.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("self-improve");
 
 const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const TASK_FILE = `${BRAIN_DIR}/improve-task.json`;
 const RESULT_FILE = `${BRAIN_DIR}/improve-result.json`;
 const SELF_MOD_MARKER = `${BRAIN_DIR}/self-mod-marker.json`;
@@ -88,9 +89,9 @@ async function runImprove(): Promise<void> {
     return;
   }
 
-  let task: ImprovementTask;
+  let task: ImprovementTask | null;
   try {
-    task = safeReadJSON<ImprovementTask>(TASK_FILE, null as unknown as ImprovementTask);
+    task = safeReadJSON<ImprovementTask | null>(TASK_FILE, null);
     if (!task) {
       log("Failed to read task file");
       return;

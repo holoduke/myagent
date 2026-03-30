@@ -35,10 +35,15 @@ import { classifyRetentionTier } from "../memory/decay.js";
 import { isAuthenticated } from "./auth.js";
 import { respondJson, apiHandler, apiGetHandler, ApiError } from "../utils/api-helpers.js";
 import { createLogger } from "../logger.js";
+import { BRAIN_DIR } from "../config.js";
 
 const log = createLogger("web");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
+/** Sanitize IDs from URL params to prevent path traversal (e.g. "../../etc/passwd"). */
+function sanitizeId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_\-]/g, "");
+}
 
 export const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
   "enabled", "maxMessagesPerDay", "minMessageInterval", "quietStart", "quietEnd",
@@ -271,19 +276,19 @@ export function handleBrainRoutes(
   }
 
   if (pathname.match(/^\/api\/improve-queue\/[^/]+\/approve$/) && req.method === "POST" && isAuthenticated(req)) {
-    const id = pathname.split("/")[3];
+    const id = sanitizeId(pathname.split("/")[3]);
     handleImproveQueueAction(req, res, () => approveItem(id));
     return true;
   }
 
   if (pathname.match(/^\/api\/improve-queue\/[^/]+\/reject$/) && req.method === "POST" && isAuthenticated(req)) {
-    const id = pathname.split("/")[3];
+    const id = sanitizeId(pathname.split("/")[3]);
     handleImproveQueueAction(req, res, () => { rejectItem(id); return { ok: true }; });
     return true;
   }
 
   if (pathname.match(/^\/api\/improve-queue\/[^/]+$/) && req.method === "DELETE" && isAuthenticated(req)) {
-    const id = pathname.split("/")[3];
+    const id = sanitizeId(pathname.split("/")[3]);
     handleImproveQueueAction(req, res, () => { deleteItem(id); return { ok: true }; });
     return true;
   }
@@ -307,7 +312,7 @@ export function handleBrainRoutes(
   }
 
   if (pathname.match(/^\/api\/brain\/recurring\/[^/]+$/) && isAuthenticated(req)) {
-    const id = pathname.split("/")[4];
+    const id = sanitizeId(pathname.split("/")[4]);
     if (req.method === "PUT") {
       handleBrainRecurringUpdate(req, res, id);
       return true;
@@ -332,19 +337,19 @@ export function handleBrainRoutes(
   }
 
   if (pathname.match(/^\/api\/brain\/goals\/[^/]+$/) && req.method === "PUT" && isAuthenticated(req)) {
-    const nodeId = pathname.split("/")[4];
+    const nodeId = sanitizeId(pathname.split("/")[4]);
     handleBrainGoalUpdate(req, res, nodeId);
     return true;
   }
 
   if (pathname.match(/^\/api\/brain\/goals\/[^/]+\/complete$/) && req.method === "POST" && isAuthenticated(req)) {
-    const nodeId = pathname.split("/")[4];
+    const nodeId = sanitizeId(pathname.split("/")[4]);
     handleBrainGoalAction(res, nodeId, "complete");
     return true;
   }
 
   if (pathname.match(/^\/api\/brain\/goals\/[^/]+\/abandon$/) && req.method === "POST" && isAuthenticated(req)) {
-    const nodeId = pathname.split("/")[4];
+    const nodeId = sanitizeId(pathname.split("/")[4]);
     handleBrainGoalAction(res, nodeId, "abandon");
     return true;
   }
@@ -413,7 +418,7 @@ export function handleBrainRoutes(
 
   const subAgentMatch = pathname.match(/^\/api\/sub-agents\/([^/]+)$/);
   if (subAgentMatch && isAuthenticated(req)) {
-    const id = decodeURIComponent(subAgentMatch[1]);
+    const id = sanitizeId(decodeURIComponent(subAgentMatch[1]));
     if (req.method === "GET") {
       const agent = getSubAgent(id);
       if (!agent) {
@@ -435,7 +440,7 @@ export function handleBrainRoutes(
   }
 
   if (pathname.match(/^\/api\/sub-agents\/[^/]+\/toggle$/) && req.method === "POST" && isAuthenticated(req)) {
-    const id = pathname.split("/")[3];
+    const id = sanitizeId(pathname.split("/")[3]);
     const agent = getSubAgent(id);
     if (!agent) {
       respondJson(res, 404, { error: "Not found" });
@@ -447,13 +452,13 @@ export function handleBrainRoutes(
   }
 
   if (pathname.match(/^\/api\/sub-agents\/[^/]+\/history$/) && req.method === "GET" && isAuthenticated(req)) {
-    const id = pathname.split("/")[3];
+    const id = sanitizeId(pathname.split("/")[3]);
     respondJson(res, 200, loadSubAgentHistory(id));
     return true;
   }
 
   if (pathname.match(/^\/api\/sub-agents\/[^/]+\/run$/) && req.method === "POST" && isAuthenticated(req)) {
-    const id = pathname.split("/")[3];
+    const id = sanitizeId(pathname.split("/")[3]);
     const agent = getSubAgent(id);
     if (!agent) {
       respondJson(res, 404, { error: "Not found" });

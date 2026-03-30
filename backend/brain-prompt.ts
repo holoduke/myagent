@@ -351,7 +351,7 @@ function formatWorkingMemory(wm: WorkingMemory): string {
     const activeThreads = wm.conversationThreads.filter(t => t.status === "active").slice(0, 5);
     if (activeThreads.length > 0) {
       const threadLines = activeThreads.map(t => {
-        const who = t.participants?.join(", ") || (t as any).person || "unknown";
+        const who = t.participants?.join(", ") || "unknown";
         return `  - ${who}: "${t.topic}" (${t.messageCount || 0} msgs, last ${timeAgo(t.lastMessageAt)})`;
       });
       parts.push(`Active threads:\n${threadLines.join("\n")}`);

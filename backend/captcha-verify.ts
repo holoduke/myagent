@@ -14,6 +14,7 @@ import { FileStore } from "./utils/file-store.js";
 import { randomUUID } from "crypto";
 import { createLogger } from "./logger.js";
 import { sendImage } from "./integrations/whatsapp.js";
+import { OWNER_PHONE } from "./config.js";
 
 const log = createLogger("captcha-verify");
 

@@ -19,6 +19,7 @@ import { sendImage } from "../integrations/whatsapp.js";
 import { readFileSync, existsSync } from "fs";
 import { isAuthenticated } from "./auth.js";
 import { respondJson, apiHandler, apiGetHandler, ApiError } from "../utils/api-helpers.js";
+import { OWNER_PHONE } from "../config.js";
 
 export function handleIntegrationRoutes(
   req: IncomingMessage,

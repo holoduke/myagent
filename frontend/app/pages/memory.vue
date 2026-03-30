@@ -178,6 +178,7 @@
 import type { AriaStatus, GraphNode, ConceptTreeNode } from '~/types/aria'
 
 const { api } = useApi()
+const { showToast } = useToast()
 const { timeAgo } = useTimeAgo()
 const data = ref<AriaStatus | null>(null)
 const error = ref('')
@@ -305,8 +306,8 @@ async function loadMemory() {
     data.value = result
     error.value = ''
   } catch (e) {
-    console.error('[memory] Load failed:', e)
     error.value = e instanceof Error ? e.message : 'Unknown error'
+    showToast(error.value, 'error')
   }
 }
 

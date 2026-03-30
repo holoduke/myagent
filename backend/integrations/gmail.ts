@@ -311,13 +311,14 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
       lastPollTime: Date.now(),
       lastMessageTimestamp: newestTimestamp || Date.now(),
     };
-  } catch (err: any) {
-    if (err.status === 401 || err.response?.status === 401) {
+  } catch (err: unknown) {
+    const apiErr = err as { status?: number; response?: { status?: number }; message?: string };
+    if (apiErr.status === 401 || apiErr.response?.status === 401) {
       log(`Auth expired for ${account.id}, will retry after refresh`);
-    } else if (err.message?.includes("timed out")) {
+    } else if (apiErr.message?.includes("timed out")) {
       log(`Gmail API timeout for ${account.id}, skipping this polling cycle`);
     } else {
-      log(`Gmail poll failed for ${account.id}: ${err.message || err}`);
+      log(`Gmail poll failed for ${account.id}: ${err instanceof Error ? err.message : err}`);
     }
     state[account.id] = { lastPollTime: Date.now(), lastMessageTimestamp: state[account.id]?.lastMessageTimestamp || 0 };
   }
@@ -369,8 +370,8 @@ export async function sendEmail(
     log(`Email sent from ${account.id} to ${to}: "${subject}"`);
     logDelivery(to, "email", `[EMAIL to ${to}] Subject: ${subject}`);
     return { success: true };
-  } catch (err: any) {
-    const errMsg = err.message || String(err);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
     log(`Failed to send email from ${account.id}: ${errMsg}`);
     return { success: false, error: errMsg };
   }

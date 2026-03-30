@@ -14,7 +14,7 @@
  * 3. A reply directive applies to this sender
  */
 
-import { BaseProvider } from "./providers/base-provider.js";
+import { HaikuRunner } from "./providers/haiku-runner.js";
 import { createLogger } from "./logger.js";
 import { classifyIntentSync } from "./intent-classifier.js";
 import type { IntentClassification, MessageIntent } from "./intent-classifier.js";
@@ -26,6 +26,7 @@ import { getBrainConfig } from "./brain-config.js";
 import { getReplyDirectives } from "./reply-agent.js";
 import type { ReplyDirective, ReplyDecision } from "./reply-agent.js";
 import type { Observation } from "./observer.js";
+import { OWNER_PHONE } from "./config.js";
 
 const log = createLogger("evaluator");
 
@@ -67,50 +68,7 @@ function resolveReplyDirective(senderJid: string): ReplyDirective | null {
 
 // ── LLM provider ──
 
-class EvaluatorLLM extends BaseProvider {
-  readonly name = "message-evaluator";
-  readonly supportsStreaming = false;
-  readonly supportsSessions = false;
-
-   
-  async ask(_msg: string) { return { messages: [] as string[] }; }
-  async askStreaming(_msg: string, _cb: (t: string) => void) { return { messages: [] as string[] }; }
-  resetSession() { /* no-op */ }
-   
-
-  async run(prompt: string): Promise<string | null> {
-    return new Promise((resolve) => {
-      const { promise } = this.spawnWithTimeout({
-        command: "claude",
-        args: ["-p", prompt, "--output-format", "json", "--model", "haiku", "--allowedTools", ""],
-        env: {
-          ANTHROPIC_API_KEY: "",
-          CLAUDECODE: "",
-          HOME: process.env.CLAUDE_HOME || process.env.HOME || "/root",
-        },
-        timeout: 20_000,
-        onTimeout: () => log("Evaluator LLM timed out"),
-      });
-
-      promise.then(({ code, stdout, stderr }) => {
-        if (code !== 0) {
-          log(`Evaluator LLM exited ${code}: ${stderr.slice(0, 200)}`);
-          resolve(null);
-          return;
-        }
-        try {
-          const resp = JSON.parse(stdout) as { result: string; is_error: boolean };
-          if (resp.is_error) { log(`Evaluator LLM error: ${resp.result.slice(0, 200)}`); resolve(null); return; }
-          resolve(resp.result);
-        } catch {
-          resolve(stdout.trim() || null);
-        }
-      }).catch((err) => { log(`Evaluator LLM spawn failed: ${err}`); resolve(null); });
-    });
-  }
-}
-
-const llm = new EvaluatorLLM();
+const llm = new HaikuRunner({ name: "message-evaluator", timeout: 20_000 });
 
 // ── Prompt builder ──
 

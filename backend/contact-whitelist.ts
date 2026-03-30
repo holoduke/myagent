@@ -1,9 +1,10 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("whitelist");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const WHITELIST_FILE = `${BRAIN_DIR}/contact-whitelist.json`;
 
 /** Per-category action mode: auto-act without confirmation, or confirm with owner first */

@@ -6,6 +6,7 @@ import { extractKeywordsFromText, spreadingActivation } from "./activation.js";
 import { getBrainConfig } from "../brain-config.js";
 import { createLogger } from "../logger.js";
 import { inferContentSalience } from "./retention.js";
+import { BRAIN_DIR } from "../config.js";
 
 const log = createLogger("decay");
 
@@ -127,7 +128,7 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
 
 // ── Observation Log Audit ──
 
-const OBSERVATIONS_FILE = `${process.env.BRAIN_DIR || "/data/brain"}/observations.jsonl`;
+const OBSERVATIONS_FILE = `${BRAIN_DIR}/observations.jsonl`;
 
 export interface ObservationLogEntry {
   timestamp: number;
@@ -304,7 +305,7 @@ export function auditObservationLogs(graph: MemoryGraph, hoursBack = 24, maxSign
 
 // ── Graph Snapshots & Delta Audit ──
 
-export const SNAPSHOT_DIR = `${process.env.BRAIN_DIR || "/data/brain"}/graph/snapshots`;
+export const SNAPSHOT_DIR = `${BRAIN_DIR}/graph/snapshots`;
 export const MAX_SNAPSHOTS = 50;
 
 export interface GraphSnapshot {
@@ -673,7 +674,7 @@ export function computeReconstructionConfidence(
 
 // ── Reconstruction Fidelity Validation ──
 
-const FIDELITY_LOG_PATH = `${process.env.BRAIN_DIR || "/data/brain"}/graph/fidelity-log.jsonl`;
+const FIDELITY_LOG_PATH = `${BRAIN_DIR}/graph/fidelity-log.jsonl`;
 const FIDELITY_LOG_MAX_ENTRIES = 500;
 
 export interface FidelityResult {

@@ -10,7 +10,7 @@
  * (missing genuine requests).
  */
 
-import { BaseProvider } from "./providers/base-provider.js";
+import { HaikuRunner } from "./providers/haiku-runner.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("intent-classifier");
@@ -149,7 +149,7 @@ Message from ${senderName}:
 {"intent":"<category>","reason":"<brief reason>"}`;
 
   try {
-    const classifier = new IntentLLMProvider();
+    const classifier = new HaikuRunner({ name: "intent-classifier" });
     const result = await classifier.run(prompt);
 
     if (!result) {
@@ -164,8 +164,8 @@ Message from ${senderName}:
     const intent: MessageIntent = validIntents.includes(parsed.intent as MessageIntent) ? (parsed.intent as MessageIntent) : "casual";
 
     return { intent, confidence: MEDIUM_CONFIDENCE, method: "llm", reason: parsed.reason || "llm classification" };
-  } catch (err: any) {
-    log(`LLM classification failed: ${err.message || err}`);
+  } catch (err: unknown) {
+    log(`LLM classification failed: ${err instanceof Error ? err.message : err}`);
     return { intent: "casual", confidence: LOW_CONFIDENCE, method: "llm", reason: "llm error, defaulting to casual" };
   }
 }
@@ -215,66 +215,4 @@ export function classifyIntentSync(
   return { intent: "casual", confidence: LOW_CONFIDENCE, method: "heuristic", reason: "no strong patterns, defaulting to casual" };
 }
 
-/**
- * Lightweight LLM provider for intent classification.
- * Uses haiku model, no tools, short timeout.
- */
-class IntentLLMProvider extends BaseProvider {
-  readonly name = "intent-classifier";
-  readonly supportsStreaming = false;
-  readonly supportsSessions = false;
-
-   
-  async ask(_message: string) { return { messages: [] as string[] }; }
-  async askStreaming(_message: string, _onDelta: (text: string) => void) { return { messages: [] as string[] }; }
-  resetSession() { /* no-op */ }
-   
-
-  async run(prompt: string): Promise<string | null> {
-    const timeout = 15_000; // 15s max — classification should be fast
-
-    return new Promise((resolve) => {
-      const { promise } = this.spawnWithTimeout({
-        command: "claude",
-        args: [
-          "-p", prompt,
-          "--output-format", "json",
-          "--model", "haiku",
-          "--allowedTools", "",
-        ],
-        env: {
-          ANTHROPIC_API_KEY: "",
-          CLAUDECODE: "",
-          HOME: process.env.CLAUDE_HOME || process.env.HOME || "/root",
-        },
-        timeout,
-        onTimeout: () => {
-          log("Intent classification LLM timed out");
-        },
-      });
-
-      promise.then(({ code, stdout, stderr }) => {
-        if (code !== 0) {
-          log(`Intent LLM exited ${code}: ${stderr.slice(0, 200)}`);
-          resolve(null);
-          return;
-        }
-
-        try {
-          const response = JSON.parse(stdout) as { result: string; is_error: boolean };
-          if (response.is_error) {
-            log(`Intent LLM error: ${response.result.slice(0, 200)}`);
-            resolve(null);
-            return;
-          }
-          resolve(response.result);
-        } catch {
-          resolve(stdout.trim() || null);
-        }
-      }).catch((err) => {
-        log(`Intent LLM spawn failed: ${err}`);
-        resolve(null);
-      });
-    });
-  }
-}
+// Lightweight LLM for intent classification — uses shared HaikuRunner.

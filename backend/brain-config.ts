@@ -1,5 +1,6 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { existsSync } from "fs";
+import { BRAIN_DIR } from "./config.js";
 
 // ── Types ──
 
@@ -188,7 +189,7 @@ function envDefaults(): BrainConfig {
 
 // ── Config file path ──
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const CONFIG_FILE = `${BRAIN_DIR}/config.json`;
 
 // ── In-memory cache (5s TTL) ──

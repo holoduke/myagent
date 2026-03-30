@@ -2,9 +2,9 @@ import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
 import { askClaude } from "./claude.js";
 import type { SubAgentTask, SubAgentResult } from "./sub-agents.js";
 import { createLogger } from "./logger.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("sub-agent-worker");
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
 
 function parseResult(raw: string, agentId: string): SubAgentResult {
   // Try to find a JSON block that has our expected result fields (summary/success)

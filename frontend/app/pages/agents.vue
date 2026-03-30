@@ -120,6 +120,7 @@
 import type { AgentProfile } from '~/types/aria'
 
 const { api } = useApi()
+const { showToast } = useToast()
 
 const agents = ref<AgentProfile[] | null>(null)
 const error = ref('')
@@ -201,7 +202,9 @@ async function doCreate() {
     showCreate.value = false
     createProvider.value = null
     await load()
-  } catch { /* silent */ } finally {
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to create agent', 'error')
+  } finally {
     saving.value = false
   }
 }
@@ -219,7 +222,9 @@ async function doUpdate() {
     })
     editAgent.value = null
     await load()
-  } catch { /* silent */ } finally {
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to save agent', 'error')
+  } finally {
     saving.value = false
   }
 }
@@ -230,7 +235,9 @@ async function doSetDefault() {
     await api(`/api/agents/${editAgent.value.id}/set-default`, { method: 'POST' })
     editAgent.value = null
     await load()
-  } catch { /* silent */ }
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to set default agent', 'error')
+  }
 }
 
 async function doTest() {
@@ -262,7 +269,9 @@ async function doDelete() {
     await api(`/api/agents/${editAgent.value.id}`, { method: 'DELETE' })
     editAgent.value = null
     await load()
-  } catch { /* silent */ } finally {
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to delete agent', 'error')
+  } finally {
     deleting.value = false
   }
 }

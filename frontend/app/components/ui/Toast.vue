@@ -1,8 +1,8 @@
 <template>
   <Teleport to="body">
-    <div class="toast-container">
+    <div class="toast-container" role="status" aria-live="polite">
       <TransitionGroup name="toast">
-        <div v-for="toast in toasts" :key="toast.id" class="toast" :class="toast.type">
+        <div v-for="toast in toasts" :key="toast.id" class="toast" :class="toast.type" :role="toast.type === 'error' ? 'alert' : undefined">
           {{ toast.message }}
         </div>
       </TransitionGroup>

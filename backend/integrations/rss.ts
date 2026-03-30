@@ -120,6 +120,11 @@ export function stopRSSPolling(): void {
   }
 }
 
+export function restartRSSPolling(): void {
+  stopRSSPolling();
+  startRSSPolling();
+}
+
 async function pollAllFeeds(): Promise<void> {
   if (!isIntegrationEnabled("rss")) return;
   const feeds = loadFeeds();

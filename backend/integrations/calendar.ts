@@ -1,7 +1,7 @@
 import { google } from "googleapis";
 import { FileStore } from "../utils/file-store.js";
 import { DedupCache } from "../utils/dedup-cache.js";
-import { recordObservation } from "../observer.js";
+import { recordObservation, getObservationsSince } from "../observer.js";
 import { loadAccounts, createOAuth2Client } from "./gmail.js";
 import { isIntegrationEnabled } from "./integration-config.js";
 import { createLogger } from "../logger.js";
@@ -101,11 +101,12 @@ async function fetchUpcomingEvents(accountId: string): Promise<void> {
 
     if (newCount > 0) dedupCache.saveTo(SEEN_EVENTS_FILE);
     log(`Fetched ${events.length} upcoming events for ${accountId} (${newCount} new)`);
-  } catch (err: any) {
-    if (err.code === 401) {
+  } catch (err) {
+    const e = err as { code?: number; message?: string };
+    if (e.code === 401) {
       log(`Calendar auth expired for ${accountId}`);
     } else {
-      log(`Calendar poll failed for ${accountId}: ${err.message || err}`);
+      log(`Calendar poll failed for ${accountId}: ${e.message || err}`);
     }
   }
 }
@@ -141,8 +142,8 @@ export async function listCalendars(accountId: string): Promise<Array<{ id: stri
     return items
       .filter(item => item.id && item.summary)
       .map(item => ({ id: item.id!, name: item.summary! }));
-  } catch (err: any) {
-    log(`Failed to list calendars for ${accountId}: ${err.message || err}`);
+  } catch (err) {
+    log(`Failed to list calendars for ${accountId}: ${err instanceof Error ? err.message : err}`);
     return [];
   }
 }
@@ -186,6 +187,11 @@ export function stopCalendarPolling(): void {
     pollTimer = null;
     log("Calendar polling stopped");
   }
+}
+
+export function restartCalendarPolling(): void {
+  stopCalendarPolling();
+  startCalendarPolling();
 }
 
 async function pollAll(): Promise<void> {
@@ -242,10 +248,39 @@ export async function createEvent(
     });
     log(`Created calendar event: ${summary} (${res.data.id})`);
     return { success: true, eventId: res.data.id || undefined };
-  } catch (err: any) {
-    log(`Failed to create calendar event: ${err.message || err}`);
-    return { success: false, error: err.message || String(err) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to create calendar event: ${msg}`);
+    return { success: false, error: msg };
   }
+}
+
+/**
+ * Check if the owner is currently in a meeting based on recent calendar observations.
+ * Uses the observation stream (no extra API calls) to determine if any
+ * calendar event's start ≤ now ≤ end.
+ */
+export function isOwnerInMeeting(): boolean {
+  if (!ENABLED) return false;
+
+  try {
+    // Check observations from the last 25 hours (calendar polls upcoming 24h)
+    const since = Date.now() - 25 * 60 * 60 * 1000;
+    const observations = getObservationsSince(since, { source: "calendar" });
+    const now = Date.now();
+
+    for (const obs of observations) {
+      if (!obs.calendarMeta?.start || !obs.calendarMeta?.end) continue;
+      const start = new Date(obs.calendarMeta.start).getTime();
+      const end = new Date(obs.calendarMeta.end).getTime();
+      if (isNaN(start) || isNaN(end)) continue;
+      if (start <= now && now <= end) return true;
+    }
+  } catch {
+    // If observation lookup fails, don't block delivery
+  }
+
+  return false;
 }
 
 export function getCalendarStatus(): { enabled: boolean; accounts: Array<{ id: string; email: string; lastSync: number }>; nextEventCount: number } {

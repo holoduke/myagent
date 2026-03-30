@@ -4,10 +4,11 @@ import { randomUUID } from "node:crypto";
 import { createLogger } from "./logger.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { SchedulerError } from "./brain-errors.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("scheduler");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const SCHEDULE_FILE = `${BRAIN_DIR}/scheduled-messages.json`;
 const IN_FLIGHT_FILE = `${BRAIN_DIR}/scheduled-messages-inflight.json`;
 const DELIVERY_LOG_FILE = `${BRAIN_DIR}/delivery-log.json`;

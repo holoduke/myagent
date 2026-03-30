@@ -3,8 +3,9 @@ import { ariaPersonality } from "./aria-identity.js";
 import type { CharacterOverride } from "./aria-identity.js";
 import { getBrainConfig, getCharacterPreset } from "./brain-config.js";
 import type { MemoryNode, WorkingMemory } from "./memory/types.js";
+import { BRAIN_DIR } from "./config.js";
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const OWNER_NAME = process.env.OWNER_NAME || "Owner";
 const GITHUB_REPO = process.env.GITHUB_REPO || "";
 
