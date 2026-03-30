@@ -29,7 +29,7 @@ export interface RecurringTask {
 
 const store = new FileStore<RecurringTask[]>({ filePath: RECURRING_FILE, defaultValue: [] });
 
-function isValidTask(task: unknown): task is RecurringTask {
+export function isValidTask(task: unknown): task is RecurringTask {
   if (typeof task !== "object" || task === null) return false;
   const t = task as Record<string, unknown>;
   if (typeof t.id !== "string" || typeof t.enabled !== "boolean") return false;
@@ -112,7 +112,7 @@ function seedDefaults(ownerJid: string): RecurringTask[] {
 
 // ── Validation ──
 
-function validatePattern(pattern: RecurringTask["pattern"]): void {
+export function validatePattern(pattern: RecurringTask["pattern"]): void {
   for (const h of pattern.hours) {
     if (h < 0 || h > 23 || !Number.isInteger(h)) {
       throw new Error(`Invalid hour value ${h}: must be an integer 0-23`);

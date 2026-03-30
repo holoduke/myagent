@@ -125,7 +125,7 @@ export function processObservation(obs: Observation): void {
 /**
  * Parse time from signal snippets. Returns [hours, minutes] or null.
  */
-function parseTimeFromSignals(signals: ActionableSignal[]): [number, number] | null {
+export function parseTimeFromSignals(signals: ActionableSignal[]): [number, number] | null {
   for (const s of signals) {
     // Match "om 14:30", "at 14:30", "rond 16:00", "ongeveer 13:00", or bare "16:00"
     const m = s.snippet.match(/(?:(?:om|at|rond|ongeveer|omstreeks)\s+)?(\d{1,2})[.:](\d{2})/i);
@@ -138,7 +138,7 @@ function parseTimeFromSignals(signals: ActionableSignal[]): [number, number] | n
  * Compute Dutch public holidays for a given year.
  * Easter-based holidays use the Anonymous Gregorian algorithm.
  */
-function computeDutchHolidays(year: number): { key: string; date: Date }[] {
+export function computeDutchHolidays(year: number): { key: string; date: Date }[] {
   // Anonymous Gregorian Easter algorithm
   const a = year % 19;
   const b = Math.floor(year / 100);
@@ -180,7 +180,7 @@ function computeDutchHolidays(year: number): { key: string; date: Date }[] {
 /**
  * Parse a target date from signal snippets. Returns a Date (date only) or null.
  */
-function parseDateFromSignals(signals: ActionableSignal[]): Date | null {
+export function parseDateFromSignals(signals: ActionableSignal[]): Date | null {
   const now = new Date();
 
   for (const s of signals) {
@@ -288,7 +288,7 @@ function parseDateFromSignals(signals: ActionableSignal[]): Date | null {
   return null;
 }
 
-interface ParsedEvent {
+export interface ParsedEvent {
   date: Date;
   hours: number;
   minutes: number;
@@ -300,7 +300,7 @@ interface ParsedEvent {
  * Splits on "en" / "and" boundaries when different dates are detected,
  * or falls back to single-event parsing from signal snippets.
  */
-function extractMultipleEvents(text: string, signals: ActionableSignal[]): ParsedEvent[] {
+export function extractMultipleEvents(text: string, signals: ActionableSignal[]): ParsedEvent[] {
   // Try splitting the text on " en " / " and " to find separate event clauses
   const clauses = text.split(/\s+(?:en|and)\s+/i);
 
