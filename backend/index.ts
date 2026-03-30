@@ -2,7 +2,7 @@ import "dotenv/config";
 import { readFileSync, existsSync } from "fs";
 import { createServer } from "http";
 import { createLogger } from "./logger.js";
-import { validateConfig } from "./config.js";
+import { validateConfig, BRAIN_DIR, CLAUDE_TIMEOUT, WA_STARTUP_DELAY, OWNER_PHONE } from "./config.js";
 import { startWhatsApp, sendMessage, sendReaction, sendTypingIndicator, stopTypingIndicator, getLatestQr } from "./integrations/whatsapp.js";
 import { handleCaptchaReply } from "./captcha-verify.js";
 import { resetSession } from "./claude.js";
@@ -34,7 +34,7 @@ const startedAt = Date.now();
 async function main() {
   validateConfig();
 
-  const ownerPhone = process.env.OWNER_PHONE;
+  const ownerPhone = OWNER_PHONE;
 
   // Bootstrap default provider profile on first boot
   bootstrapDefaultProvider();
@@ -107,7 +107,7 @@ async function main() {
       const uptimeHours = Math.floor(uptime / 3600000);
       const uptimeMinutes = Math.floor((uptime % 3600000) / 60000);
       const gmailAccounts = getAccountStatus();
-      const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+      // BRAIN_DIR imported from config
 
       let memoryNodeCount = 0;
       let memoryEdgeCount = 0;
@@ -189,15 +189,14 @@ async function main() {
 
   log.info("Starting WhatsApp Claude Agent");
   log.info(`Owner phone: ${ownerPhone}`);
-  log.info(`Claude timeout: ${process.env.CLAUDE_TIMEOUT ?? 300000}ms`);
+  log.info(`Claude timeout: ${CLAUDE_TIMEOUT}ms`);
 
   // Delay WhatsApp connection to let health check pass first.
   // During rolling deploys, Coolify stops the old container after the new one is healthy.
   // This prevents two containers from competing for the same WhatsApp session.
-  const startupDelay = Number(process.env.WA_STARTUP_DELAY ?? 40) * 1000;
-  if (startupDelay > 0) {
-    log.info(`Waiting ${startupDelay / 1000}s before connecting WhatsApp (deploy safety)...`);
-    await new Promise((r) => setTimeout(r, startupDelay));
+  if (WA_STARTUP_DELAY > 0) {
+    log.info(`Waiting ${WA_STARTUP_DELAY / 1000}s before connecting WhatsApp (deploy safety)...`);
+    await new Promise((r) => setTimeout(r, WA_STARTUP_DELAY));
   }
 
   await startWhatsApp(

@@ -101,11 +101,12 @@ async function fetchUpcomingEvents(accountId: string): Promise<void> {
 
     if (newCount > 0) dedupCache.saveTo(SEEN_EVENTS_FILE);
     log(`Fetched ${events.length} upcoming events for ${accountId} (${newCount} new)`);
-  } catch (err: any) {
-    if (err.code === 401) {
+  } catch (err) {
+    const e = err as { code?: number; message?: string };
+    if (e.code === 401) {
       log(`Calendar auth expired for ${accountId}`);
     } else {
-      log(`Calendar poll failed for ${accountId}: ${err.message || err}`);
+      log(`Calendar poll failed for ${accountId}: ${e.message || err}`);
     }
   }
 }
@@ -141,8 +142,8 @@ export async function listCalendars(accountId: string): Promise<Array<{ id: stri
     return items
       .filter(item => item.id && item.summary)
       .map(item => ({ id: item.id!, name: item.summary! }));
-  } catch (err: any) {
-    log(`Failed to list calendars for ${accountId}: ${err.message || err}`);
+  } catch (err) {
+    log(`Failed to list calendars for ${accountId}: ${err instanceof Error ? err.message : err}`);
     return [];
   }
 }
@@ -186,6 +187,11 @@ export function stopCalendarPolling(): void {
     pollTimer = null;
     log("Calendar polling stopped");
   }
+}
+
+export function restartCalendarPolling(): void {
+  stopCalendarPolling();
+  startCalendarPolling();
 }
 
 async function pollAll(): Promise<void> {
@@ -242,9 +248,10 @@ export async function createEvent(
     });
     log(`Created calendar event: ${summary} (${res.data.id})`);
     return { success: true, eventId: res.data.id || undefined };
-  } catch (err: any) {
-    log(`Failed to create calendar event: ${err.message || err}`);
-    return { success: false, error: err.message || String(err) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to create calendar event: ${msg}`);
+    return { success: false, error: msg };
   }
 }
 

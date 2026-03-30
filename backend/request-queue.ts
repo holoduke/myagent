@@ -15,10 +15,11 @@ import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js"
 import { createLogger } from "./logger.js";
 import { resolvePolicy } from "./directives.js";
 import type { DirectiveActionType, DirectivePolicy } from "./directives.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("request-queue");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const QUEUE_FILE = `${BRAIN_DIR}/request-queue.json`;
 
 export type RequestStatus =

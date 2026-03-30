@@ -16,10 +16,11 @@ import { readFileSync, existsSync, appendFileSync } from "fs";
 import { ensureDir, atomicWriteFile } from "./utils/file-store.js";
 import { isWhitelisted } from "./contact-whitelist.js";
 import { createLogger } from "./logger.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("verifier");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const AUDIT_LOG_FILE = `${BRAIN_DIR}/action-audit.jsonl`;
 const MAX_AUDIT_LINES = 5000;
 

@@ -3,10 +3,11 @@ import { FileStore } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
 
 import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("sub-agents");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const REGISTRY_FILE = `${BRAIN_DIR}/sub-agents.json`;
 const STATE_FILE = `${BRAIN_DIR}/sub-agents-state.json`;
 const HISTORY_FILE = `${BRAIN_DIR}/sub-agents-history.json`;

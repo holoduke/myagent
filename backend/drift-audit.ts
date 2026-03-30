@@ -12,10 +12,11 @@ import { execSync } from "child_process";
 import { createLogger } from "./logger.js";
 import { askClaude } from "./claude.js";
 import { ensureDir, atomicWriteJSON, atomicWriteFile, safeReadJSON } from "./utils/file-store.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("drift-audit");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const BASELINE_DIR = `${BRAIN_DIR}/drift-baselines`;
 const REPORT_DIR = `${BRAIN_DIR}/drift-reports`;
 const STATE_FILE = `${BRAIN_DIR}/drift-audit-state.json`;

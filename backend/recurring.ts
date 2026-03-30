@@ -1,10 +1,11 @@
 import { FileStore } from "./utils/file-store.js";
 import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
 import { createLogger } from "./logger.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("recurring");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const RECURRING_FILE = `${BRAIN_DIR}/recurring-tasks.json`;
 
 // ── Types ──

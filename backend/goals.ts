@@ -26,6 +26,9 @@ function serializeGoalData(data: GoalData): string {
 export class GoalTracker {
   constructor(private graph: MemoryGraph) {}
 
+  /** Expose underlying graph for callers that need direct node access (e.g. tagging). */
+  getGraph(): MemoryGraph { return this.graph; }
+
   getActiveGoals(): { nodeId: string; data: GoalData }[] {
     const goalNodes = this.graph.findByType("goal");
     const active: { nodeId: string; data: GoalData }[] = [];

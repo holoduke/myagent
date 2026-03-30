@@ -13,10 +13,11 @@ import type { IntentClassification } from "./intent-classifier.js";
 import { evaluateMessage } from "./message-evaluator.js";
 import { dispatchReply } from "./reply-agent.js";
 import { runMessageHandlers } from "./message-handlers.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("observer");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const OBS_FILE = `${BRAIN_DIR}/observations.jsonl`;
 const RETENTION_DAYS = Number(process.env.BRAIN_OBSERVATION_DAYS ?? 7);
 

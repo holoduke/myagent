@@ -6,6 +6,7 @@ import { MemoryGraph } from "../memory/graph.js";
 import type { AgentResult, AgentStats, ProviderAskOptions, ClaudeConfig } from "./types.js";
 import { BaseProvider } from "./base-provider.js";
 import { createLogger } from "../logger.js";
+import { CLAUDE_TIMEOUT as DEFAULT_CLAUDE_TIMEOUT, SESSION_MAX_COST_USD, SESSION_MAX_INPUT_TOKENS, SESSION_MAX_TURNS } from "../config.js";
 
 const log = createLogger("claude-provider");
 
@@ -16,9 +17,9 @@ interface ClaudeResponse {
 }
 
 // ── Session auto-reset thresholds (configurable via env) ──
-const SESSION_MAX_COST_USD = Number(process.env.SESSION_MAX_COST_USD) || 2.0;
-const SESSION_MAX_INPUT_TOKENS = Number(process.env.SESSION_MAX_INPUT_TOKENS) || 100_000;
-const SESSION_MAX_TURNS = Number(process.env.SESSION_MAX_TURNS) || 30;
+
+
+
 
 interface SessionStats {
   cumulativeCostUsd: number;

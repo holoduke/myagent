@@ -3,10 +3,11 @@ import { FileStore, ensureDir } from "../utils/file-store.js";
 import { execSync, spawn } from "child_process";
 import { randomBytes } from "crypto";
 import { createLogger } from "../logger.js";
+import { BRAIN_DIR } from "../config.js";
 
 const log = createLogger("ssh");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const SSH_DIR = `${BRAIN_DIR}/ssh`;
 const KEY_PATH = `${SSH_DIR}/id_ed25519`;
 const PUB_KEY_PATH = `${KEY_PATH}.pub`;

@@ -18,10 +18,11 @@ import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js"
 import { BaseProvider } from "./providers/base-provider.js";
 import { createLogger } from "./logger.js";
 import type { Observation } from "./observer.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("reply-agent");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const DIRECTIVES_FILE = `${BRAIN_DIR}/reply-directives.json`;
 const LOG_FILE = `${BRAIN_DIR}/reply-agent-log.jsonl`;
 

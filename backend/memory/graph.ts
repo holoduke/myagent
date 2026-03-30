@@ -7,7 +7,7 @@ import { createLogger } from "../logger.js";
 
 const log = createLogger("graph");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const GRAPH_DIR = `${BRAIN_DIR}/graph`;
 const NODES_FILE = `${GRAPH_DIR}/nodes.json`;
 const EDGES_FILE = `${GRAPH_DIR}/edges.json`;
@@ -24,6 +24,7 @@ function genId(): string {
 }
 
 import type { Observation } from "../observer.js";
+import { BRAIN_DIR } from "../config.js";
 
 export class MemoryGraph {
   private nodes = new Map<string, MemoryNode>();

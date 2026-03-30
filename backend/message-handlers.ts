@@ -18,10 +18,11 @@ import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js"
 import { BaseProvider } from "./providers/base-provider.js";
 import { createLogger } from "./logger.js";
 import type { Observation } from "./observer.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("msg-handlers");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const HANDLERS_FILE = `${BRAIN_DIR}/message-handlers.json`;
 const LOG_FILE = `${BRAIN_DIR}/message-handler-log.jsonl`;
 

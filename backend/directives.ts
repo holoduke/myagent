@@ -14,10 +14,11 @@
 import { randomUUID } from "crypto";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("directives");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const DIRECTIVES_FILE = `${BRAIN_DIR}/directives.json`;
 
 /** Action types that directives can govern */

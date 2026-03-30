@@ -26,6 +26,7 @@ import { getBrainConfig } from "./brain-config.js";
 import { getReplyDirectives } from "./reply-agent.js";
 import type { ReplyDirective, ReplyDecision } from "./reply-agent.js";
 import type { Observation } from "./observer.js";
+import { OWNER_PHONE } from "./config.js";
 
 const log = createLogger("evaluator");
 

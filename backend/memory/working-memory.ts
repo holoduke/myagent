@@ -4,10 +4,11 @@ import type { Observation } from "../observer.js";
 import { getBrainConfig, getOwnerLocalTime, getOwnerLocalDate } from "../brain-config.js";
 import { extractKeywordsFromText } from "./activation.js";
 import { createLogger } from "../logger.js";
+import { BRAIN_DIR } from "../config.js";
 
 const log = createLogger("working-memory");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const WM_FILE = `${BRAIN_DIR}/working-memory.json`;
 
 function defaultTemporalContext(): TemporalContext {

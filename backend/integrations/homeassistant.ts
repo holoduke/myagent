@@ -122,9 +122,9 @@ async function pollHA(): Promise<void> {
     return;
   }
 
-  const state = loadState();
-
   try {
+    const state = loadState();
+
     const res = await fetch(`${conn.url}/api/states`, {
       headers: {
         Authorization: `Bearer ${conn.token}`,

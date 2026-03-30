@@ -8,7 +8,10 @@ const RATE_LIMIT_WINDOW = 60_000; // 1 minute
 const RATE_LIMIT_MAX = 120; // 120 requests per minute per IP
 
 export function isRateLimited(req: IncomingMessage): boolean {
-  const ip = req.socket.remoteAddress || "unknown";
+  // Use X-Forwarded-For when behind a reverse proxy (e.g. Coolify/Caddy),
+  // falling back to the raw socket address for direct connections.
+  const forwarded = req.headers["x-forwarded-for"];
+  const ip = (typeof forwarded === "string" ? forwarded.split(",")[0].trim() : req.socket.remoteAddress) || "unknown";
   const now = Date.now();
   const entry = requestCounts.get(ip);
 

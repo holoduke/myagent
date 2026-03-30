@@ -119,7 +119,7 @@ export function processCommitments(
     );
     if (newGoal) {
       // Update tags to include commitment source info
-      const graph = (goalTracker as any).graph;
+      const graph = goalTracker.getGraph();
       if (graph?.getNode && graph?.updateNode) {
         const node = graph.getNode(newGoal.nodeId);
         if (node) {

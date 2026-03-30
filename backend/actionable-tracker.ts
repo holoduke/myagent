@@ -18,10 +18,11 @@ import { createEvent } from "./integrations/calendar.js";
 import { loadAccounts } from "./integrations/gmail.js";
 import type { ActionableSignal, ActionableCategory } from "./actionable.js";
 import type { Observation } from "./observer.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("actionable-tracker");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const REQUESTS_FILE = `${BRAIN_DIR}/actionable-requests.json`;
 
 export type ActionableRequestStatus =
@@ -502,8 +503,8 @@ export function createFlaggedRequest(flag: {
     isGroup: flag.isGroup || false,
     groupName: flag.groupName,
     text: flag.text,
-    signals: flag.categories.map(c => ({ category: c as any, snippet: flag.reason, pattern: "brain-flagged" })),
-    categories: flag.categories as any[],
+    signals: flag.categories.map(c => ({ category: c as ActionableCategory, snippet: flag.reason, pattern: "brain-flagged" })),
+    categories: flag.categories as ActionableCategory[],
     status: "pending_confirmation",
   };
 

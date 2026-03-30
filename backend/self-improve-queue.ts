@@ -1,10 +1,11 @@
 import { FileStore } from "./utils/file-store.js";
 import type { ImprovementTask } from "./self-improve-prompt.js";
 import { createLogger } from "./logger.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("improve-queue");
 
-const BRAIN_DIR = process.env.BRAIN_DIR || "/data/brain";
+
 const QUEUE_FILE = `${BRAIN_DIR}/improve-queue.json`;
 const HISTORY_FILE = `${BRAIN_DIR}/improve-history.json`;
 const MAX_HISTORY = 50;
