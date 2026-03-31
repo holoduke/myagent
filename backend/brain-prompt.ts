@@ -18,6 +18,11 @@ import { getToMSummary } from "./mental-model.js";
 import { getAutonomySummary } from "./autonomy.js";
 import { getHealthSummary } from "./health-monitor.js";
 import { getCalibrationSummary } from "./metacognitive.js";
+import { getAffectiveModulationSummary } from "./affective-modulator.js";
+import { getTemporalPatternSummary } from "./temporal-patterns.js";
+import { getCognitiveLoadSummary } from "./cognitive-load.js";
+import { getNarrativeSummary } from "./narrative-builder.js";
+import { getCompiledKnowledgeSummary } from "./knowledge-compiler.js";
 
 function resolveCharacter(): CharacterOverride | undefined {
   const cfg = getBrainConfig();
@@ -519,6 +524,12 @@ function formatPreferencesSection(graph: MemoryGraph): string {
   return `\n═══ OWNER PREFERENCES ═══\n\nLearned from observed behavior patterns. Use these to tailor your communication style and timing:\n\n${summary}\n`;
 }
 
+function formatCognitiveLoadSection(wm: WorkingMemory, observations: Observation[]): string {
+  const summary = getCognitiveLoadSummary(wm, observations);
+  if (!summary) return "";
+  return `\n═══ COGNITIVE LOAD ═══\n\n${summary}\n`;
+}
+
 function formatEnhancedContextSections(graph: MemoryGraph): string {
   const sections: string[] = [];
 
@@ -564,6 +575,30 @@ function formatEnhancedContextSections(graph: MemoryGraph): string {
 
   if (systemLines.length > 0) {
     sections.push(`\n═══ SYSTEM STATUS ═══\n\n${systemLines.join("\n")}\n`);
+  }
+
+  // Affective modulation
+  const affect = getAffectiveModulationSummary(graph);
+  if (affect) {
+    sections.push(`\n═══ AFFECTIVE STATE ═══\n\n${affect}\n`);
+  }
+
+  // Temporal patterns
+  const temporal = getTemporalPatternSummary();
+  if (temporal) {
+    sections.push(`\n═══ TEMPORAL PATTERNS ═══\n\n${temporal}\n`);
+  }
+
+  // Narrative context
+  const narrative = getNarrativeSummary(graph);
+  if (narrative) {
+    sections.push(`\n═══ NARRATIVE CONTEXT ═══\n\n${narrative}\n`);
+  }
+
+  // Compiled knowledge
+  const compiled = getCompiledKnowledgeSummary(graph);
+  if (compiled) {
+    sections.push(`\n═══ COMPILED KNOWLEDGE ═══\n\n${compiled}\n`);
   }
 
   return sections.join("");
@@ -634,7 +669,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}${formatEnhancedContextSections(ctx.graph)}
+${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}${formatEnhancedContextSections(ctx.graph)}${formatCognitiveLoadSection(ctx.wm, ctx.observations)}
 ═══ ACTIVATED MEMORIES ═══
 ${serializeNodesForPrompt(ctx.contextNodes, ctx.graph)}
 

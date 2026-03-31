@@ -54,9 +54,6 @@ const PROMOTE_THRESHOLDS: Record<number, number> = {
   3: 50,   // 50 more to reach level 4
 };
 
-// Trust score penalty that triggers demotion
-const DEMOTE_PENALTY = -5;
-
 // ── State Management ──
 
 let state: AutonomyState | null = null;

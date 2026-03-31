@@ -58,6 +58,7 @@ const EMOTION_PATTERNS: { pattern: RegExp; emotion: string; valence: number; int
   { pattern: /\b(angry|furious|pissed|livid|outraged)\b/i, emotion: "anger", valence: -0.9, intensity: 0.8 },
   { pattern: /\b(devastated|heartbroken|terrible|awful|horrible|miserable)\b/i, emotion: "distress", valence: -0.9, intensity: 0.85 },
   { pattern: /\b(scared|afraid|terrified|panicking)\b/i, emotion: "fear", valence: -0.8, intensity: 0.7 },
+  { pattern: /\b(argument|fight|conflict|problem|crisis|dispute)\b/i, emotion: "distress", valence: -0.6, intensity: 0.5 },
   { pattern: /😡|😤|😢|😭|💔/u, emotion: "distress", valence: -0.8, intensity: 0.7 },
 
   // Surprise
@@ -69,6 +70,16 @@ const EMOTION_PATTERNS: { pattern: RegExp; emotion: string; valence: number; int
   { pattern: /\b(verdrietig|droevig|huilen)\b/i, emotion: "sadness", valence: -0.7, intensity: 0.6 },
   { pattern: /\b(blij|vrolijk|gelukkig|geweldig)\b/i, emotion: "joy", valence: 0.8, intensity: 0.6 },
   { pattern: /\b(bang|angstig|bezorgd|ongerust)\b/i, emotion: "anxiety", valence: -0.5, intensity: 0.5 },
+
+  // Dutch life event patterns (for valence inference shared with retention.ts)
+  { pattern: /\b(ontslagen|ontslag|verlies|verloren)\b/i, emotion: "distress", valence: -0.8, intensity: 0.7 },
+  { pattern: /\b(overlijden|overleden|begrafenis|rouw)\b/i, emotion: "grief", valence: -0.9, intensity: 0.9 },
+  { pattern: /\b(ziekenhuis|spoed|operatie|ziek|pijn)\b/i, emotion: "distress", valence: -0.6, intensity: 0.6 },
+  { pattern: /\b(gefeliciteerd|trots|feest)\b/i, emotion: "joy", valence: 0.8, intensity: 0.7 },
+  { pattern: /\b(trouwen|huwelijk|verloving)\b/i, emotion: "joy", valence: 0.9, intensity: 0.8 },
+  { pattern: /\b(geboren|bevalling|baby)\b/i, emotion: "joy", valence: 0.9, intensity: 0.8 },
+  { pattern: /\b(sorry|excuses|spijt|schuld)\b/i, emotion: "guilt", valence: -0.5, intensity: 0.5 },
+  { pattern: /\b(conflict|ruzie|probleem|crisis)\b/i, emotion: "distress", valence: -0.6, intensity: 0.6 },
 ];
 
 // ── Signal Extraction ──
@@ -211,6 +222,29 @@ export function recordEmotionSignals(graph: MemoryGraph, signals: EmotionSignal[
   }
 
   return created;
+}
+
+// ── Valence Inference (shared with retention.ts) ──
+
+/**
+ * Infer emotional valence from text content using the shared EMOTION_PATTERNS.
+ * Returns -1.0 (strongly negative) to 1.0 (strongly positive), 0 for neutral.
+ * Used by both emotion-tracker and retention's autoInferSalience.
+ */
+export function inferValenceFromText(text: string): number {
+  let totalValence = 0;
+  let count = 0;
+
+  for (const { pattern, valence, intensity } of EMOTION_PATTERNS) {
+    pattern.lastIndex = 0;
+    if (pattern.test(text)) {
+      totalValence += valence * intensity;
+      count++;
+    }
+  }
+
+  if (count === 0) return 0;
+  return Math.max(-1, Math.min(1, totalValence / count));
 }
 
 // ── Prompt Summary ──

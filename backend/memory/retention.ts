@@ -10,6 +10,7 @@ import {
   TIER_TAG_SIGNALS,
   TIER_CONTENT_SIGNALS,
 } from "./types.js";
+import { inferValenceFromText } from "../emotion-tracker.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("decay");
@@ -355,44 +356,15 @@ export function autoInferSalience(graph: MemoryGraph, threshold = 0.25): number 
 }
 
 // ── Emotional Valence Inference ──
-
-const POSITIVE_PATTERNS: RegExp[] = [
-  /\b(gefeliciteerd|congratulations|trots|proud|geweldig|amazing|fantastic)\b/i,
-  /\b(feest|celebration|party|blij|happy|love|liefde|dankbaar|grateful)\b/i,
-  /\b(promotie|promotion|breakthrough|doorbraak|success|succes|winst|win)\b/i,
-  /\b(trouwen|wedding|huwelijk|married|verloving|engaged)\b/i,
-  /\b(geboren|born|bevalling|baby)\b/i,
-  /\b(mooi|beautiful|perfect|excellent|fantastisch|wonderful)\b/i,
-];
-
-const NEGATIVE_PATTERNS: RegExp[] = [
-  /\b(overlijden|overleden|died|death|funeral|begrafenis|rouw|mourning)\b/i,
-  /\b(boos|angry|verdrietig|sad|huilen|crying|teleurgesteld|disappointed)\b/i,
-  /\b(sorry|excuses|spijt|regret|fout|mistake|schuld|guilt)\b/i,
-  /\b(ontslagen|fired|ontslag|layoff|verlies|loss)\b/i,
-  /\b(ziekenhuis|hospital|spoed|emergency|operatie|surgery|pijn|pain|ziek|sick)\b/i,
-  /\b(conflict|ruzie|argument|fight|probleem|problem|crisis)\b/i,
-];
+// Delegates to the shared inferValenceFromText in emotion-tracker.ts
+// to avoid maintaining duplicate emotion patterns.
 
 /**
  * Infer emotional direction from text content.
  * Returns -1.0 (strongly negative) to 1.0 (strongly positive), 0 for neutral.
  */
 export function inferEmotionalValence(text: string): number {
-  let positive = 0;
-  let negative = 0;
-
-  for (const p of POSITIVE_PATTERNS) {
-    if (p.test(text)) positive++;
-  }
-  for (const p of NEGATIVE_PATTERNS) {
-    if (p.test(text)) negative++;
-  }
-
-  if (positive === 0 && negative === 0) return 0;
-
-  const total = positive + negative;
-  return (positive - negative) / total;
+  return inferValenceFromText(text);
 }
 
 // ── Spaced Repetition Refresh ──

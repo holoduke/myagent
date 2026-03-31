@@ -112,18 +112,35 @@ export function buildContactModel(
   };
 }
 
+// Cache for contact models (hot prompt path — avoid repeated graph traversals)
+let cachedModels: ContactModel[] | null = null;
+let cachedModelsAt = 0;
+const MODEL_CACHE_TTL = 5 * 60_000; // 5 minutes
+
+/** Clear the contact model cache (for testing). */
+export function clearContactModelCache(): void {
+  cachedModels = null;
+  cachedModelsAt = 0;
+}
+
 /**
  * Build mental models for all active contacts (person nodes with recent activity).
+ * Results are cached for 5 minutes to avoid repeated graph traversals in hot prompt path.
  */
 export function buildActiveContactModels(graph: MemoryGraph): ContactModel[] {
   const now = Date.now();
+  if (cachedModels && now - cachedModelsAt < MODEL_CACHE_TTL) return cachedModels;
+
   const ACTIVE_THRESHOLD = 14 * 24 * 3600_000; // 14 days
 
-  return graph.findByType("person")
+  cachedModels = graph.findByType("person")
     .filter(p => p.pinned || (now - p.lastAccessedAt < ACTIVE_THRESHOLD))
     .map(p => buildContactModel(graph, p.id))
     .filter((m): m is ContactModel => m !== null)
     .slice(0, 10); // cap at 10 models for prompt space
+  cachedModelsAt = now;
+
+  return cachedModels;
 }
 
 /**
