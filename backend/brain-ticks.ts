@@ -38,6 +38,12 @@ import { trySendMessage } from "./brain-delivery.js";
 import { OWNER_NAME, GITHUB_REPO } from "./config.js";
 import { critiqueResponse } from "./response-critique.js";
 import { extractPreferenceSignals, updatePreferences } from "./preference-learner.js";
+import { extractEmotionSignals, recordEmotionSignals } from "./emotion-tracker.js";
+import { trackSentMessage, resolveReflections, createReflectionNodes } from "./reflection-tracker.js";
+import { detectCausalLinks, recordCausalLinks } from "./causal-tracker.js";
+import { isActionPermitted, recordSuccess } from "./autonomy.js";
+import { probeMemoryHealth, circuitSuccess, circuitFailure, isCircuitClosed } from "./health-monitor.js";
+import { runSleepConsolidation } from "./sleep-consolidation.js";
 
 const log = createLogger("brain-ticks");
 
@@ -186,6 +192,13 @@ export async function thinkTick(
   });
 
   try {
+    // Circuit breaker: skip API call if Claude is in open state
+    if (!isCircuitClosed("claude_api")) {
+      log("Think skipped: Claude API circuit breaker is OPEN");
+      state.lastThinkTick = now;
+      return false;
+    }
+
     let lastLogTime = Date.now();
     let deltaChars = 0;
     const result = await queue.add(async () => {
@@ -203,6 +216,7 @@ export async function thinkTick(
       });
     });
 
+    circuitSuccess("claude_api");
     log(`Think streaming complete: ${deltaChars} chars total`);
     const responseText = result.messages.join("\n");
     const response = parseBrainResponse(responseText);
@@ -294,10 +308,46 @@ export async function thinkTick(
       }
     }
 
+    // Emotion detection: extract emotional signals from observations
+    if (allObs.length > 0) {
+      try {
+        const emotionSignals = extractEmotionSignals(allObs);
+        if (emotionSignals.length > 0) {
+          recordEmotionSignals(graph, emotionSignals);
+        }
+      } catch (err) {
+        log(`Emotion extraction error (non-fatal): ${err}`);
+      }
+    }
+
+    // Reflection tracking: resolve pending reflections against new observations
+    try {
+      const resolved = resolveReflections(allObs);
+      if (resolved.length > 0) {
+        createReflectionNodes(graph, resolved);
+      }
+    } catch (err) {
+      log(`Reflection tracking error (non-fatal): ${err}`);
+    }
+
+    // Causal link detection: find cause-effect patterns in recent nodes
+    try {
+      const causalLinks = detectCausalLinks(graph);
+      if (causalLinks.length > 0) {
+        recordCausalLinks(graph, causalLinks);
+      }
+    } catch (err) {
+      log(`Causal detection error (non-fatal): ${err}`);
+    }
+
     if (response.message) {
       const isDigestTriggered = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
       const isDirectReply = allObs.some(o => !o.isFromMe && o.trustLevel === "owner");
 
+      // Autonomy gating: check if proactive messaging is permitted at current level
+      if (!isDirectReply && initiativeSignals.length > 0 && !isActionPermitted("send_proactive")) {
+        log(`Proactive message blocked by autonomy level (${response.message.slice(0, 60)}...)`);
+      } else
       // Phase 3: Self-critique for proactive/initiative messages
       if (initiativeSignals.length > 0 || !isDirectReply) {
         const hoursSinceLastMessage = state.lastMessageTime > 0
@@ -319,14 +369,18 @@ export async function thinkTick(
             bypassLimits: isDigestTriggered,
             targetJid: response.messageTargetJid,
           });
+          trackSentMessage(response.message, response.messageTargetJid || ownerJid, initiativeSignals.length > 0, critique.score);
           scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+          recordSuccess("send_message");
         }
       } else {
         await trySendMessage(state, sendMessage, ownerJid, response.message, {
           bypassLimits: isDigestTriggered,
           targetJid: response.messageTargetJid,
         });
+        trackSentMessage(response.message, response.messageTargetJid || ownerJid, false);
         scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+        recordSuccess("send_message");
       }
     }
 
@@ -356,6 +410,7 @@ export async function thinkTick(
     log(`Think #${state.totalThinks} complete (${graph.nodeCount} nodes, ${graph.edgeCount} edges, lifetime cost: $${state.totalCost.toFixed(4)})`);
     return true;
   } catch (err) {
+    circuitFailure("claude_api");
     state.lastThinkTick = now;
     state.lastObservationTime = now;
     throw wrapError(err, "think", `Think failed: ${err}`, {
@@ -378,6 +433,25 @@ export async function consolidateTick(
 
   const decayResult = runConsolidation(graph, wm);
   log(`Consolidate decay: ${decayResult.nodesDecayed} nodes decayed, ${decayResult.nodesPruned} archived, ${decayResult.edgesDecayed} edges decayed, ${decayResult.edgesPruned} pruned, ${decayResult.orphansPruned} orphans, ${decayResult.archiveRestored} recalled from archive`);
+
+  // Sleep consolidation: conflict detection, dedup, episodic→semantic promotion
+  try {
+    const sleepResult = runSleepConsolidation(graph);
+    log(`Sleep consolidation: ${sleepResult.conflictsDetected} conflicts, ${sleepResult.conflictsResolved} resolved, ${sleepResult.promotedToSemantic} promoted`);
+  } catch (err) {
+    log(`Sleep consolidation error (non-fatal): ${err}`);
+  }
+
+  // Health monitoring: probe memory graph health
+  try {
+    const nodes = graph.allNodes();
+    const avgStrength = nodes.length > 0
+      ? nodes.reduce((s, n) => s + n.strength, 0) / nodes.length
+      : 0;
+    probeMemoryHealth(graph.nodeCount, graph.edgeCount, graph.archiveSize, avgStrength);
+  } catch (err) {
+    log(`Health probe error (non-fatal): ${err}`);
+  }
   if (decayResult.uncapturedSignals.length > 0) {
     log(`Consolidate audit: ${decayResult.uncapturedSignals.length} uncaptured signals found in observation logs`);
   }

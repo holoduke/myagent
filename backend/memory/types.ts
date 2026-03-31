@@ -10,7 +10,10 @@ export type NodeType =
   | "meta"
   | "goal"
   | "concept"
-  | "preference";
+  | "preference"
+  | "belief"
+  | "procedure"
+  | "reflection";
 
 export interface MemoryNode {
   id: string;
@@ -38,6 +41,8 @@ export interface MemoryNode {
   validFrom?: number;          // unix ms — fact is valid starting from this time
   /** Temporal validity window — when this fact expires */
   validUntil?: number;         // unix ms — fact is no longer valid after this time
+  /** Bi-temporal: when ARIA learned about this (distinct from createdAt which is event time) */
+  ingestedAt?: number;         // unix ms — when this was ingested into the graph
 }
 
 export interface ArchivedNode extends MemoryNode {
@@ -170,7 +175,7 @@ export type TickType = "observe" | "think" | "consolidate" | "reflect";
 // ── Memory Operations (Claude's output) ──
 
 export type MemoryOperation =
-  | { op: "add_node"; id: string; type: NodeType; content: string; tags: string[]; pinned?: boolean; strength?: number; importance?: number; validFrom?: number; validUntil?: number }
+  | { op: "add_node"; id: string; type: NodeType; content: string; tags: string[]; pinned?: boolean; strength?: number; importance?: number; validFrom?: number; validUntil?: number; confidence?: number }
   | { op: "add_edge"; from: string; to: string; type: EdgeType; weight: number }
   | { op: "strengthen"; id: string; amount: number }
   | { op: "weaken"; id: string; amount: number }
@@ -316,6 +321,9 @@ export const DECAY_LAMBDA: Record<NodeType, number> = {
   goal:       0.001,   // very slow — goals persist
   concept:    0.001,   // very slow — concepts are structural
   preference: 0.001,   // very slow — preferences are long-lived
+  belief:     0.005,   // medium — beliefs evolve as evidence changes
+  procedure:  0.001,   // very slow — learned strategies persist
+  reflection: 0.01,    // medium-slow — reflections stay relevant for weeks
 };
 
 // ── Ghost Graph ──

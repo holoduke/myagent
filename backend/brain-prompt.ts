@@ -10,6 +10,14 @@ import { sanitizeForPrompt, detectInjection } from "./trust.js";
 import { extractAndClassifyCommitments } from "./commitments.js";
 import { formatPermissionRules, getActionMode } from "./contact-whitelist.js";
 import { getPreferenceSummary } from "./preference-learner.js";
+import { getEmotionContextSummary } from "./emotion-tracker.js";
+import { getReflectionSummary } from "./reflection-tracker.js";
+import { getCausalContextSummary } from "./causal-tracker.js";
+import { getBeliefSummary } from "./belief-tracker.js";
+import { getToMSummary } from "./mental-model.js";
+import { getAutonomySummary } from "./autonomy.js";
+import { getHealthSummary } from "./health-monitor.js";
+import { getCalibrationSummary } from "./metacognitive.js";
 
 function resolveCharacter(): CharacterOverride | undefined {
   const cfg = getBrainConfig();
@@ -372,13 +380,13 @@ You manage your memory through operations. Return a JSON array of operations.
 Each node has: id, type, content, tags, strength (0-1), pinned (boolean), importance (0-1, optional).
 Each edge connects two nodes with a type and weight (0-1).
 
-Node types: person, event, insight, fact, emotion, plan, meta, goal, concept
+Node types: person, event, insight, fact, emotion, plan, meta, goal, concept, preference, belief, procedure, reflection
 Edge types: causal, temporal, social, topical, emotional, contradicts, hierarchical
 
 Available operations:
 
 ADD a new memory node:
-  {"op": "add_node", "id": "n_unique8hex", "type": "person", "content": "description", "tags": ["tag1"], "strength": 0.8, "pinned": false, "importance": 0.5}
+  {"op": "add_node", "id": "n_unique8hex", "type": "person", "content": "description", "tags": ["tag1"], "strength": 0.8, "pinned": false, "importance": 0.5, "confidence": 0.8}
 
 ADD an edge between nodes:
   {"op": "add_edge", "from": "n_xxx", "to": "n_yyy", "type": "social", "weight": 0.7}
@@ -406,6 +414,18 @@ REMOVE an edge:
 
 Generate IDs as: "n_" followed by 8 random hex chars (e.g. "n_a3f1b2c4").
 Pin important nodes (key people, core identity, critical facts) — pinned nodes never decay.
+
+CONFIDENCE FIELD (0.0 – 1.0):
+Set "confidence" on belief and fact nodes to indicate source reliability:
+  - 1.0 = verified/confirmed (owner stated directly, official source)
+  - 0.7 = high confidence (reliable source, consistent with other facts)
+  - 0.5 = moderate (secondhand, plausible but unverified)
+  - 0.3 = low (rumor, single source, might change)
+
+SPECIAL NODE TYPES:
+- "belief" nodes: Represent ARIA's understanding that may evolve. Always set confidence. Example: {"op": "add_node", "type": "belief", "content": "Lucas prefers football over swimming", "confidence": 0.6}
+- "procedure" nodes: Learned interaction strategies. Example: {"op": "add_node", "type": "procedure", "content": "When Gillis is stressed, keep messages short and practical"}
+- "reflection" nodes: Self-assessments of messaging outcomes. Created automatically from message tracking.
 
 IMPORTANCE FIELD (0.0 – 1.0):
 Set "importance" on nodes to protect significant memories from frequency-based decay.
@@ -499,6 +519,56 @@ function formatPreferencesSection(graph: MemoryGraph): string {
   return `\n═══ OWNER PREFERENCES ═══\n\nLearned from observed behavior patterns. Use these to tailor your communication style and timing:\n\n${summary}\n`;
 }
 
+function formatEnhancedContextSections(graph: MemoryGraph): string {
+  const sections: string[] = [];
+
+  // Emotion context
+  const emotions = getEmotionContextSummary(graph);
+  if (emotions) {
+    sections.push(`\n═══ EMOTIONAL CONTEXT (24h) ═══\n\n${emotions}\n`);
+  }
+
+  // Reflection outcomes
+  const reflections = getReflectionSummary(graph);
+  if (reflections) {
+    sections.push(`\n═══ MESSAGING OUTCOMES ═══\n\n${reflections}\n`);
+  }
+
+  // Causal relationships
+  const causal = getCausalContextSummary(graph);
+  if (causal) {
+    sections.push(`\n═══ CAUSAL LINKS ═══\n\n${causal}\n`);
+  }
+
+  // Belief status
+  const beliefs = getBeliefSummary(graph);
+  if (beliefs) {
+    sections.push(`\n═══ EVOLVING BELIEFS ═══\n\n${beliefs}\n`);
+  }
+
+  // Theory of Mind
+  const tom = getToMSummary(graph);
+  if (tom) {
+    sections.push(`\n═══ CONTACT MENTAL MODELS ═══\n\n${tom}\n`);
+  }
+
+  // Autonomy + Health + Calibration (compact line)
+  const autonomy = getAutonomySummary();
+  const health = getHealthSummary();
+  const calibration = getCalibrationSummary();
+
+  const systemLines: string[] = [];
+  if (autonomy) systemLines.push(autonomy);
+  if (health) systemLines.push(health);
+  if (calibration) systemLines.push(calibration);
+
+  if (systemLines.length > 0) {
+    sections.push(`\n═══ SYSTEM STATUS ═══\n\n${systemLines.join("\n")}\n`);
+  }
+
+  return sections.join("");
+}
+
 export interface RecentChatDelivery {
   jid: string;
   messageSnippet: string;
@@ -564,7 +634,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}
+${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}${formatEnhancedContextSections(ctx.graph)}
 ═══ ACTIVATED MEMORIES ═══
 ${serializeNodesForPrompt(ctx.contextNodes, ctx.graph)}
 
