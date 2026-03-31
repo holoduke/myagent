@@ -102,12 +102,15 @@ describe("DECAY_LAMBDA", () => {
     expect(DECAY_LAMBDA.preference).toBe(0.001); // Very slow, like goals/concepts
   });
 
-  it("includes all 10 node types", async () => {
+  it("includes all 13 node types", async () => {
     const { DECAY_LAMBDA } = await import("../backend/memory/types.js");
     const types = Object.keys(DECAY_LAMBDA);
-    expect(types).toHaveLength(10);
+    expect(types).toHaveLength(13);
     expect(types).toContain("preference");
     expect(types).toContain("person");
     expect(types).toContain("concept");
+    expect(types).toContain("belief");
+    expect(types).toContain("procedure");
+    expect(types).toContain("reflection");
   });
 });

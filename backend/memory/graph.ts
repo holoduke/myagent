@@ -329,12 +329,16 @@ export class MemoryGraph {
     }
   }
 
-  updateNode(id: string, updates: { content?: string; tags?: string[]; pinned?: boolean }): void {
+  updateNode(id: string, updates: { content?: string; tags?: string[]; pinned?: boolean; importance?: number; confidence?: number; emotionalValence?: number; strength?: number }): void {
     const node = this.nodes.get(id);
     if (!node) return;
 
     if (updates.content !== undefined) node.content = updates.content;
     if (updates.pinned !== undefined) node.pinned = updates.pinned;
+    if (updates.importance !== undefined) node.importance = Math.max(0, Math.min(1, updates.importance));
+    if (updates.confidence !== undefined) node.confidence = Math.max(0, Math.min(1, updates.confidence));
+    if (updates.emotionalValence !== undefined) node.emotionalValence = Math.max(-1, Math.min(1, updates.emotionalValence));
+    if (updates.strength !== undefined) node.strength = Math.max(0, Math.min(1, updates.strength));
     if (updates.tags !== undefined) {
       // Remove old tag indexes
       for (const tag of node.tags) {
@@ -946,7 +950,9 @@ export class MemoryGraph {
               createdAt: now,
               lastAccessedAt: now,
               accessCount: 1,
+              ingestedAt: now,
               ...(op.importance !== null && op.importance !== undefined ? { importance: Math.max(0, Math.min(1, op.importance)) } : {}),
+              ...(op.confidence !== null && op.confidence !== undefined ? { confidence: Math.max(0, Math.min(1, op.confidence)) } : {}),
               ...(op.validFrom ? { validFrom: op.validFrom } : {}),
               ...(op.validUntil ? { validUntil: op.validUntil } : {}),
             };
