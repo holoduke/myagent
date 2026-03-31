@@ -776,11 +776,33 @@ export class MemoryGraph {
         .filter(w => w.length >= 3 && !stopWords.has(w) && !/^\d+$/.test(w))
     );
 
-    // Score all existing nodes
+    // Build candidate set from byTag index (avoids O(n) scan of all nodes)
+    const candidateIds = new Set<string>();
+    for (const tag of newTagsLower) {
+      const ids = this.byTag.get(tag);
+      if (ids) {
+        for (const id of ids) {
+          if (id !== newNode.id) candidateIds.add(id);
+        }
+      }
+    }
+    // Also include same-type nodes for content-based matching (capped to avoid O(n))
+    const sameType = this.byType.get(newNode.type);
+    if (sameType) {
+      let added = 0;
+      for (const id of sameType) {
+        if (id !== newNode.id && !candidateIds.has(id)) {
+          candidateIds.add(id);
+          if (++added >= 50) break;
+        }
+      }
+    }
+
     const candidates: { id: string; score: number; matchType: "tag" | "content" | "both" }[] = [];
 
-    for (const [id, existing] of this.nodes) {
-      if (id === newNode.id) continue;
+    for (const id of candidateIds) {
+      const existing = this.nodes.get(id);
+      if (!existing) continue;
 
       const existTagsLower = new Set(existing.tags.map(t => t.toLowerCase()));
       const existContentLower = existing.content.toLowerCase();

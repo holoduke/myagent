@@ -1,11 +1,15 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../backend/logger.js", () => ({
   createLogger: () => Object.assign((...args: unknown[]) => {}, { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }),
 }));
 
-import { buildContactModel, buildActiveContactModels, getToMSummary } from "../backend/mental-model.js";
+import { buildContactModel, buildActiveContactModels, getToMSummary, clearContactModelCache } from "../backend/mental-model.js";
 import type { MemoryNode } from "../backend/memory/types.js";
+
+beforeEach(() => {
+  clearContactModelCache();
+});
 
 const now = Date.now();
 

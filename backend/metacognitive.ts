@@ -68,7 +68,7 @@ export function assessConfidence(
   factors.push({ name: "memory_relevance", score: memoryScore, weight: 0.25 });
 
   // Factor 4: Graph health (node count, connectivity)
-  const nodeCount = graph.allNodes().length;
+  const nodeCount = graph.nodeCount;
   const healthScore = nodeCount > 50 ? 0.8 : nodeCount > 10 ? 0.5 : 0.3;
   factors.push({ name: "graph_health", score: healthScore, weight: 0.2 });
 

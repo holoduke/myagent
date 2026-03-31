@@ -99,6 +99,7 @@ import type { MemoryNode } from "./types.js";
 export function detectGistClusters(graph: MemoryGraph): MemoryNode[][] {
   const now = Date.now();
   const MIN_AGE_MS = 7 * 24 * 3600000;
+  const MAX_CANDIDATES_PER_TYPE = 80; // Cap per-type candidates to bound O(n²)
 
   const candidates = graph.allNodes()
     .filter(n => !n.pinned && n.strength < 0.5 && (now - n.createdAt) > MIN_AGE_MS);
@@ -106,7 +107,8 @@ export function detectGistClusters(graph: MemoryGraph): MemoryNode[][] {
   const byType = new Map<string, MemoryNode[]>();
   for (const node of candidates) {
     if (!byType.has(node.type)) byType.set(node.type, []);
-    byType.get(node.type)!.push(node);
+    const group = byType.get(node.type)!;
+    if (group.length < MAX_CANDIDATES_PER_TYPE) group.push(node);
   }
 
   const clusters: MemoryNode[][] = [];
@@ -114,21 +116,36 @@ export function detectGistClusters(graph: MemoryGraph): MemoryNode[][] {
   for (const [, nodes] of byType) {
     if (nodes.length < 3) continue;
 
+    // Build tag→node index to avoid O(n²) pairwise comparison
+    const tagIndex = new Map<string, Set<number>>();
+    for (let i = 0; i < nodes.length; i++) {
+      for (const tag of nodes[i].tags) {
+        const key = tag.toLowerCase();
+        if (!tagIndex.has(key)) tagIndex.set(key, new Set());
+        tagIndex.get(key)!.add(i);
+      }
+    }
+
     const used = new Set<string>();
 
     for (let i = 0; i < nodes.length && clusters.length < 5; i++) {
       if (used.has(nodes[i].id)) continue;
 
+      // Find candidates sharing at least one tag via index
+      const neighborCounts = new Map<number, number>();
+      for (const tag of nodes[i].tags) {
+        const key = tag.toLowerCase();
+        const matches = tagIndex.get(key);
+        if (!matches) continue;
+        for (const j of matches) {
+          if (j <= i || used.has(nodes[j].id)) continue;
+          neighborCounts.set(j, (neighborCounts.get(j) ?? 0) + 1);
+        }
+      }
+
       const cluster = [nodes[i]];
-
-      for (let j = i + 1; j < nodes.length; j++) {
-        if (used.has(nodes[j].id)) continue;
-
-        const overlap = nodes[i].tags.filter(t =>
-          nodes[j].tags.some(t2 => t2.toLowerCase() === t.toLowerCase()),
-        );
-
-        if (overlap.length >= 2) {
+      for (const [j, overlapCount] of neighborCounts) {
+        if (overlapCount >= 2) {
           cluster.push(nodes[j]);
         }
       }

@@ -41,15 +41,24 @@ import { extractPreferenceSignals, updatePreferences } from "./preference-learne
 import { extractEmotionSignals, recordEmotionSignals } from "./emotion-tracker.js";
 import { trackSentMessage, resolveReflections, createReflectionNodes } from "./reflection-tracker.js";
 import { detectCausalLinks, recordCausalLinks } from "./causal-tracker.js";
-import { isActionPermitted, recordSuccess } from "./autonomy.js";
+import { isActionPermitted, recordSuccess, recordFailure } from "./autonomy.js";
 import { probeMemoryHealth, circuitSuccess, circuitFailure, isCircuitClosed } from "./health-monitor.js";
 import { runSleepConsolidation } from "./sleep-consolidation.js";
+import { detectStaleBeliefs } from "./belief-tracker.js";
+import { recordTemporalEvent, analyzePatterns } from "./temporal-patterns.js";
+import { predictNextScene, applyScenePrediction } from "./scene-predictor.js";
+import { runReflectiveConsolidation } from "./reflective-consolidation.js";
+import { runKnowledgeCompilation } from "./knowledge-compiler.js";
 
 const log = createLogger("brain-ticks");
 
 // ── Config ──
 
 const BRAIN_TOOLS = process.env.BRAIN_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch";
+
+// Sleep consolidation runs at most once per 6 hours (expensive O(n²) pass)
+let lastSleepConsolidationAt = 0;
+const SLEEP_CONSOLIDATION_INTERVAL = 6 * 3600_000;
 
 // ── Response Parsing ──
 
@@ -340,6 +349,29 @@ export async function thinkTick(
       log(`Causal detection error (non-fatal): ${err}`);
     }
 
+    // Temporal pattern recording: log topics from current observations
+    try {
+      for (const obs of allObs.slice(0, 5)) {
+        if (obs.text && obs.text.length > 5 && !obs.isFromMe) {
+          const topic = obs.text.slice(0, 50).toLowerCase();
+          recordTemporalEvent(topic, obs.senderJid);
+        }
+      }
+    } catch (err) {
+      log(`Temporal pattern recording error (non-fatal): ${err}`);
+    }
+
+    // Scene prediction: pre-stage memory nodes for next think tick
+    try {
+      const prediction = predictNextScene(graph, wm);
+      if (prediction.stagedNodeIds.length > 0) {
+        applyScenePrediction(wm, prediction);
+        saveWorkingMemory(wm);
+      }
+    } catch (err) {
+      log(`Scene prediction error (non-fatal): ${err}`);
+    }
+
     if (response.message) {
       const isDigestTriggered = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
       const isDirectReply = allObs.some(o => !o.isFromMe && o.trustLevel === "owner");
@@ -347,6 +379,7 @@ export async function thinkTick(
       // Autonomy gating: check if proactive messaging is permitted at current level
       if (!isDirectReply && initiativeSignals.length > 0 && !isActionPermitted("send_proactive")) {
         log(`Proactive message blocked by autonomy level (${response.message.slice(0, 60)}...)`);
+        recordFailure("send_proactive", "blocked by autonomy level");
       } else
       // Phase 3: Self-critique for proactive/initiative messages
       if (initiativeSignals.length > 0 || !isDirectReply) {
@@ -363,7 +396,7 @@ export async function thinkTick(
         });
         if (!critique.shouldSend) {
           log(`Message suppressed by self-critique (score ${critique.score}): ${critique.reason}`);
-          // Skip sending but continue with other processing
+          recordFailure("send_message", `self-critique suppressed (score ${critique.score})`);
         } else {
           await trySendMessage(state, sendMessage, ownerJid, response.message, {
             bypassLimits: isDigestTriggered,
@@ -435,11 +468,15 @@ export async function consolidateTick(
   log(`Consolidate decay: ${decayResult.nodesDecayed} nodes decayed, ${decayResult.nodesPruned} archived, ${decayResult.edgesDecayed} edges decayed, ${decayResult.edgesPruned} pruned, ${decayResult.orphansPruned} orphans, ${decayResult.archiveRestored} recalled from archive`);
 
   // Sleep consolidation: conflict detection, dedup, episodic→semantic promotion
-  try {
-    const sleepResult = runSleepConsolidation(graph);
-    log(`Sleep consolidation: ${sleepResult.conflictsDetected} conflicts, ${sleepResult.conflictsResolved} resolved, ${sleepResult.promotedToSemantic} promoted`);
-  } catch (err) {
-    log(`Sleep consolidation error (non-fatal): ${err}`);
+  // Time-gated to avoid running expensive O(n²) passes every consolidate tick
+  if (now - lastSleepConsolidationAt > SLEEP_CONSOLIDATION_INTERVAL) {
+    try {
+      const sleepResult = runSleepConsolidation(graph);
+      lastSleepConsolidationAt = now;
+      log(`Sleep consolidation: ${sleepResult.conflictsDetected} conflicts, ${sleepResult.conflictsResolved} resolved, ${sleepResult.promotedToSemantic} promoted`);
+    } catch (err) {
+      log(`Sleep consolidation error (non-fatal): ${err}`);
+    }
   }
 
   // Health monitoring: probe memory graph health
@@ -452,6 +489,46 @@ export async function consolidateTick(
   } catch (err) {
     log(`Health probe error (non-fatal): ${err}`);
   }
+  // Stale belief detection: flag beliefs needing review
+  try {
+    const staleBeliefs = detectStaleBeliefs(graph);
+    if (staleBeliefs.length > 0) {
+      log(`Stale beliefs: ${staleBeliefs.length} beliefs need review (old + medium confidence or contradicted)`);
+    }
+  } catch (err) {
+    log(`Stale belief detection error (non-fatal): ${err}`);
+  }
+
+  // Reflective consolidation: summarize weak clusters before they decay away
+  try {
+    const gistResults = runReflectiveConsolidation(graph);
+    if (gistResults.length > 0) {
+      log(`Reflective consolidation: ${gistResults.length} gist nodes created from ${gistResults.reduce((s, r) => s + r.nodesConsolidated, 0)} weak nodes`);
+    }
+  } catch (err) {
+    log(`Reflective consolidation error (non-fatal): ${err}`);
+  }
+
+  // Knowledge compilation: compile repeated reasoning patterns into procedure nodes
+  try {
+    const compiled = runKnowledgeCompilation(graph);
+    if (compiled > 0) {
+      log(`Knowledge compilation: ${compiled} patterns compiled`);
+    }
+  } catch (err) {
+    log(`Knowledge compilation error (non-fatal): ${err}`);
+  }
+
+  // Temporal pattern analysis: detect recurring behavior patterns (daily analysis)
+  try {
+    const patterns = analyzePatterns();
+    if (patterns.length > 0) {
+      log(`Temporal patterns: ${patterns.length} recurring patterns detected`);
+    }
+  } catch (err) {
+    log(`Temporal pattern analysis error (non-fatal): ${err}`);
+  }
+
   if (decayResult.uncapturedSignals.length > 0) {
     log(`Consolidate audit: ${decayResult.uncapturedSignals.length} uncaptured signals found in observation logs`);
   }
@@ -747,6 +824,7 @@ export async function reflectTick(
       });
       if (!reflectCritique.shouldSend) {
         log(`Reflect message suppressed by self-critique (score ${reflectCritique.score}): ${reflectCritique.reason}`);
+        recordFailure("send_message", `reflect self-critique suppressed (score ${reflectCritique.score})`);
       } else {
         await trySendMessage(state, sendMessage, ownerJid, response.message, {
           targetJid: response.messageTargetJid,
