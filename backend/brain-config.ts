@@ -29,6 +29,8 @@ export interface BrainConfig {
   archiveRecallMax: number;              // maximum archive restores per consolidation cycle
   archiveRecallDivisor: number;          // archive size divisor for scaling (restores = archiveSize / divisor)
   maxThinkContextNodes: number;          // base budget for think context node selection
+  selfCritiqueEnabled: boolean;          // enable pre-send quality gate for proactive messages
+  selfCritiqueThreshold: number;         // minimum score (1-10) to allow sending; default 6
 }
 
 export interface BrainPreset {
@@ -184,6 +186,8 @@ function envDefaults(): BrainConfig {
     archiveRecallMax: 15,
     archiveRecallDivisor: 400,
     maxThinkContextNodes: 35,
+    selfCritiqueEnabled: process.env.SELF_CRITIQUE_ENABLED !== "false",
+    selfCritiqueThreshold: Number(process.env.SELF_CRITIQUE_THRESHOLD ?? 6),
   };
 }
 

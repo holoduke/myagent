@@ -36,6 +36,8 @@ import {
 import { loadSubAgents, loadSubAgentHistory } from "./sub-agents.js";
 import { trySendMessage } from "./brain-delivery.js";
 import { OWNER_NAME, GITHUB_REPO } from "./config.js";
+import { critiqueResponse } from "./response-critique.js";
+import { extractPreferenceSignals, updatePreferences } from "./preference-learner.js";
 
 const log = createLogger("brain-ticks");
 
@@ -280,14 +282,52 @@ export async function thinkTick(
       enqueueImprovementProposals(response.improvementProposals, "think", cfg);
     }
 
+    // Phase 4: Extract preference signals from owner behavior
+    if (allObs.length > 0) {
+      try {
+        const prefSignals = extractPreferenceSignals(allObs);
+        if (prefSignals.length > 0) {
+          updatePreferences(graph, prefSignals);
+        }
+      } catch (err) {
+        log(`Preference extraction error (non-fatal): ${err}`);
+      }
+    }
+
     if (response.message) {
       const isDigestTriggered = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
-      await trySendMessage(state, sendMessage, ownerJid, response.message, {
-        bypassLimits: isDigestTriggered,
-        targetJid: response.messageTargetJid,
-      });
+      const isDirectReply = allObs.some(o => !o.isFromMe && o.trustLevel === "owner");
 
-      scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+      // Phase 3: Self-critique for proactive/initiative messages
+      if (initiativeSignals.length > 0 || !isDirectReply) {
+        const hoursSinceLastMessage = state.lastMessageTime > 0
+          ? (now - state.lastMessageTime) / 3600000
+          : Infinity;
+        const critique = await critiqueResponse(response.message, {
+          isDirectReply,
+          isDigest: isDigestTriggered,
+          recentObservationCount: allObs.length,
+          hoursSinceLastMessage,
+          messagesToday: state.messagesToday,
+          maxMessagesPerDay: cfg.maxMessagesPerDay,
+        });
+        if (!critique.shouldSend) {
+          log(`Message suppressed by self-critique (score ${critique.score}): ${critique.reason}`);
+          // Skip sending but continue with other processing
+        } else {
+          await trySendMessage(state, sendMessage, ownerJid, response.message, {
+            bypassLimits: isDigestTriggered,
+            targetJid: response.messageTargetJid,
+          });
+          scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+        }
+      } else {
+        await trySendMessage(state, sendMessage, ownerJid, response.message, {
+          bypassLimits: isDigestTriggered,
+          targetJid: response.messageTargetJid,
+        });
+        scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+      }
     }
 
     for (const obs of allObs) {
@@ -620,11 +660,25 @@ export async function reflectTick(
     }
 
     if (response.message) {
-      await trySendMessage(state, sendMessage, ownerJid, response.message, {
-        targetJid: response.messageTargetJid,
+      // Phase 3: Self-critique for reflect messages (always proactive)
+      const hoursSinceLastMsg = state.lastMessageTime > 0
+        ? (now - state.lastMessageTime) / 3600000
+        : Infinity;
+      const reflectCritique = await critiqueResponse(response.message, {
+        isDirectReply: false,
+        recentObservationCount: 0,
+        hoursSinceLastMessage: hoursSinceLastMsg,
+        messagesToday: state.messagesToday,
+        maxMessagesPerDay: cfg.maxMessagesPerDay,
       });
-
-      scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+      if (!reflectCritique.shouldSend) {
+        log(`Reflect message suppressed by self-critique (score ${reflectCritique.score}): ${reflectCritique.reason}`);
+      } else {
+        await trySendMessage(state, sendMessage, ownerJid, response.message, {
+          targetJid: response.messageTargetJid,
+        });
+        scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+      }
     }
 
     state.lastReflectTick = now;

@@ -747,8 +747,22 @@ async function handleRecurringTasks(
           const { hour } = getOwnerLocalTime(getBrainConfig().ownerTimezone);
           const isEvening = hour >= 17;
           const digestPrompt = isEvening
-            ? `[DIGEST REQUEST: ${task.label}] Create a brief evening briefing for the owner. Summarize the day's key events: notable conversations, important messages, things that happened, any open items or pending decisions, and anything worth reflecting on. Keep it concise and personal.`
-            : `[DIGEST REQUEST: ${task.label}] Create a brief morning briefing for the owner. Cover: what happened overnight, important messages received, pending items from yesterday, anything coming up today, and any initiative signals. Keep it concise and personal.`;
+            ? `[DIGEST REQUEST: ${task.label}] Create a structured evening briefing using these sections:
+
+📅 TODAY'S HIGHLIGHTS — Key events, conversations, and notable happenings today
+📋 FOLLOW-UPS — Open items, pending decisions, things still needing attention
+👥 PEOPLE — Notable interactions, who reached out, any relationship updates
+💡 INSIGHTS — Patterns you noticed, things worth reflecting on
+
+Keep each section to 2-4 bullet points max. Skip empty sections. Be concise and personal.`
+            : `[DIGEST REQUEST: ${task.label}] Create a structured morning briefing using these sections:
+
+📅 CALENDAR — What's scheduled today, upcoming meetings or events
+📋 FOLLOW-UPS — Pending items from yesterday, things needing attention today
+👥 PEOPLE — Who reached out overnight, messages requiring response
+💡 INSIGHTS — Patterns you noticed, initiative signals, anything proactive
+
+Keep each section to 2-4 bullet points max. Skip empty sections. Be concise and personal.`;
           const digestObs: Observation = {
             timestamp: Date.now(),
             sender: "ARIA (digest)",

@@ -14,6 +14,7 @@ import { evaluateMessage } from "./message-evaluator.js";
 import { dispatchReply } from "./reply-agent.js";
 import { runMessageHandlers } from "./message-handlers.js";
 import { BRAIN_DIR } from "./config.js";
+import { updateFrequency } from "./frequency-tracker.js";
 
 const log = createLogger("observer");
 
@@ -79,6 +80,8 @@ export interface Observation {
   promptDetectionResult?: PromptDetectionResult;
   /** Intent classification for incoming messages */
   intentClassification?: IntentClassification;
+  /** Media type if message contains non-text media (voice, image, document) */
+  mediaType?: "voice" | "image" | "document";
 }
 
 export interface CallMeta {
@@ -182,6 +185,11 @@ export function recordObservation(obs: Observation): void {
   // Classify trust level at intake
   if (!obs.trustLevel) {
     obs.trustLevel = classifyTrust(obs);
+  }
+
+  // Track contact frequency for anomaly detection (Phase 5b)
+  if (!obs.isFromMe && obs.senderJid && obs.source !== "calendar" && obs.source !== "rss") {
+    updateFrequency(obs.senderJid, obs.sender, obs.timestamp);
   }
 
   // Detect injection attempts in untrusted content

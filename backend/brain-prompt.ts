@@ -9,6 +9,7 @@ import type { InitiativeSignal } from "./initiative.js";
 import { sanitizeForPrompt, detectInjection } from "./trust.js";
 import { extractAndClassifyCommitments } from "./commitments.js";
 import { formatPermissionRules, getActionMode } from "./contact-whitelist.js";
+import { getPreferenceSummary } from "./preference-learner.js";
 
 function resolveCharacter(): CharacterOverride | undefined {
   const cfg = getBrainConfig();
@@ -492,6 +493,12 @@ Feel free to share thoughts, observations, and reactions more freely. Be convers
   }
 }
 
+function formatPreferencesSection(graph: MemoryGraph): string {
+  const summary = getPreferenceSummary(graph);
+  if (!summary) return "";
+  return `\n═══ OWNER PREFERENCES ═══\n\nLearned from observed behavior patterns. Use these to tailor your communication style and timing:\n\n${summary}\n`;
+}
+
 export interface RecentChatDelivery {
   jid: string;
   messageSnippet: string;
@@ -557,7 +564,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}
+${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}
 ═══ ACTIVATED MEMORIES ═══
 ${serializeNodesForPrompt(ctx.contextNodes, ctx.graph)}
 
@@ -620,6 +627,7 @@ THINKING GUIDELINES:
 - If you notice an emerging pattern across 3+ new nodes, create a concept to group them.
 - Use goalOps to create/update/complete goals when someone expresses intentions or you identify objectives.
 - Use pendingFollowUps to track things you want to ask about or check on later.
+- TEMPORAL FACTS: When creating or updating fact nodes that have a time-limited validity (e.g., "Lucas is 8 years old", "quarterly review next Friday"), set validFrom and/or validUntil fields (unix ms) on the node via add_node or update_node. Expired facts decay faster automatically. Example: {"op": "add_node", "id": "n_xxx", "type": "fact", "content": "Lucas is 8 years old", "tags": ["lucas", "age"], "validUntil": 1735689600000}
 - CONTRADICTION DETECTION: If you notice an observation that contradicts an existing memory node (e.g., someone says X but you have a node saying Y, or a fact has changed), do the following:
   1. Update the existing node with the corrected information using update_node.
   2. Add a tag "corrected" to the updated node so it is retained as important.

@@ -9,7 +9,8 @@ export type NodeType =
   | "plan"
   | "meta"
   | "goal"
-  | "concept";
+  | "concept"
+  | "preference";
 
 export interface MemoryNode {
   id: string;
@@ -33,6 +34,10 @@ export interface MemoryNode {
     edgeCount: number;         // how many edges the node had when archived
     strength: number;          // original strength at archive time
   };
+  /** Temporal validity window — when this fact is valid (Phase 5a) */
+  validFrom?: number;          // unix ms — fact is valid starting from this time
+  /** Temporal validity window — when this fact expires */
+  validUntil?: number;         // unix ms — fact is no longer valid after this time
 }
 
 export interface ArchivedNode extends MemoryNode {
@@ -165,7 +170,7 @@ export type TickType = "observe" | "think" | "consolidate" | "reflect";
 // ── Memory Operations (Claude's output) ──
 
 export type MemoryOperation =
-  | { op: "add_node"; id: string; type: NodeType; content: string; tags: string[]; pinned?: boolean; strength?: number; importance?: number }
+  | { op: "add_node"; id: string; type: NodeType; content: string; tags: string[]; pinned?: boolean; strength?: number; importance?: number; validFrom?: number; validUntil?: number }
   | { op: "add_edge"; from: string; to: string; type: EdgeType; weight: number }
   | { op: "strengthen"; id: string; amount: number }
   | { op: "weaken"; id: string; amount: number }
@@ -301,15 +306,16 @@ export const TIER_CONTENT_SIGNALS: Record<RetentionTier, string[]> = {
 // ── Decay Constants ──
 
 export const DECAY_LAMBDA: Record<NodeType, number> = {
-  person:  0.002,   // ~14-day half-life
-  fact:    0.003,
-  insight: 0.004,
-  event:   0.005,
-  plan:    0.006,
-  emotion: 0.008,   // ~3.6-day half-life
-  meta:    0.003,
-  goal:    0.001,   // very slow — goals persist
-  concept: 0.001,   // very slow — concepts are structural
+  person:     0.002,   // ~14-day half-life
+  fact:       0.003,
+  insight:    0.004,
+  event:      0.005,
+  plan:       0.006,
+  emotion:    0.008,   // ~3.6-day half-life
+  meta:       0.003,
+  goal:       0.001,   // very slow — goals persist
+  concept:    0.001,   // very slow — concepts are structural
+  preference: 0.001,   // very slow — preferences are long-lived
 };
 
 // ── Ghost Graph ──

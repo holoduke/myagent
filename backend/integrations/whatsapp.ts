@@ -3,6 +3,7 @@ import makeWASocket, {
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion,
+  downloadMediaMessage,
   proto,
   Contact,
 } from "@whiskeysockets/baileys";
@@ -15,6 +16,8 @@ import { safeReadJSON, atomicWriteJSON } from "../utils/file-store.js";
 import { createHash } from "crypto";
 import { EventEmitter } from "events";
 import { createLogger } from "../logger.js";
+import { transcribeAudio } from "../utils/transcribe.js";
+import { describeImage } from "../utils/vision.js";
 
 // Emits 'logout' when WhatsApp session is logged out.
 // Listeners can perform cleanup before the process exits.
@@ -35,6 +38,7 @@ export interface ObservationEvent {
   text: string;
   chatJid?: string;     // For DMs: the remote JID (who the chat is with)
   chatName?: string;    // For DMs: resolved name of the chat counterpart
+  mediaType?: "voice" | "image" | "document"; // Media type if message contains non-text media
 }
 
 export type ObservationHandler = (obs: ObservationEvent) => void;
@@ -299,7 +303,43 @@ export async function startWhatsApp(
         }
       }
 
-      if (!text.trim()) continue;
+      // ── Multimodal: voice message transcription ──
+      let mediaType: "voice" | "image" | "document" | undefined;
+      let resolvedText = text;
+
+      if (!resolvedText.trim() && m?.audioMessage) {
+        try {
+          const buffer = await downloadMediaMessage(msg, "buffer", {}) as Buffer;
+          const mimetype = m.audioMessage.mimetype || "audio/ogg";
+          const transcription = await transcribeAudio(buffer, mimetype);
+          if (transcription) {
+            resolvedText = `[voice] ${transcription}`;
+            mediaType = "voice";
+            log.info(`Transcribed voice message: ${transcription.slice(0, 80)}`);
+          }
+        } catch (err) {
+          log(`Failed to process voice message: ${err}`);
+        }
+      }
+
+      // ── Multimodal: image understanding ──
+      if (!resolvedText.trim() && m?.imageMessage) {
+        try {
+          const buffer = await downloadMediaMessage(msg, "buffer", {}) as Buffer;
+          const mimetype = m.imageMessage.mimetype || "image/jpeg";
+          const caption = m.imageMessage.caption || undefined;
+          const description = await describeImage(buffer, mimetype, caption);
+          if (description) {
+            resolvedText = `[image] ${description}`;
+            mediaType = "image";
+            log.info(`Described image: ${description.slice(0, 80)}`);
+          }
+        } catch (err) {
+          log(`Failed to process image message: ${err}`);
+        }
+      }
+
+      if (!resolvedText.trim()) continue;
 
       // Deduplicate messages (Baileys can deliver same message via @lid and @s.whatsapp.net)
       const msgId = msg.key.id;
@@ -374,9 +414,10 @@ export async function startWhatsApp(
             isGroup,
             groupName,
             isFromMe: msg.key.fromMe ?? false,
-            text,
+            text: resolvedText,
             chatJid,
             chatName,
+            mediaType,
           });
         } catch (err) {
           log.error(`Observation handler error: ${err}`);
@@ -397,10 +438,10 @@ export async function startWhatsApp(
         continue;
       }
 
-      log.info(`Processing owner message: ${text.slice(0, 100)}`);
+      log.info(`Processing owner message: ${resolvedText.slice(0, 100)}`);
 
       // Always reply to owner's @s.whatsapp.net JID (LID replies may not deliver)
-      await onMessage(ownerJid, text, msg);
+      await onMessage(ownerJid, resolvedText, msg);
     }
   });
 }
