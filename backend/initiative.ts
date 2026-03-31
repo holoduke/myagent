@@ -26,15 +26,14 @@ export function detectInitiativeSignals(
   const now = Date.now();
   const signals: InitiativeSignal[] = [];
 
-  // Weekend-aware multipliers: weekends have naturally lower activity,
-  // so raise thresholds to avoid false-positive signals.
+  // Weekend detection for heuristic signals (person_absent, conversation_stale).
+  // follow_up_due and goal_deadline are NOT weekend-adjusted — they have explicit
+  // timestamps/deadlines, so if they're due, they're due regardless of day.
   const ownerDay = getOwnerLocalDay(getBrainConfig().ownerTimezone);
   const isWeekend = ownerDay === 0 || ownerDay === 6; // Sunday or Saturday
-  const absenceMultiplier = isWeekend ? 1.5 : 1;
-  const staleMultiplier = isWeekend ? 2 : 1;
 
-  // 1. Follow-up due — priority scales inversely with how overdue it is.
-  // A follow-up due 1 hour ago is more actionable than one due 30 days ago.
+  // 1. Follow-up due — no weekend suppression (explicit dueAt timestamp).
+  // Priority scales inversely with how overdue it is.
   // Fresh overdue: 0.7, after 7 days: ~0.35, after 30 days: ~0.1
   const FOLLOW_UP_DECAY_DAYS = 7; // half-life in days
   for (const followUp of wm.pendingFollowUps) {
@@ -53,6 +52,8 @@ export function detectInitiativeSignals(
   }
 
   // 2. Person absent — pinned person nodes with high access count, not seen in 7+ days
+  // Weekend multiplier: raise threshold to avoid false positives from normal weekend quiet
+  const absenceMultiplier = isWeekend ? 1.5 : 1;
   const ABSENCE_THRESHOLD = 7 * 24 * 60 * 60 * 1000 * absenceMultiplier; // 7d, 10.5d on weekends
   const personNodes = graph.findByType("person");
   for (const node of personNodes) {
@@ -83,6 +84,8 @@ export function detectInitiativeSignals(
   }
 
   // 4. Conversation stale — active threads with 3+ messages, quiet >48h
+  // Weekend multiplier: conversations naturally go quiet on weekends
+  const staleMultiplier = isWeekend ? 2 : 1;
   const STALE_THRESHOLD = 48 * 60 * 60 * 1000 * staleMultiplier; // 48h, 96h on weekends
   for (const thread of wm.conversationThreads) {
     if (
