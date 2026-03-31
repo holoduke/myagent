@@ -3,7 +3,6 @@
  * Extracted from brain.ts for maintainability.
  */
 
-import { readFileSync, existsSync, unlinkSync } from "fs";
 import { createLogger } from "./logger.js";
 import { getDueMessages, getScheduledMessages, markDelivered, markFailed, logDelivery, getRecentDeliveries, DEDUP_WINDOW_MS } from "./scheduler.js";
 import { isWhatsAppConnected } from "./integrations/whatsapp.js";
@@ -148,42 +147,6 @@ async function deliverScheduledMessages(
   const droppedIds = markFailed(failedIds);
   for (const id of droppedIds) {
     log(`Permanently dropped scheduled message ${id} after max retries`);
-  }
-
-  // Legacy: also check single pending-message.json for backward compatibility
-  const pendingPath = `${brainDir}/pending-message.json`;
-  if (!existsSync(pendingPath)) {
-    if (anyDelivered) saveState(state);
-    return;
-  }
-  try {
-    const raw = readFileSync(pendingPath, "utf-8");
-    const pending = JSON.parse(raw) as { sendAt: number; message: string };
-    if (Date.now() >= pending.sendAt) {
-      const verifyResult = verify({
-        type: "send_scheduled",
-        source: "legacy-pending",
-        targetJid: ownerJid,
-        messageText: pending.message,
-        metadata: { legacy: true },
-      });
-      if (verifyResult.verdict === "blocked") {
-        log(`Verifier blocked legacy pending message: ${verifyResult.reasons.join("; ")}`);
-        unlinkSync(pendingPath);
-        if (anyDelivered) saveState(state);
-        return;
-      }
-
-      await sendWithTimeout(sendMessage, ownerJid, pending.message);
-      state.lastMessageTime = Date.now();
-      state.messagesToday++;
-      anyDelivered = true;
-      unlinkSync(pendingPath);
-      log(`Sent legacy pending message (${pending.message.length} chars)`);
-    }
-  } catch (err) {
-    log(`Error processing legacy pending message: ${err}`);
-    try { unlinkSync(pendingPath); } catch (cleanupErr) { log(`Failed to clean up legacy pending message file: ${cleanupErr}`); }
   }
 
   if (anyDelivered) saveState(state);
