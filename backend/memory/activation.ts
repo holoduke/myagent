@@ -3,6 +3,7 @@ import type { MemoryNode, WorkingMemory } from "./types.js";
 import type { Observation } from "../observer.js";
 import { createLogger } from "../logger.js";
 import { getBrainConfig } from "../brain-config.js";
+import { semanticSearch } from "./embeddings.js";
 
 const log = createLogger("activation");
 
@@ -311,6 +312,24 @@ export function selectContextForThink(
   }
 
   const activated = spreadingActivation(graph, keywords, 25);
+
+  // Phase 2: Hybrid search — merge semantic matches with keyword matches
+  if (keywords.length > 0) {
+    const queryText = observations.map(o => o.text).join(" ").slice(0, 500);
+    // Fire-and-forget semantic search (non-blocking, best-effort)
+    semanticSearch(queryText, 15).then(semanticMatches => {
+      const activatedIds = new Set(activated.map(a => a.node.id));
+      for (const match of semanticMatches) {
+        if (activatedIds.has(match.nodeId)) continue; // Already in results
+        const node = graph.getNode(match.nodeId);
+        if (!node) continue;
+        // Semantic-only matches added at 0.7x multiplier
+        activated.push({ node, activation: match.similarity * 0.7 });
+      }
+    }).catch(() => {
+      // Embeddings unavailable — pure keyword search (zero regression)
+    });
+  }
 
   // Boost activation for initiative signal related nodes
   for (const nodeId of boostNodeIds) {

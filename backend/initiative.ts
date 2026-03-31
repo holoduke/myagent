@@ -3,13 +3,14 @@ import type { WorkingMemory, BrainState } from "./memory/types.js";
 import { GoalTracker } from "./goals.js";
 import { getBrainConfig, getOwnerLocalDate, getOwnerLocalDay } from "./brain-config.js";
 import { createLogger } from "./logger.js";
+import { detectAnomalies } from "./frequency-tracker.js";
 
 const log = createLogger("initiative");
 
 // ── Types ──
 
 export interface InitiativeSignal {
-  type: "follow_up_due" | "person_absent" | "goal_deadline" | "conversation_stale";
+  type: "follow_up_due" | "person_absent" | "goal_deadline" | "conversation_stale" | "frequency_anomaly" | "meeting_approaching";
   priority: number;
   description: string;
   relatedNodeIds: string[];
@@ -95,6 +96,39 @@ export function detectInitiativeSignals(
         description: `Conversation with ${(thread.participants || []).join(", ") || "unknown"} about "${thread.topic}" went quiet (${thread.messageCount} messages)`,
         relatedNodeIds: [],
         suggestedAction: `Follow up on "${thread.topic}" conversation`,
+      });
+    }
+  }
+
+  // 5. Frequency anomaly — unusual silence or spikes from known contacts (Phase 5b)
+  try {
+    const anomalies = detectAnomalies();
+    for (const anomaly of anomalies) {
+      signals.push({
+        type: "frequency_anomaly",
+        priority: anomaly.type === "silence" ? 0.5 : 0.4,
+        description: anomaly.description,
+        relatedNodeIds: [],
+        suggestedAction: anomaly.type === "silence"
+          ? `Check in with ${anomaly.contactName} — unusually quiet`
+          : `Note: ${anomaly.contactName} is unusually active today`,
+      });
+    }
+  } catch (err) {
+    log(`Frequency anomaly detection error (non-fatal): ${err}`);
+  }
+
+  // 6. Meeting approaching — pre-meeting briefing signal (Phase 6a)
+  if (wm.temporal.upcomingEvents.length > 0) {
+    for (const eventStr of wm.temporal.upcomingEvents) {
+      // Parse event time from the string (format varies but often includes time)
+      // upcomingEvents are populated by populateTemporalContext, which includes events within the next few hours
+      signals.push({
+        type: "meeting_approaching",
+        priority: 0.6,
+        description: `Upcoming event: ${eventStr}`,
+        relatedNodeIds: [],
+        suggestedAction: `Compile relevant context about attendees/topics for: ${eventStr}`,
       });
     }
   }

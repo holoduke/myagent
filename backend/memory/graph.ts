@@ -25,6 +25,7 @@ function genId(): string {
 
 import type { Observation } from "../observer.js";
 import { BRAIN_DIR } from "../config.js";
+import { embedNode, removeEmbedding } from "./embeddings.js";
 
 export class MemoryGraph {
   private nodes = new Map<string, MemoryNode>();
@@ -304,6 +305,8 @@ export class MemoryGraph {
     if (!node) return;
 
     this.nodes.delete(id);
+    // Phase 2: Clean up embedding
+    removeEmbedding(id);
     this.byType.get(node.type)?.delete(id);
     for (const tag of node.tags) {
       this.byTag.get(tag.toLowerCase())?.delete(id);
@@ -944,6 +947,8 @@ export class MemoryGraph {
               lastAccessedAt: now,
               accessCount: 1,
               ...(op.importance !== null && op.importance !== undefined ? { importance: Math.max(0, Math.min(1, op.importance)) } : {}),
+              ...(op.validFrom ? { validFrom: op.validFrom } : {}),
+              ...(op.validUntil ? { validUntil: op.validUntil } : {}),
             };
             this.addNode(newNode);
             // Auto-correlate: find related nodes and create edges
@@ -976,6 +981,8 @@ export class MemoryGraph {
               }
             }
             this.walLog("add_node", { nodeId: op.id, meta: { type: op.type, tags: op.tags } });
+            // Phase 2: Fire-and-forget embedding generation
+            embedNode(op.id, op.content).catch(() => { /* non-blocking */ });
             applied++;
             break;
           }

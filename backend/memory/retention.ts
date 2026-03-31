@@ -108,6 +108,11 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
       : 1;
     let effectiveLambda = lambda * resistance * tierMultiplier * importanceResistance * uselessPenalty;
 
+    // Phase 5a: Temporal fact validity — accelerate decay for expired facts
+    if (node.validUntil && node.validUntil < now) {
+      effectiveLambda *= 3; // 3x faster decay for expired facts
+    }
+
     // Concept nodes with children decay slower — they're structurally important
     if (node.type === "concept") {
       const childCount = graph.getChildren(node.id).length;
