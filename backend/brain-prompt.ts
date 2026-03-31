@@ -872,7 +872,7 @@ Respond with ONLY the JSON object.`;
 
 function buildCommitmentsBlock(
   recentMoltbookActivity?: string[],
-  recentOutgoingActivity?: { source: string; audience: string; text: string }[],
+  recentOutgoingActivity?: { source: string; audience: string; messageCount: number; latestSnippet: string; texts: string[] }[],
 ): string {
   const sections: string[] = [];
 
@@ -885,15 +885,21 @@ function buildCommitmentsBlock(
     sections.push(`Moltbook posts/comments:\n${detectedSection}${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}`);
   }
 
-  // General outgoing activity (WhatsApp, email, brain messages)
+  // General outgoing activity (WhatsApp, email, brain messages) — grouped by conversation
   if (recentOutgoingActivity && recentOutgoingActivity.length > 0) {
-    const otherCommitments = recentOutgoingActivity.flatMap(a => {
-      const classified = extractAndClassifyCommitments(a.text);
-      return classified.map(c => ({ ...c, source: a.source, audience: a.audience }));
+    const otherCommitments = recentOutgoingActivity.flatMap(group => {
+      return group.texts.flatMap(text => {
+        const classified = extractAndClassifyCommitments(text);
+        return classified.map(c => ({ ...c, source: group.source, audience: group.audience }));
+      });
     });
-    if (otherCommitments.length > 0) {
-      sections.push(`Other outgoing commitments detected:\n${otherCommitments.map(c => `- [${c.weight}] "${c.commitment}" (${c.source} → ${c.audience})`).join("\n")}`);
-    }
+    const conversationSummary = recentOutgoingActivity
+      .map(g => `  - ${g.messageCount} msg${g.messageCount > 1 ? "s" : ""} to ${g.audience} (${g.source})${g.messageCount > 1 ? ` — latest: "${g.latestSnippet.slice(0, 120)}..."` : ` — "${g.latestSnippet.slice(0, 120)}"`}`)
+      .join("\n");
+    const commitmentLines = otherCommitments.length > 0
+      ? `\nCommitments detected:\n${otherCommitments.map(c => `- [${c.weight}] "${c.commitment}" (${c.source} → ${c.audience})`).join("\n")}`
+      : "";
+    sections.push(`Other outgoing activity (grouped by conversation):\n${conversationSummary}${commitmentLines}`);
   }
 
   if (sections.length === 0) return "";
@@ -942,7 +948,7 @@ export interface ReflectContext {
   /** Recent outgoing Moltbook posts/comments for commitment detection */
   recentMoltbookActivity?: string[];
   /** Recent outgoing messages across all channels for commitment detection */
-  recentOutgoingActivity?: { source: string; audience: string; text: string }[];
+  recentOutgoingActivity?: { source: string; audience: string; messageCount: number; latestSnippet: string; texts: string[] }[];
   /** Weekly drift audit summary, if available */
   driftSummary?: string;
 }

@@ -699,13 +699,28 @@ export async function reflectTick(
 
   const COMMITMENT_LOOKBACK = 12 * 60 * 60 * 1000;
   const recentOutgoing = getObservationsSince(Date.now() - COMMITMENT_LOOKBACK, { isFromMe: true }, 50);
-  const recentOutgoingActivity = recentOutgoing
+  const recentOutgoingFlat = recentOutgoing
     .filter(o => o.text && o.text.length >= 10)
     .map(o => ({
       source: o.source || "whatsapp",
       audience: o.chatName || o.groupName || "unknown",
       text: o.text,
     }));
+
+  // Group outgoing activity by conversation (source + audience) for a concise reflect prompt
+  const groupedMap = new Map<string, { source: string; audience: string; messageCount: number; latestSnippet: string; texts: string[] }>();
+  for (const a of recentOutgoingFlat) {
+    const key = `${a.source}::${a.audience}`;
+    const existing = groupedMap.get(key);
+    if (existing) {
+      existing.messageCount++;
+      existing.latestSnippet = a.text.slice(0, 200);
+      existing.texts.push(a.text);
+    } else {
+      groupedMap.set(key, { source: a.source, audience: a.audience, messageCount: 1, latestSnippet: a.text.slice(0, 200), texts: [a.text] });
+    }
+  }
+  const recentOutgoingActivity = Array.from(groupedMap.values());
 
   let driftSummary: string | undefined;
   try {
@@ -728,7 +743,7 @@ export async function reflectTick(
     log(`Drift audit error (non-fatal): ${err}`);
   }
 
-  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals, ${recentMoltbookActivity.length} moltbook items, ${recentOutgoingActivity.length} outgoing msgs`);
+  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals, ${recentMoltbookActivity.length} moltbook items, ${recentOutgoingActivity.length} outgoing conversations (${recentOutgoingFlat.length} msgs)`);
 
   const prompt = buildReflectPrompt({
     ownerName: OWNER_NAME,
