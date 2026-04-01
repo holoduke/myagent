@@ -51,14 +51,29 @@ function saveWhitelist(contacts: WhitelistedContact[]): void {
   whitelistCache = contacts;
 }
 
-/** Check if a JID matches a contact (primary jid or aliases) */
+/**
+ * Strip LID (Linked Device ID) prefix from a JID if present.
+ * E.g. "0:31642490887@s.whatsapp.net" → "31642490887@s.whatsapp.net"
+ */
+function stripLidPrefix(jid: string): string {
+  const match = jid.match(/^\d+:(\d+@s\.whatsapp\.net)$/);
+  return match ? match[1] : jid;
+}
+
+/** Check if a JID matches a contact (primary jid, aliases, or LID-normalized form) */
 function matchesContact(contact: WhitelistedContact, jid: string): boolean {
-  return contact.jid === jid || (contact.aliases?.includes(jid) ?? false);
+  if (contact.jid === jid || (contact.aliases?.includes(jid) ?? false)) return true;
+  // Also check with LID prefix stripped — e.g. "0:phone@s.whatsapp.net" matches "phone@s.whatsapp.net"
+  const normalized = stripLidPrefix(jid);
+  if (normalized !== jid) {
+    return contact.jid === normalized || (contact.aliases?.includes(normalized) ?? false);
+  }
+  return false;
 }
 
 export function isWhitelisted(jid: string): boolean {
   const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
-  if (jid === ownerJid) return true;
+  if (jid === ownerJid || stripLidPrefix(jid) === ownerJid) return true;
   return loadWhitelist().some(c => matchesContact(c, jid));
 }
 
