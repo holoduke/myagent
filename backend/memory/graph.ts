@@ -4,6 +4,9 @@ import { randomBytes } from "crypto";
 import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode, ArchivedEdge, GhostNode, WALEntry, WALOperationType } from "./types.js";
 import { MAX_GHOST_NODES, WAL_MAX_BYTES } from "./types.js";
 import { createLogger } from "../logger.js";
+import type { Observation } from "../observer.js";
+import { BRAIN_DIR } from "../config.js";
+import { embedNode, removeEmbedding } from "./embeddings.js";
 
 const log = createLogger("graph");
 
@@ -18,14 +21,9 @@ const WAL_FILE = `${GRAPH_DIR}/wal.jsonl`;
 const MAX_ARCHIVE_NODES = 2000;
 
 
-
 function genId(): string {
   return "n_" + randomBytes(4).toString("hex");
 }
-
-import type { Observation } from "../observer.js";
-import { BRAIN_DIR } from "../config.js";
-import { embedNode, removeEmbedding } from "./embeddings.js";
 
 export class MemoryGraph {
   private nodes = new Map<string, MemoryNode>();
