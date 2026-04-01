@@ -148,9 +148,20 @@ export function verify(action: ActionContext): VerifyResult {
 function verifyMessage(action: ActionContext, reasons: string[]): void {
   const jid = action.targetJid;
   const text = action.messageText || "";
+  const isEmail = action.type === "send_email";
 
-  // 1. Whitelist check
-  if (config.enforceWhitelist && jid && !isWhitelisted(jid)) {
+  // 1. Whitelist / recipient check
+  if (isEmail) {
+    // For emails: allow owner email, block unknown recipients.
+    // Owner email comes from OWNER_EMAIL env, or the gmail account itself.
+    const ownerEmail = process.env.OWNER_EMAIL;
+    const emailAddress = jid?.replace(/^gmail:/, "") || "";
+    const isOwnerEmail = ownerEmail ? emailAddress.toLowerCase() === ownerEmail.toLowerCase() : false;
+    if (config.enforceWhitelist && emailAddress && !isOwnerEmail) {
+      reasons.push(`BLOCK: email recipient ${emailAddress} not authorized (set OWNER_EMAIL or send to owner)`);
+      return;
+    }
+  } else if (config.enforceWhitelist && jid && !isWhitelisted(jid)) {
     reasons.push(`BLOCK: target JID ${jid} not on whitelist`);
     return; // No need to check further
   }
@@ -180,8 +191,8 @@ function verifyMessage(action: ActionContext, reasons: string[]): void {
     }
   }
 
-  // 6. JID format sanity check
-  if (jid && !jid.endsWith("@s.whatsapp.net") && !jid.endsWith("@g.us")) {
+  // 6. JID format sanity check (skip for email actions which use gmail: prefix)
+  if (!isEmail && jid && !jid.endsWith("@s.whatsapp.net") && !jid.endsWith("@g.us")) {
     reasons.push(`BLOCK: invalid JID format: ${jid}`);
   }
 }

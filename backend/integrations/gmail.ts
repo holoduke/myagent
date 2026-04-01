@@ -7,6 +7,7 @@ import { isIntegrationEnabled } from "./integration-config.js";
 import { logDelivery } from "../scheduler.js";
 import { createLogger } from "../logger.js";
 import { withTimeout } from "../utils/async.js";
+import { verify } from "../action-verifier.js";
 
 const log = createLogger("gmail");
 
@@ -341,6 +342,19 @@ export async function sendEmail(
     return { success: false, error: `Account "${accountId}" not authenticated` };
   }
 
+  // Action verifier gate — check whitelist and content safety
+  const verifyResult = verify({
+    type: "send_email",
+    source: "think",
+    targetJid: `gmail:${to}`,
+    messageText: `[EMAIL to ${to}] Subject: ${subject}\n\n${body}`,
+  });
+  if (verifyResult.verdict === "blocked") {
+    const reason = verifyResult.reasons.join("; ");
+    log(`Verifier blocked email to ${to}: ${reason}`);
+    return { success: false, error: `Blocked by verifier: ${reason}` };
+  }
+
   const gmail = getGmailClient(account);
 
   // Build RFC 2822 email
@@ -358,23 +372,41 @@ export async function sendEmail(
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
-  try {
-    await withTimeout(
-      gmail.users.messages.send({
-        userId: "me",
-        requestBody: { raw },
-      }),
-      30000,
-      "gmail-send"
-    );
-    log(`Email sent from ${account.id} to ${to}: "${subject}"`);
-    logDelivery(to, "email", `[EMAIL to ${to}] Subject: ${subject}`);
-    return { success: true };
-  } catch (err: unknown) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    log(`Failed to send email from ${account.id}: ${errMsg}`);
-    return { success: false, error: errMsg };
+  // Retry logic: up to 3 attempts with exponential backoff for transient failures
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await withTimeout(
+        gmail.users.messages.send({
+          userId: "me",
+          requestBody: { raw },
+        }),
+        30000,
+        "gmail-send"
+      );
+      log(`Email sent from ${account.id} to ${to}: "${subject}"`);
+      logDelivery(to, "email", `[EMAIL to ${to}] Subject: ${subject}`);
+      return { success: true };
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const apiErr = err as { status?: number; code?: number; response?: { status?: number } };
+      const status = apiErr.status || apiErr.code || apiErr.response?.status;
+      const isTransient = !status || status >= 500 || errMsg.includes("timed out") || errMsg.includes("ECONNRESET");
+
+      if (isTransient && attempt < MAX_RETRIES) {
+        const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s
+        log(`Transient failure sending email (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delayMs}ms: ${errMsg}`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      log(`Failed to send email from ${account.id} (attempt ${attempt}/${MAX_RETRIES}): ${errMsg}`);
+      return { success: false, error: errMsg };
+    }
   }
+
+  // Should not reach here, but satisfy TypeScript
+  return { success: false, error: "Unexpected: exceeded retry loop" };
 }
 
 // ── Polling Loop ──
