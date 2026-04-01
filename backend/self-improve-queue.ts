@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { FileStore } from "./utils/file-store.js";
 import type { ImprovementTask } from "./self-improve-prompt.js";
 import { createLogger } from "./logger.js";
@@ -78,7 +79,7 @@ export function saveHistory(history: ImproveHistory): void {
 export function enqueue(task: ImprovementTask): QueueItem {
   const queue = loadQueue();
   const item: QueueItem = {
-    id: `si_${Date.now()}`,
+    id: `si_${randomUUID()}`,
     task,
     status: "pending",
     createdAt: Date.now(),
@@ -98,7 +99,7 @@ export function enqueueApproved(task: ImprovementTask): QueueItem {
   const queue = loadQueue();
   const now = Date.now();
   const item: QueueItem = {
-    id: `si_${now}`,
+    id: `si_${randomUUID()}`,
     task,
     status: "approved",
     createdAt: now,
@@ -124,11 +125,13 @@ export function approveItem(id: string): QueueItem {
 
 function moveToHistory(queue: ImproveQueue, idx: number): QueueItem {
   const item = queue.items[idx];
-  queue.items.splice(idx, 1);
-  saveQueue(queue);
+  // Save to history FIRST — worst case is a harmless duplicate, not data loss
   const history = loadHistory();
   history.entries.unshift(item);
   saveHistory(history);
+  // Only remove from queue after history is safely persisted
+  queue.items.splice(idx, 1);
+  saveQueue(queue);
   return item;
 }
 
