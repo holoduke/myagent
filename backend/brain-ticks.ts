@@ -157,7 +157,7 @@ export async function thinkTick(
   populateTemporalContext(wm);
 
   const signalNodeIds = initiativeSignals.flatMap(s => s.relatedNodeIds);
-  const contextNodes = selectContextForThink(graph, wm, allObs, signalNodeIds, initiativeSignals.length);
+  const contextNodes = await selectContextForThink(graph, wm, allObs, signalNodeIds, initiativeSignals.length);
 
   const goalTracker = new GoalTracker(graph);
   const goalsSection = goalTracker.serializeForPrompt();

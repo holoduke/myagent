@@ -242,13 +242,13 @@ export function calculateContextBudget(
 
 // ── Context Selection ──
 
-export function selectContextForThink(
+export async function selectContextForThink(
   graph: MemoryGraph,
   wm: WorkingMemory,
   observations: Observation[],
   boostNodeIds: string[] = [],
   signalCount = 0,
-): MemoryNode[] {
+): Promise<MemoryNode[]> {
   const cfg = getBrainConfig();
   const baseBudget = cfg.maxThinkContextNodes;
   const maxUrgency = observations.reduce((max, o) => Math.max(max, o.urgency ?? 0), 0);
@@ -316,8 +316,14 @@ export function selectContextForThink(
   // Phase 2: Hybrid search — merge semantic matches with keyword matches
   if (keywords.length > 0) {
     const queryText = observations.map(o => o.text).join(" ").slice(0, 500);
-    // Fire-and-forget semantic search (non-blocking, best-effort)
-    semanticSearch(queryText, 15).then(semanticMatches => {
+    const SEMANTIC_TIMEOUT_MS = 2000;
+    try {
+      const semanticMatches = await Promise.race([
+        semanticSearch(queryText, 15),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("semantic search timeout")), SEMANTIC_TIMEOUT_MS),
+        ),
+      ]);
       const activatedIds = new Set(activated.map(a => a.node.id));
       for (const match of semanticMatches) {
         if (activatedIds.has(match.nodeId)) continue; // Already in results
@@ -326,9 +332,12 @@ export function selectContextForThink(
         // Semantic-only matches added at 0.7x multiplier
         activated.push({ node, activation: match.similarity * 0.7 });
       }
-    }).catch(() => {
-      // Embeddings unavailable — pure keyword search (zero regression)
-    });
+      if (semanticMatches.length > 0) {
+        log(`Semantic search: merged ${semanticMatches.length} matches (${semanticMatches.length - activatedIds.size} new)`);
+      }
+    } catch {
+      // Embeddings unavailable or timeout — pure keyword search (zero regression)
+    }
   }
 
   // Boost activation for initiative signal related nodes
