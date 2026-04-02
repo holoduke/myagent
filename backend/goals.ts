@@ -21,6 +21,14 @@ function serializeGoalData(data: GoalData): string {
   return `${data.title}\n[GOAL_DATA]${JSON.stringify(data)}[/GOAL_DATA]`;
 }
 
+// ── Result type for applyGoalOps ──
+
+export interface GoalOpsResult {
+  applied: number;
+  failed: number;
+  errors: string[];
+}
+
 // ── GoalTracker ──
 
 export class GoalTracker {
@@ -73,7 +81,9 @@ export class GoalTracker {
     return results;
   }
 
-  applyGoalOps(ops: GoalOperation[]): void {
+  applyGoalOps(ops: GoalOperation[]): GoalOpsResult {
+    const result: GoalOpsResult = { applied: 0, failed: 0, errors: [] };
+
     for (const op of ops) {
       try {
         switch (op.op) {
@@ -102,14 +112,27 @@ export class GoalTracker {
               accessCount: 1,
             });
             log(`Created goal: ${op.title} (${id})`);
+            result.applied++;
             break;
           }
 
           case "update_goal": {
             const node = this.graph.getNode(op.nodeId);
-            if (!node) { log(`Goal node ${op.nodeId} not found`); break; }
+            if (!node) {
+              const msg = `Goal node ${op.nodeId} not found`;
+              log(msg);
+              result.failed++;
+              result.errors.push(`update_goal: ${msg}`);
+              break;
+            }
             const data = parseGoalData(node.content);
-            if (!data) { log(`Could not parse goal data from ${op.nodeId}`); break; }
+            if (!data) {
+              const msg = `Could not parse goal data from ${op.nodeId}`;
+              log(msg);
+              result.failed++;
+              result.errors.push(`update_goal: ${msg}`);
+              break;
+            }
 
             if (op.progress !== undefined) data.progress = Math.max(0, Math.min(100, op.progress));
             if (op.status !== undefined) data.status = op.status;
@@ -119,41 +142,73 @@ export class GoalTracker {
             this.graph.updateNode(op.nodeId, { content: serializeGoalData(data) });
             this.graph.accessNode(op.nodeId);
             log(`Updated goal ${op.nodeId}: progress=${data.progress}%, status=${data.status}`);
+            result.applied++;
             break;
           }
 
           case "complete_goal": {
             const node = this.graph.getNode(op.nodeId);
-            if (!node) break;
+            if (!node) {
+              const msg = `Goal node ${op.nodeId} not found for complete`;
+              log(msg);
+              result.failed++;
+              result.errors.push(`complete_goal: ${msg}`);
+              break;
+            }
             const data = parseGoalData(node.content);
-            if (!data) break;
+            if (!data) {
+              const msg = `Could not parse goal data from ${op.nodeId} for complete`;
+              log(msg);
+              result.failed++;
+              result.errors.push(`complete_goal: ${msg}`);
+              break;
+            }
 
             data.status = "completed";
             data.progress = 100;
             data.lastCheckedAt = Date.now();
             this.graph.updateNode(op.nodeId, { content: serializeGoalData(data) });
             log(`Completed goal: ${data.title} (${op.nodeId})`);
+            result.applied++;
             break;
           }
 
           case "abandon_goal": {
             const node = this.graph.getNode(op.nodeId);
-            if (!node) break;
+            if (!node) {
+              const msg = `Goal node ${op.nodeId} not found for abandon`;
+              log(msg);
+              result.failed++;
+              result.errors.push(`abandon_goal: ${msg}`);
+              break;
+            }
             const data = parseGoalData(node.content);
-            if (!data) break;
+            if (!data) {
+              const msg = `Could not parse goal data from ${op.nodeId} for abandon`;
+              log(msg);
+              result.failed++;
+              result.errors.push(`abandon_goal: ${msg}`);
+              break;
+            }
 
             data.status = "abandoned";
             data.lastCheckedAt = Date.now();
             if (op.reason) data.reason = op.reason;
             this.graph.updateNode(op.nodeId, { content: serializeGoalData(data) });
             log(`Abandoned goal: ${data.title} (${op.nodeId})${op.reason ? ` Reason: ${op.reason}` : ""}`);
+            result.applied++;
             break;
           }
         }
       } catch (err) {
-        log(`Failed to apply goal op ${op.op}: ${err}`);
+        const msg = `Failed to apply goal op ${op.op}: ${err}`;
+        log(msg);
+        result.failed++;
+        result.errors.push(msg);
       }
     }
+
+    return result;
   }
 
   serializeForPrompt(): string {
