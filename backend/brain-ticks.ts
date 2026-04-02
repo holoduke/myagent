@@ -254,7 +254,8 @@ export async function thinkTick(
     }
 
     if (response.goalOps && response.goalOps.length > 0) {
-      goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
+      const goalResult = goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
+      log(`Goal ops: ${goalResult.applied} applied, ${goalResult.failed} failed${goalResult.errors.length > 0 ? ` — errors: ${goalResult.errors.join("; ")}` : ""}`);
       wm.activeGoals = goalTracker.getWorkingGoalRefs();
     }
 
@@ -812,7 +813,8 @@ export async function reflectTick(
     }
 
     if (response.goalOps && response.goalOps.length > 0) {
-      goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
+      const goalResult = goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
+      log(`Reflect goal ops: ${goalResult.applied} applied, ${goalResult.failed} failed${goalResult.errors.length > 0 ? ` — errors: ${goalResult.errors.join("; ")}` : ""}`);
       wm.activeGoals = goalTracker.getWorkingGoalRefs();
     }
 

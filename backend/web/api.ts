@@ -4,6 +4,7 @@ import { handleChatRoutes } from "./chat-api.js";
 import { handleContactRoutes } from "./contact-api.js";
 import { handleBrainRoutes } from "./brain-api.js";
 import { handleIntegrationRoutes } from "./integration-api.js";
+import { handleSkillRoutes } from "./skills-api.js";
 
 export function handleApiRoutes(
   req: IncomingMessage,
@@ -13,5 +14,6 @@ export function handleApiRoutes(
   return handleChatRoutes(req, res, queue)
     || handleContactRoutes(req, res)
     || handleBrainRoutes(req, res)
-    || handleIntegrationRoutes(req, res);
+    || handleIntegrationRoutes(req, res)
+    || handleSkillRoutes(req, res);
 }
