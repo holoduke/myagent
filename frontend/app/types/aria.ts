@@ -1,3 +1,26 @@
+export interface Skill {
+  id: string
+  catalogId?: string
+  name: string
+  description: string
+  prompt: string
+  icon: string
+  category: string
+  enabled: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export interface CatalogSkill {
+  id: string
+  name: string
+  description: string
+  prompt: string
+  icon: string
+  category: string
+  installed: boolean
+}
+
 export type NodeType = 'person' | 'event' | 'insight' | 'fact' | 'emotion' | 'plan' | 'meta' | 'goal' | 'concept'
 export type EdgeType = 'causal' | 'temporal' | 'social' | 'topical' | 'emotional' | 'contradicts' | 'hierarchical'
 
