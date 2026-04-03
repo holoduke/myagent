@@ -573,20 +573,31 @@ async function tick(
 
     const selfModChanges = checkSelfMod();
     if (selfModChanges) {
-      log(`Self-modification detected:\n${selfModChanges}`);
-      writeSelfModMarker(selfModChanges);
-      const id = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
-      graph.addNode({
-        id,
-        type: "meta",
-        content: `Self-modification detected during brain tick:\n${selfModChanges}`,
-        tags: ["self-modification", "auto-detected"],
-        strength: 0.9,
-        pinned: false,
-        createdAt: now,
-        lastAccessedAt: now,
-        accessCount: 1,
-      });
+      let alreadyTracked = false;
+      try {
+        if (existsSync(SELF_MOD_MARKER_FILE)) {
+          const marker = JSON.parse(readFileSync(SELF_MOD_MARKER_FILE, "utf-8"));
+          alreadyTracked = marker.changes === selfModChanges;
+        }
+      } catch { /* ignore parse errors */ }
+      if (alreadyTracked) {
+        // Same uncommitted changes already recorded — skip duplicate node
+      } else {
+        log(`Self-modification detected:\n${selfModChanges}`);
+        writeSelfModMarker(selfModChanges);
+        const id = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+        graph.addNode({
+          id,
+          type: "meta",
+          content: `Self-modification detected during brain tick:\n${selfModChanges}`,
+          tags: ["self-modification", "auto-detected"],
+          strength: 0.9,
+          pinned: false,
+          createdAt: now,
+          lastAccessedAt: now,
+          accessCount: 1,
+        });
+      }
     }
   }
 
