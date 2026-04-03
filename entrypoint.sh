@@ -4,8 +4,41 @@ set -e
 # Ensure data directories exist
 mkdir -p /data/claude/.claude /data/brain /data/gmail
 
+# Install Python 3 + SEO skill dependencies (if not already present)
+if ! command -v python3 &>/dev/null; then
+  echo "[entrypoint] Installing Python 3 and SEO skill dependencies..."
+  apt-get update -qq && apt-get install -y -qq python3 python3-pip >/dev/null 2>&1
+  pip3 install --break-system-packages -q beautifulsoup4 requests lxml Pillow validators matplotlib openpyxl 2>/dev/null
+  echo "[entrypoint] Python 3 installed"
+fi
+
+# Install Gmail MCP server (if not already present)
+if ! npm list -g @gongrzhe/server-gmail-autoauth-mcp &>/dev/null; then
+  echo "[entrypoint] Installing Gmail MCP server..."
+  npm install -g @gongrzhe/server-gmail-autoauth-mcp >/dev/null 2>&1
+  echo "[entrypoint] Gmail MCP server installed"
+fi
+
+# Install SEO skills (if not already present)
+if [ ! -d "/data/claude/.claude/skills/seo" ]; then
+  echo "[entrypoint] Installing SEO skills..."
+  mkdir -p /data/claude/.claude/skills /data/claude/.claude/agents
+  TEMP_SEO=$(mktemp -d)
+  git clone --depth 1 https://github.com/AgriciDaniel/claude-seo.git "$TEMP_SEO/claude-seo" 2>/dev/null
+  git clone --depth 1 https://github.com/aaron-he-zhu/seo-geo-claude-skills.git "$TEMP_SEO/seo-geo" 2>/dev/null
+  mkdir -p /data/claude/.claude/skills/seo
+  cp -r "$TEMP_SEO/claude-seo/skills/seo/"* /data/claude/.claude/skills/seo/ 2>/dev/null
+  cp "$TEMP_SEO/claude-seo/agents/"*.md /data/claude/.claude/agents/ 2>/dev/null
+  cp -r "$TEMP_SEO/seo-geo" /data/claude/.claude/skills/seo-geo/ 2>/dev/null
+  rm -rf "$TEMP_SEO"
+  echo "[entrypoint] SEO skills installed"
+fi
+
 # Symlink claude home so credentials persist across deploys
 export HOME=/data/claude
+
+# Set owner email for action verifier (allows sending email to Gillis)
+export OWNER_EMAIL="${OWNER_EMAIL:-gillis.haasnoot@gmail.com}"
 
 # Configure git remote for self-improve worker (if GITHUB_REPO is set)
 if [ -n "$GITHUB_REPO" ]; then
