@@ -12,6 +12,13 @@ if ! command -v python3 &>/dev/null; then
   echo "[entrypoint] Python 3 installed"
 fi
 
+# Install Gmail MCP server (if not already present)
+if ! npm list -g @gongrzhe/server-gmail-autoauth-mcp &>/dev/null; then
+  echo "[entrypoint] Installing Gmail MCP server..."
+  npm install -g @gongrzhe/server-gmail-autoauth-mcp >/dev/null 2>&1
+  echo "[entrypoint] Gmail MCP server installed"
+fi
+
 # Install SEO skills (if not already present)
 if [ ! -d "/data/claude/.claude/skills/seo" ]; then
   echo "[entrypoint] Installing SEO skills..."
@@ -29,6 +36,9 @@ fi
 
 # Symlink claude home so credentials persist across deploys
 export HOME=/data/claude
+
+# Set owner email for action verifier (allows sending email to Gillis)
+export OWNER_EMAIL="${OWNER_EMAIL:-gillis.haasnoot@gmail.com}"
 
 # Configure git remote for self-improve worker (if GITHUB_REPO is set)
 if [ -n "$GITHUB_REPO" ]; then
