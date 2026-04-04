@@ -43,13 +43,13 @@ const log = createLogger("brain");
 
 // ── Config from env ──
 
-const TIME_AWARENESS_INTERVAL = 2 * 60 * 60 * 1000; // 2h — idle think ticks when no observations
+const TIME_AWARENESS_INTERVAL = 4 * 60 * 60 * 1000; // 4h — idle think ticks when no observations
 const TICK_TIMEOUT = Number(process.env.BRAIN_TICK_TIMEOUT) || 120_000;
 const CB_MAX_FAILURES = Number(process.env.BRAIN_CB_MAX_FAILURES) || 3;
 const CB_MAX_BACKOFF = Number(process.env.BRAIN_CB_MAX_BACKOFF) || 30 * 60 * 1000;
 const URGENCY_BYPASS_THRESHOLD = 0.6;
 const URGENCY_MIN_COOLDOWN = 60000;
-const MAX_RECURRING_THINKS_PER_DAY = 5;
+const MAX_RECURRING_THINKS_PER_DAY = 3;
 
 // ── File paths ──
 const STATE_FILE = `${BRAIN_DIR}/state.json`;

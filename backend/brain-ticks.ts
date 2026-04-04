@@ -58,7 +58,7 @@ const BRAIN_TOOLS = process.env.BRAIN_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,W
 
 // Sleep consolidation runs at most once per 6 hours (expensive O(n²) pass)
 let lastSleepConsolidationAt = 0;
-const SLEEP_CONSOLIDATION_INTERVAL = 6 * 3600_000;
+const SLEEP_CONSOLIDATION_INTERVAL = 12 * 3600_000;
 
 // ── Response Parsing ──
 
