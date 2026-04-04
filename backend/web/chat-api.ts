@@ -54,7 +54,12 @@ export function handleChatRoutes(
     const limit = Math.min(parseInt(historyUrl.searchParams.get("limit") || "200", 10) || 200, 1000);
     const offset = Math.max(parseInt(historyUrl.searchParams.get("offset") || "0", 10) || 0, 0);
     const history = getHistory();
-    respondJson(res, 200, history.slice(offset, offset + limit));
+    // Default: return the most recent messages (not from the start)
+    if (offset === 0) {
+      respondJson(res, 200, history.slice(-limit));
+    } else {
+      respondJson(res, 200, history.slice(offset, offset + limit));
+    }
     return true;
   }
 
