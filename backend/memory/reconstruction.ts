@@ -10,6 +10,17 @@ import { BRAIN_DIR } from "../config.js";
 
 const log = createLogger("decay");
 
+// ── Multi-dimensional Promotion Scoring ──
+
+export interface PromotionDimensions {
+  relevance: number;     // 0-1: context term match strength
+  importance: number;    // 0-1: node importance/salience
+  emotionalWeight: number; // 0-1: absolute emotional valence
+  recency: number;       // 0-1: how recently archived (30-day half-life)
+  uniqueness: number;    // 0-1: 1.0 if no similar active node, 0.2 if duplicate exists
+  frequency: number;     // 0-1: historical access count normalized
+}
+
 // ── Archive Rescan ──
 
 // Activation threshold for archive rescan — archived nodes scoring above this are promoted
@@ -70,36 +81,69 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
 
   if (weightedTerms.size === 0) return 0;
 
-  // Step 4: Score each archived node using activation-weighted matching
-  const candidates: { id: string; score: number }[] = [];
+  // Step 4: Multi-dimensional promotion scoring (inspired by OpenClaw "dreaming" system)
+  // Scores each archived node on 6 dimensions before promotion:
+  //   relevance, importance, emotional weight, recency, uniqueness, frequency
+  const candidates: { id: string; score: number; dimensions: PromotionDimensions }[] = [];
+
+  // Pre-compute active node fingerprints for uniqueness scoring
+  // Uses tags when available, falls back to first 3 content words
+  const activeFingerprints = new Set<string>();
+  for (const node of graph.allNodes()) {
+    const tagFp = node.tags.slice(0, 5).sort().join("|").toLowerCase();
+    const fp = tagFp || node.content.toLowerCase().split(/\s+/).slice(0, 3).join("|");
+    if (fp) activeFingerprints.add(fp);
+  }
 
   for (const archived of graph.allArchivedNodes()) {
     const contentLower = archived.content.toLowerCase();
     const tagsLower = archived.tags.map(t => t.toLowerCase());
 
-    let score = 0;
+    // Dimension 1: Relevance — weighted term match against current context
+    let relevanceScore = 0;
     let hits = 0;
-
     for (const [term, weight] of weightedTerms) {
-      if (contentLower.includes(term)) {
-        score += 0.3 * weight;
-        hits++;
-      }
-      if (tagsLower.some(t => t.includes(term))) {
-        score += 0.5 * weight;
-        hits++;
-      }
+      if (contentLower.includes(term)) { relevanceScore += 0.3 * weight; hits++; }
+      if (tagsLower.some(t => t.includes(term))) { relevanceScore += 0.5 * weight; hits++; }
     }
-
     if (hits === 0) continue;
+    const relevance = Math.min(1, relevanceScore);
 
-    // Factor in original node strength and archive recency
-    const recencyDays = (Date.now() - archived.archivedAt) / 86400000;
-    const recencyBonus = 1 / (1 + recencyDays / 30);
-    score *= archived.strength * (1 + recencyBonus);
+    // Dimension 2: Importance — node's original importance/salience score
+    const importance = archived.importance ?? inferContentSalience(archived.content);
+
+    // Dimension 3: Emotional weight — emotional valence amplifies recall
+    const emotionalWeight = Math.abs(archived.emotionalValence ?? 0);
+
+    // Dimension 4: Recency — how recently archived (recent = easier to recall)
+    const archivedAt = archived.archivedAt ?? archived.createdAt ?? Date.now();
+    const recencyDays = (Date.now() - archivedAt) / 86400000;
+    const recency = 1 / (1 + recencyDays / 30);
+
+    // Dimension 5: Uniqueness — penalize if similar content exists in active graph
+    const tagFp = archived.tags.slice(0, 5).sort().join("|").toLowerCase();
+    const archivedFp = tagFp || archived.content.toLowerCase().split(/\s+/).slice(0, 3).join("|");
+    const uniqueness = archivedFp && activeFingerprints.has(archivedFp) ? 0.2 : 1.0;
+
+    // Dimension 6: Frequency — access count reflects historical relevance
+    const frequency = Math.min(1, (archived.accessCount ?? 0) / 10);
+
+    // Weighted composite: relevance is king, but diversity matters
+    const score = (
+      relevance * 0.30 +
+      importance * 0.20 +
+      emotionalWeight * 0.10 +
+      recency * 0.15 +
+      uniqueness * 0.10 +
+      frequency * 0.15
+    ) * archived.strength;
 
     if (score >= RESCAN_ACTIVATION_THRESHOLD) {
-      candidates.push({ id: archived.id, score });
+      candidates.push({
+        id: archived.id,
+        score,
+        dimensions: { relevance, importance, emotionalWeight, recency, uniqueness, frequency },
+      });
     }
   }
 
@@ -120,7 +164,7 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
   }
 
   if (restored > 0) {
-    log(`Archive rescan: restored ${restored}/${candidates.length} nodes via spreading activation (${weightedTerms.size} weighted terms, threshold ${RESCAN_ACTIVATION_THRESHOLD})`);
+    log(`Archive rescan: restored ${restored}/${candidates.length} nodes via 6-dim promotion scoring (${weightedTerms.size} weighted terms, threshold ${RESCAN_ACTIVATION_THRESHOLD})`);
   }
 
   return restored;

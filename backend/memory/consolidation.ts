@@ -1,7 +1,7 @@
 import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import type { MemoryGraph } from "./graph.js";
-import type { RetentionTier, WorkingMemory } from "./types.js";
+import type { MemoryNode, RetentionTier, WorkingMemory } from "./types.js";
 import { createLogger } from "../logger.js";
 import {
   applyDecay,
@@ -12,6 +12,7 @@ import {
   spacedRepetitionRefresh,
   autoAssignConfidence,
 } from "./retention.js";
+import { flushEmbeddings } from "./embeddings.js";
 import {
   rescanArchive,
   reconstructFromLogs,
@@ -90,7 +91,6 @@ export function appendConsolidationLog(entry: ConsolidationLogEntry): void {
 
 // ── Episodic→Semantic Gist Extraction ──
 
-import type { MemoryNode } from "./types.js";
 
 /**
  * Detect clusters of similar nodes that could be summarized into semantic gist nodes.
@@ -174,6 +174,18 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): Consol
   const preEdgeCount = graph.edgeCount;
 
   try {
+    // Memory flush before compaction (OpenClaw pattern):
+    // Persist any in-memory buffers to disk before decay/prune operations.
+    // Prevents losing recent data if compaction triggers a crash or heavy GC.
+    try {
+      graph.save();           // Flush graph state (nodes, edges, archive, ghosts)
+      flushEmbeddings();      // Flush embedding cache to disk
+      log("Pre-consolidation flush complete");
+    } catch (flushErr) {
+      log(`Pre-consolidation flush warning (non-fatal): ${flushErr}`);
+      // Continue — flush failure shouldn't block consolidation
+    }
+
     // Auto-infer salience on nodes before decay — protects important content
     autoInferSalience(graph);
 

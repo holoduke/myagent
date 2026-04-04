@@ -3,7 +3,7 @@ import type { MemoryNode, WorkingMemory } from "./types.js";
 import type { Observation } from "../observer.js";
 import { createLogger } from "../logger.js";
 import { getBrainConfig } from "../brain-config.js";
-import { semanticSearch } from "./embeddings.js";
+import { semanticSearchDiverse } from "./embeddings.js";
 
 const log = createLogger("activation");
 
@@ -313,27 +313,29 @@ export async function selectContextForThink(
 
   const activated = spreadingActivation(graph, keywords, 25);
 
-  // Phase 2: Hybrid search — merge semantic matches with keyword matches
+  // Phase 2: Hybrid search — merge semantic matches with keyword matches + MMR diversity
   if (keywords.length > 0) {
     const queryText = observations.map(o => o.text).join(" ").slice(0, 500);
     const SEMANTIC_TIMEOUT_MS = 2000;
     try {
       const semanticMatches = await Promise.race([
-        semanticSearch(queryText, 15),
+        semanticSearchDiverse(queryText, 15, 0.7),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("semantic search timeout")), SEMANTIC_TIMEOUT_MS),
         ),
       ]);
       const activatedIds = new Set(activated.map(a => a.node.id));
+      let newSemanticCount = 0;
       for (const match of semanticMatches) {
         if (activatedIds.has(match.nodeId)) continue; // Already in results
         const node = graph.getNode(match.nodeId);
         if (!node) continue;
         // Semantic-only matches added at 0.7x multiplier
         activated.push({ node, activation: match.similarity * 0.7 });
+        newSemanticCount++;
       }
       if (semanticMatches.length > 0) {
-        log(`Semantic search: merged ${semanticMatches.length} matches (${semanticMatches.length - activatedIds.size} new)`);
+        log(`Semantic search (MMR): merged ${semanticMatches.length} diverse matches (${newSemanticCount} new)`);
       }
     } catch {
       // Embeddings unavailable or timeout — pure keyword search (zero regression)

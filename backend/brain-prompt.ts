@@ -530,6 +530,86 @@ function formatCognitiveLoadSection(wm: WorkingMemory, observations: Observation
   return `\n═══ COGNITIVE LOAD ═══\n\n${summary}\n`;
 }
 
+/**
+ * Structured digest template (Phase 6b).
+ * When ARIA sends a morning or evening digest, this template provides
+ * a structured format instead of freeform text.
+ *
+ * Sections: Calendar | Follow-ups | People | Insights
+ */
+export function formatDigestTemplate(wm: WorkingMemory, graph: MemoryGraph): string {
+  // Only include digest template during morning (7-9) or evening (18-20) windows
+  // to avoid polluting every think tick with digest-style formatting
+  const timeOfDay = wm.temporal?.timeOfDay;
+  const hasUpcomingEvents = (wm.temporal?.upcomingEvents?.length ?? 0) > 0;
+  const isDueFollowups = wm.pendingFollowUps.some(fu =>
+    !fu.potentiallyResolved && fu.dueAt && fu.dueAt <= Date.now()
+  );
+  const isDigestWindow = timeOfDay === "morning" || timeOfDay === "evening";
+  if (!isDigestWindow && !hasUpcomingEvents && !isDueFollowups) return "";
+
+  const sections: string[] = [];
+
+  // Calendar section
+  const events = wm.temporal?.upcomingEvents ?? [];
+  if (events.length > 0) {
+    sections.push(`**Calendar**\n${events.map(e => `- ${e}`).join("\n")}`);
+  }
+
+  // Follow-ups section
+  const dueFollowUps = wm.pendingFollowUps.filter(fu => {
+    if (fu.potentiallyResolved) return false;
+    if (!fu.dueAt) return true; // no due date = always show
+    return fu.dueAt <= Date.now() + 24 * 60 * 60 * 1000; // due within 24h
+  });
+  if (dueFollowUps.length > 0) {
+    sections.push(`**Follow-ups**\n${dueFollowUps.map(fu =>
+      `- ${fu.targetPerson ? `[${fu.targetPerson}] ` : ""}${fu.question}`
+    ).join("\n")}`);
+  }
+
+  // People section — recently active or concerning contacts
+  const personNodes = graph.findByType("person")
+    .filter(n => n.strength > 0.3)
+    .sort((a, b) => b.lastAccessedAt - a.lastAccessedAt)
+    .slice(0, 5);
+  if (personNodes.length > 0) {
+    sections.push(`**People**\n${personNodes.map(p =>
+      `- ${p.content.split("\n")[0].slice(0, 60)} (strength: ${p.strength.toFixed(2)})`
+    ).join("\n")}`);
+  }
+
+  // Insights section — recent insights and patterns
+  const recentInsights = graph.findByType("insight")
+    .filter(n => Date.now() - n.createdAt < 7 * 24 * 60 * 60 * 1000) // last 7 days
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 3);
+  if (recentInsights.length > 0) {
+    sections.push(`**Recent Insights**\n${recentInsights.map(i =>
+      `- ${i.content.split("\n")[0].slice(0, 80)}`
+    ).join("\n")}`);
+  }
+
+  // Active goals section
+  const activeGoals = wm.activeGoals.slice(0, 5);
+  if (activeGoals.length > 0) {
+    sections.push(`**Active Goals**\n${activeGoals.map(g =>
+      `- ${g.title} (priority: ${g.priority}, ${g.deadlineStatus === "none" ? `${Math.round(g.progress * 100)}% done` : g.deadlineStatus})`
+    ).join("\n")}`);
+  }
+
+  if (sections.length === 0) return "";
+
+  return `\n═══ DIGEST TEMPLATE ═══
+
+When sending a morning or evening digest to the owner, structure it with these sections (skip empty ones):
+
+${sections.join("\n\n")}
+
+Use this as a starting point — add personal observations and warmth. Don't just list facts robotically.
+`;
+}
+
 function formatEnhancedContextSections(graph: MemoryGraph): string {
   const sections: string[] = [];
 
@@ -669,7 +749,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}${formatEnhancedContextSections(ctx.graph)}${formatCognitiveLoadSection(ctx.wm, ctx.observations)}
+${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}${formatEnhancedContextSections(ctx.graph)}${formatCognitiveLoadSection(ctx.wm, ctx.observations)}${formatDigestTemplate(ctx.wm, ctx.graph)}
 ═══ ACTIVATED MEMORIES ═══
 ${serializeNodesForPrompt(ctx.contextNodes, ctx.graph)}
 

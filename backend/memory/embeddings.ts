@@ -167,6 +167,91 @@ export function semanticSearchByVector(
 }
 
 /**
+ * Maximal Marginal Relevance (MMR) re-ranking.
+ * Balances relevance to the query with diversity among selected results.
+ * Prevents returning 5 near-duplicate memories that waste context budget.
+ *
+ * lambda=1.0 → pure relevance (no diversity), lambda=0.0 → pure diversity
+ * Default lambda=0.7 favors relevance while penalizing redundancy.
+ *
+ * Inspired by OpenClaw's hybrid search + MMR diversity approach.
+ */
+export function mmrRerank(
+  queryVector: number[],
+  candidates: Array<{ nodeId: string; similarity: number }>,
+  topK = 15,
+  lambda = 0.7,
+): Array<{ nodeId: string; similarity: number }> {
+  if (candidates.length <= 1) return candidates;
+  const effectiveK = Math.min(topK, candidates.length);
+
+  const cache = loadEmbeddings();
+  const selected: Array<{ nodeId: string; similarity: number }> = [];
+  const remaining = new Set(candidates.map((_, i) => i));
+
+  for (let k = 0; k < effectiveK && remaining.size > 0; k++) {
+    let bestIdx = -1;
+    let bestMMR = -Infinity;
+
+    for (const idx of remaining) {
+      const candidate = candidates[idx];
+      const relevance = candidate.similarity;
+
+      // Max similarity to any already-selected result
+      // If embedding is missing for either candidate or selected node,
+      // assume moderate similarity (0.5) to avoid artificially boosting
+      // nodes without embeddings as if they were maximally diverse.
+      let maxSimToSelected = 0;
+      if (selected.length > 0) {
+        const candidateVec = cache.get(candidate.nodeId);
+        if (!candidateVec) {
+          // No embedding for this candidate — assume moderate similarity
+          maxSimToSelected = 0.5;
+        } else {
+          for (const sel of selected) {
+            const selVec = cache.get(sel.nodeId);
+            const sim = selVec ? cosine(candidateVec, selVec) : 0.5;
+            if (sim > maxSimToSelected) maxSimToSelected = sim;
+          }
+        }
+      }
+
+      const mmrScore = lambda * relevance - (1 - lambda) * maxSimToSelected;
+      if (mmrScore > bestMMR) {
+        bestMMR = mmrScore;
+        bestIdx = idx;
+      }
+    }
+
+    if (bestIdx >= 0) {
+      selected.push(candidates[bestIdx]);
+      remaining.delete(bestIdx);
+    }
+  }
+
+  return selected;
+}
+
+/**
+ * Semantic search with MMR diversity re-ranking.
+ * First retrieves 3x candidates, then applies MMR to select diverse top-K.
+ */
+export async function semanticSearchDiverse(
+  query: string,
+  topK = 15,
+  lambda = 0.7,
+): Promise<Array<{ nodeId: string; similarity: number }>> {
+  const queryVector = await embedSingle(query);
+  if (!queryVector) return [];
+
+  // Retrieve 3x candidates for MMR to select from
+  const candidates = semanticSearchByVector(queryVector, topK * 3);
+  if (candidates.length <= 1) return candidates;
+
+  return mmrRerank(queryVector, candidates, topK, lambda);
+}
+
+/**
  * Remove embedding for a node (e.g., when node is archived/removed).
  */
 export function removeEmbedding(nodeId: string): void {
