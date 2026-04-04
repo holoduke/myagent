@@ -336,6 +336,44 @@ let thinkRunning = false;
 let consolidateRunning = false;
 let reflectRunning = false;
 
+// ── Hourly Stats Tracking ──
+interface TickStats {
+  thinks: number;
+  consolidates: number;
+  reflects: number;
+  failures: number;
+  costUsd: number;
+  observations: number;
+  selfImproves: number;
+  periodStart: number;
+}
+
+let hourlyStats: TickStats = {
+  thinks: 0, consolidates: 0, reflects: 0, failures: 0,
+  costUsd: 0, observations: 0, selfImproves: 0, periodStart: Date.now(),
+};
+
+function logHourlyStats(): void {
+  const elapsed = (Date.now() - hourlyStats.periodStart) / 3600_000;
+  if (elapsed < 0.95) return; // Not yet ~1 hour
+
+  const s = hourlyStats;
+  const totalTicks = s.thinks + s.consolidates + s.reflects;
+  log(
+    `[HOURLY STATS] ` +
+    `thinks: ${s.thinks}, consolidates: ${s.consolidates}, reflects: ${s.reflects}, ` +
+    `failures: ${s.failures}, observations: ${s.observations}, ` +
+    `cost: $${s.costUsd.toFixed(4)}, self-improves: ${s.selfImproves}, ` +
+    `total ticks: ${totalTicks} in ${elapsed.toFixed(1)}h`,
+  );
+
+  // Reset for next hour
+  hourlyStats = {
+    thinks: 0, consolidates: 0, reflects: 0, failures: 0,
+    costUsd: 0, observations: 0, selfImproves: 0, periodStart: Date.now(),
+  };
+}
+
 // ── Tick Scheduler ──
 
 async function tick(
@@ -386,6 +424,7 @@ async function tick(
   }
 
   const newObs = getObservationsSince(state.lastObservationTime);
+  hourlyStats.observations += newObs.length;
 
   if (newObs.length > 0) {
     scoreObservations(newObs);
@@ -446,6 +485,7 @@ async function tick(
 
   let tickSucceeded = false;
   let tickRan = false;
+  let tickType: "think" | "consolidate" | "reflect" | null = null;
   let lastTickError: BrainError | null = null;
 
   try {
@@ -454,6 +494,7 @@ async function tick(
         log("Skipping reflectTick — previous invocation still running");
       } else {
         tickRan = true;
+        tickType = "reflect";
         reflectRunning = true;
         try {
           tickSucceeded = await withTimeout(
@@ -470,6 +511,7 @@ async function tick(
         log("Skipping consolidateTick — previous invocation still running");
       } else {
         tickRan = true;
+        tickType = "consolidate";
         consolidateRunning = true;
         try {
           tickSucceeded = await withTimeout(
@@ -515,6 +557,7 @@ async function tick(
         log("Skipping thinkTick — previous invocation still running");
       } else {
         tickRan = true;
+        tickType = "think";
         const isInitiativeThink = initiativeTriggered && !hasNewObs;
         if (isInitiativeThink) {
           log(`Initiative-triggered think (${highPrioritySignals.length} high-priority signals)`);
@@ -553,8 +596,10 @@ async function tick(
   }
 
   // ── Track success/failure for health ──
+  const prevCost = state.totalCost;
   if (!tickSucceeded) {
     state.consecutiveFailures++;
+    hourlyStats.failures++;
     const errInfo = lastTickError
       ? ` [${lastTickError.context.phase}, transient=${lastTickError.context.transient}]`
       : "";
@@ -563,6 +608,10 @@ async function tick(
     clearPendingUrgency();
     state.consecutiveFailures = 0;
     state.lastSuccessfulTick = now;
+    // Track tick type for hourly stats
+    if (tickType === "think") hourlyStats.thinks++;
+    else if (tickType === "consolidate") hourlyStats.consolidates++;
+    else if (tickType === "reflect") hourlyStats.reflects++;
 
     if (!firstSuccessfulTickDone) {
       firstSuccessfulTickDone = true;
@@ -628,8 +677,14 @@ async function tick(
     freshState.lastMessageTime = state.lastMessageTime;
   }
 
+  // Track cost delta for hourly stats
+  hourlyStats.costUsd += Math.max(0, freshState.totalCost - prevCost);
+
   saveState(freshState);
   graph.save();
+
+  // Log hourly stats summary
+  logHourlyStats();
   } finally {
     tickLock = false;
   }
