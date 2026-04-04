@@ -767,7 +767,7 @@ export interface ConsolidateContext {
   duplicateCandidates: [MemoryNode, MemoryNode][];
   graph: MemoryGraph;
   wm: WorkingMemory;
-  stats: { nodeCount: number; edgeCount: number; archivedCount: number; byType: Record<string, number>; avgStrength: number };
+  stats: { nodeCount: number; edgeCount: number; archivedCount: number; ghostCount: number; byType: Record<string, number>; avgStrength: number };
   uncapturedSignals?: import("./memory/decay.js").UncapturedSignal[];
   deltaReport?: import("./memory/decay.js").DeltaReport | null;
   lowFidelityReconstructions?: import("./memory/decay.js").FidelityResult[];
@@ -794,7 +794,7 @@ Note: removed nodes are archived to long-term cold storage, not permanently dele
 ${formatWorkingMemory(ctx.wm)}
 
 ═══ GRAPH STATS ═══
-Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
+Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Ghosts: ${ctx.stats.ghostCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
 By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(", ")}
 
 ═══ WEAK NODES (candidates for archiving) ═══
@@ -929,7 +929,7 @@ export interface ReflectContext {
   strongestNodes: MemoryNode[];
   graph: MemoryGraph;
   wm: WorkingMemory;
-  stats: { nodeCount: number; edgeCount: number; archivedCount: number; byType: Record<string, number>; avgStrength: number };
+  stats: { nodeCount: number; edgeCount: number; archivedCount: number; ghostCount: number; byType: Record<string, number>; avgStrength: number };
   lastMessageTime: number;
   messagesToday: number;
   maxMessagesPerDay: number;
@@ -1013,7 +1013,7 @@ ${responsivenessDirective(ctx.responsivenessPreset)}
 ${formatWorkingMemory(ctx.wm)}
 ${goalsBlock}${initiativeBlock}${buildCommitmentsBlock(ctx.recentMoltbookActivity, ctx.recentOutgoingActivity)}
 ═══ GRAPH STATS ═══
-Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
+Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Ghosts: ${ctx.stats.ghostCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
 By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(", ")}
 
 ═══ STRONGEST MEMORIES ═══

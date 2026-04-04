@@ -58,6 +58,7 @@ export interface ConsolidationLogEntry {
   orphansPruned: number;
   emergencyPruned: number;
   archiveRestored: number;
+  ghostCount?: number;           // topology-only remnants in ghost graph
   logReconstructed?: number;   // nodes reconstructed from observation logs
   lossRate?: number;           // fraction of nodes lost since last snapshot
   uncapturedCount?: number;    // signals found in logs but not in graph
@@ -244,6 +245,7 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): Consol
       orphansPruned: result.orphansPruned,
       emergencyPruned: result.emergencyPruned,
       archiveRestored: result.archiveRestored,
+      ghostCount: graph.ghostCount,
       logReconstructed: result.logReconstructed,
       lossRate: deltaReport?.lossRate,
       uncapturedCount: uncapturedSignals.length,
