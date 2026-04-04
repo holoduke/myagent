@@ -104,7 +104,11 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
     // importance=1.0 → 0.2x decay, importance=0.5 → 0.6x decay, importance=0 → 1.0x (no effect)
     const importanceResistance = node.importance ? (1 - 0.8 * node.importance) : 1;
     // Useless retrieval penalty: nodes repeatedly included in context but never referenced by Claude decay faster
-    const uselessPenalty = (node.uselessRetrievalCount ?? 0) > 3
+    // Exempt core/important tier nodes and high-importance nodes (>= 0.5) — hub nodes get activated
+    // by spreading activation rather than direct reference, so their uselessRetrievalCount climbs
+    // artificially, creating a vicious decay cycle for structurally important nodes.
+    const exemptFromUselessPenalty = tier === "core" || tier === "important" || (node.importance ?? 0) >= 0.5;
+    const uselessPenalty = !exemptFromUselessPenalty && (node.uselessRetrievalCount ?? 0) > 3
       ? 1 + Math.min(1, ((node.uselessRetrievalCount ?? 0) - 3) * 0.25)
       : 1;
     let effectiveLambda = lambda * resistance * tierMultiplier * importanceResistance * uselessPenalty;
