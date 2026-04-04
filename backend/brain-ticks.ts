@@ -200,6 +200,11 @@ export async function thinkTick(
     selfImproveStats: selfImproveStatsThink,
   });
 
+  // Log prompt size for cost monitoring
+  const promptChars = prompt.length;
+  const estimatedTokens = Math.ceil(promptChars / 3.5); // rough char→token estimate
+  log(`Think prompt: ${promptChars} chars (~${estimatedTokens} tokens), ${allObs.length} obs, ${contextNodes.length} context nodes`);
+
   try {
     // Circuit breaker: skip API call if Claude is in open state
     if (!isCircuitClosed("claude_api")) {
@@ -226,7 +231,8 @@ export async function thinkTick(
     });
 
     circuitSuccess("claude_api");
-    log(`Think streaming complete: ${deltaChars} chars total`);
+    const thinkStats = result.stats;
+    log(`Think streaming complete: ${deltaChars} chars, ${thinkStats?.inputTokens ?? "?"} input tokens, ${thinkStats?.outputTokens ?? "?"} output tokens, $${(thinkStats?.totalCostUsd ?? 0).toFixed(4)}`);
     const responseText = result.messages.join("\n");
     const response = parseBrainResponse(responseText);
 
@@ -559,7 +565,7 @@ export async function consolidateTick(
     return true;
   }
 
-  log(`Consolidate: ${weakNodes.length} weak, ${orphanNodes.length} orphans, ${duplicateCandidates.length} duplicates, ${gistClusters.length} gist clusters → calling Claude`);
+  log(`Consolidate: ${weakNodes.length} weak, ${orphanNodes.length} orphans, ${duplicateCandidates.length} duplicates, ${gistClusters.length} gist clusters`);
 
   const prompt = buildConsolidatePrompt({
     ownerName: OWNER_NAME,
@@ -575,6 +581,9 @@ export async function consolidateTick(
     lowFidelityReconstructions: decayResult.fidelityResults.filter(r => r.lowFidelity),
     gistClusters,
   });
+
+  const consolidatePromptChars = prompt.length;
+  log(`Consolidate prompt: ${consolidatePromptChars} chars (~${Math.ceil(consolidatePromptChars / 3.5)} tokens) → calling Claude`);
 
   try {
     let lastLogTime = Date.now();
@@ -594,7 +603,8 @@ export async function consolidateTick(
       });
     });
 
-    log(`Consolidate streaming complete: ${deltaChars} chars total`);
+    const consolidateStats = result.stats;
+    log(`Consolidate streaming complete: ${deltaChars} chars, ${consolidateStats?.inputTokens ?? "?"} input tokens, ${consolidateStats?.outputTokens ?? "?"} output tokens, $${(consolidateStats?.totalCostUsd ?? 0).toFixed(4)}`);
     const responseText = result.messages.join("\n");
     const response = parseBrainResponse(responseText);
 
@@ -767,6 +777,9 @@ export async function reflectTick(
     driftSummary,
   });
 
+  const reflectPromptChars = prompt.length;
+  log(`Reflect prompt: ${reflectPromptChars} chars (~${Math.ceil(reflectPromptChars / 3.5)} tokens)`);
+
   try {
     let lastLogTime = Date.now();
     let deltaChars = 0;
@@ -785,7 +798,8 @@ export async function reflectTick(
       });
     });
 
-    log(`Reflect streaming complete: ${deltaChars} chars total`);
+    const reflectStats = result.stats;
+    log(`Reflect streaming complete: ${deltaChars} chars, ${reflectStats?.inputTokens ?? "?"} input tokens, ${reflectStats?.outputTokens ?? "?"} output tokens, $${(reflectStats?.totalCostUsd ?? 0).toFixed(4)}`);
     const responseText = result.messages.join("\n");
     const response = parseBrainResponse(responseText);
 
