@@ -128,13 +128,12 @@ export function getAriaStatus(): Record<string, unknown> {
   } catch { /* expected: working memory file may not exist yet */ }
 
   try {
-    const nf = `${BRAIN_DIR}/graph/nodes.json`;
-    const ef = `${BRAIN_DIR}/graph/edges.json`;
-    if (existsSync(nf)) {
-      const nodesRaw = JSON.parse(readFileSync(nf, "utf-8")) as Record<string, MemoryNode>;
-      const nodeList = Object.values(nodesRaw).filter((n): n is MemoryNode => n !== null && n !== undefined && typeof n === "object" && typeof n.id === "string");
-      const edges: MemoryEdge[] = existsSync(ef) ? JSON.parse(readFileSync(ef, "utf-8")) : [];
+    const graph = new MemoryGraph();
+    graph.load();
+    const nodeList = graph.allNodes();
+    const edges = graph.allEdges();
 
+    if (nodeList.length > 0 || edges.length > 0) {
       const byType: Record<string, number> = {};
       let totalStrength = 0;
       for (const n of nodeList) {
@@ -173,15 +172,13 @@ export function getAriaStatus(): Record<string, unknown> {
         })
         .sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0));
 
-      const tierGraph = new MemoryGraph();
-      tierGraph.load();
       const tierDistribution: Record<RetentionTier, number> = { core: 0, important: 0, work: 0, standard: 0, ephemeral: 0 };
       for (const node of nodeList) {
-        const tier = classifyRetentionTier(node, tierGraph);
+        const tier = classifyRetentionTier(node, graph);
         tierDistribution[tier]++;
       }
 
-      const graphStats = tierGraph.getStats();
+      const graphStats = graph.getStats();
 
       status.graph = {
         nodeCount: nodeList.length,

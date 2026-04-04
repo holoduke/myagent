@@ -83,6 +83,15 @@ describe("getAriaStatus graph data includes extended fields", () => {
   it("imports getChannelHealth from channel-adapter", () => {
     expect(source).toContain('import { getChannelHealth } from "../integrations/channel-adapter.js"');
   });
+
+  it("uses single MemoryGraph load (no raw readFileSync for nodes/edges)", () => {
+    // After refactor: should use graph.allNodes() and graph.allEdges(), not readFileSync for nodes.json
+    const statusFn = source.slice(source.indexOf("function getAriaStatus"), source.indexOf("status.timestamp"));
+    expect(statusFn).toContain("graph.allNodes()");
+    expect(statusFn).toContain("graph.allEdges()");
+    expect(statusFn).not.toContain("nodes.json");
+    expect(statusFn).not.toContain("edges.json");
+  });
 });
 
 describe("Frontend type alignment", () => {

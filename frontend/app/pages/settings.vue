@@ -386,6 +386,7 @@ import type { DashboardData, SelfImprove, BrainConfig, BrainPreset, BrainConfigR
 
 const { api } = useApi()
 const { logout } = useAuth()
+const { showToast } = useToast()
 
 const si = ref<SelfImprove>({ pendingTask: null, lastResult: null, bootCounter: 0, lastGoodCommit: null })
 const loaded = ref(false)
@@ -483,7 +484,7 @@ async function saveCharacter() {
     characterPresets.value = resp.characterPresets
     characterDirty.value = false
   } catch (e) {
-    console.error('Failed to save character:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to save character', 'error')
   } finally {
     characterSaving.value = false
   }
@@ -500,7 +501,7 @@ async function resetDetectionPrompt() {
     detectionPrompt.value = resp.prompt
     detectionDirty.value = true
   } catch (e) {
-    console.error('Failed to load default prompt:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to load default prompt', 'error')
   }
 }
 
@@ -512,11 +513,12 @@ async function saveDetection() {
       payload.detectionPrompt = detectionPrompt.value || null
     }
     const resp = await api<BrainConfigResponse>('/api/brain-config', { method: 'PUT', body: payload })
-    detectionMode.value = (resp.config as any).detectionMode || 'hybrid'
-    detectionPrompt.value = (resp.config as any).detectionPrompt || ''
+    detectionMode.value = resp.config.detectionMode || 'hybrid'
+    detectionPrompt.value = resp.config.detectionPrompt || ''
     detectionDirty.value = false
   } catch (e) {
-    console.error('Failed to save detection config:', e)
+    const msg = e instanceof Error ? e.message : 'Failed to save detection config'
+    showToast(msg, 'error')
   } finally {
     detectionSaving.value = false
   }
@@ -538,7 +540,7 @@ async function saveBrainConfig() {
     brainPresets.value = resp.presets
     brainDirty.value = false
   } catch (e) {
-    console.error('Failed to save brain config:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to save brain config', 'error')
   } finally {
     brainSaving.value = false
   }
@@ -566,7 +568,7 @@ async function handleApprove(id: string) {
     await api(`/api/improve-queue/${id}/approve`, { method: 'POST' })
     await loadQueue()
   } catch (e) {
-    console.error('Failed to approve:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to approve', 'error')
   }
 }
 
@@ -575,7 +577,7 @@ async function handleReject(id: string) {
     await api(`/api/improve-queue/${id}/reject`, { method: 'POST' })
     await loadQueue()
   } catch (e) {
-    console.error('Failed to reject:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to reject', 'error')
   }
 }
 
@@ -592,8 +594,8 @@ async function load() {
     characterPresets.value = brainResp.characterPresets || []
     characterType.value = brainResp.config.characterType || 'default'
     characterCustomPrompt.value = brainResp.config.characterCustomPrompt || ''
-    detectionMode.value = (brainResp.config as any).detectionMode || 'hybrid'
-    detectionPrompt.value = (brainResp.config as any).detectionPrompt || ''
+    detectionMode.value = brainResp.config.detectionMode || 'hybrid'
+    detectionPrompt.value = brainResp.config.detectionPrompt || ''
     // Load default detection prompt
     try {
       const defaultPromptResp = await api<{ prompt: string }>('/api/detection-prompt/default')
