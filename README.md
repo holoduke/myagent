@@ -173,11 +173,168 @@ ARIA runs on a tick loop:
 | Tick | Interval | What happens |
 |------|----------|-------------|
 | **Observe** | 60s | Buffer new messages, reinforce person nodes. No LLM call. |
-| **Think** | 5 min | Spreading activation selects relevant memories. LLM processes observations, returns memory ops + optional message. |
+| **Think** | 60 min | Spreading activation selects relevant memories. LLM processes observations, returns memory ops + optional message. |
 | **Consolidate** | 4 hours | Exponential decay, weak node pruning, duplicate/orphan cleanup. |
 | **Reflect** | 12 hours | Deep self-reflection, personality evolution, long-term planning. |
 
-Memory is an associative graph of typed nodes (person, event, insight, fact, emotion, plan, goal, meta, concept) connected by weighted edges. Old memories decay unless reinforced or pinned.
+## Memory Architecture
+
+ARIA's memory is a multi-layered associative graph inspired by research in cognitive architectures, human memory, and state-of-the-art AI agent systems.
+
+### The Graph
+
+Memory nodes are typed (person, event, insight, fact, emotion, plan, goal, meta, concept, preference, belief, procedure, reflection) and connected by weighted edges (causal, temporal, social, topical, emotional, contradicts, hierarchical). Nodes have strength (0-1) that decays over time unless reinforced.
+
+The graph has three storage layers:
+
+| Layer | Capacity | Contents |
+|-------|----------|----------|
+| **Active** | Unlimited | Live nodes with full content, edges, and embeddings |
+| **Archive** | 2,000 | Cold storage for decayed nodes. Searchable, restorable. |
+| **Ghost Graph** | 5,000 | Topology-only skeletons (no content) of fully evicted nodes. Preserves structural knowledge of what ARIA once knew. |
+
+A **Write-Ahead Log (WAL)** records every graph mutation as append-only JSONL for forensic reconstruction. Auto-rolls at 10MB.
+
+### Spreading Activation
+
+Context selection uses classical spreading activation over the graph. Keywords extracted from observations trigger activation on matching nodes, which diffuses along edges with configurable decay. Semantic search via vector embeddings provides a parallel retrieval path — results are merged with keyword matches at 0.7x weight.
+
+### Retention & Decay
+
+Based on the **Ebbinghaus forgetting curve**: `strength *= exp(-lambda * hours)`. Five retention tiers modify the decay rate:
+
+| Tier | Who | Decay rate |
+|------|-----|-----------|
+| **Core** | Family, partner | 0.25x base rate |
+| **Important** | Close friends, milestones | 0.4x |
+| **Work** | Colleagues, projects | 0.6x |
+| **Standard** | General content | 1.0x |
+| **Ephemeral** | Promotions, spam | 1.5x |
+
+Additional modifiers: access frequency resistance (log scale), importance shielding, emotional salience, useless retrieval penalty. **Spaced repetition** (Bjork & Bjork) boosts high-importance nodes that are starting to fade.
+
+### Consolidation Pipeline
+
+Every 4 hours, ARIA runs a multi-stage consolidation:
+
+1. **Auto-infer salience** — detect milestones, medical events, decisions, emotional peaks from content
+2. **Assign confidence** — score nodes by source reliability signals
+3. **Spaced repetition refresh** — boost important declining nodes
+4. **Exponential decay** with tier multipliers and NaN guards
+5. **Edge decay** — edges weaken toward their weaker endpoint
+6. **Orphan pruning** — archive isolated nodes after 24h grace period
+7. **Emergency prune** — if graph exceeds 500 nodes, archive weakest first
+8. **Archive rescan** — restore archived nodes that match current context via activation scoring
+9. **Log reconstruction** — recover recently archived nodes from observation logs when evidence supports it
+10. **Gap detection** — find silently disappearing topics and weakening people
+11. **Snapshot delta** — compare graph against 24h-ago snapshot, flag anomalous loss rates
+12. **Fidelity validation** — verify quality of reconstructed nodes via token similarity
+
+## Research-Inspired Cognitive Modules
+
+ARIA implements cognitive modules inspired by academic research in AI agent architectures, cognitive science, and memory systems.
+
+### Reflective Consolidation (MaRS, MemOS)
+
+Before pruning clusters of weak related nodes, creates a single "gist" summary node that preserves their semantic essence. Prevents information loss during decay by compressing episodic memories into semantic knowledge.
+
+`reflective-consolidation.ts` — Finds 3+ old, weak nodes sharing 2+ tags, generates a gist node via Claude, then weakens originals.
+
+### Knowledge Compiler (SOAR/ACT-R)
+
+Detects repeated reasoning patterns (same context leads to same conclusion 3+ times) and compiles them into fast-path "procedure" nodes. Saves tokens and latency on future similar contexts by short-circuiting familiar reasoning chains.
+
+`knowledge-compiler.ts` — Scans insight/procedure nodes, groups by tag signature, creates compiled procedures at threshold.
+
+### Narrative Builder (StorySage)
+
+Constructs coherent narratives instead of presenting memory as disconnected facts. Groups recent events into topic threads, determines overall mood from emotion nodes, and extracts recurring themes. Injected into reflect-tick prompts for richer story-based reasoning.
+
+`narrative-builder.ts` — Tag-based thread clustering, mood aggregation, theme extraction.
+
+### Affective Modulator
+
+Adjusts communication behavior based on detected emotional context. High stress triggers shorter messages with empathy signals and reduced proactivity. Positive mood enables deeper engagement. Computes message length modifier, tone suggestions, and proactivity dampening.
+
+`affective-modulator.ts` — 6-hour emotion window analysis, behavioral adaptation computation.
+
+### Temporal Pattern Detector (ProActLLM, CIKM 2025)
+
+Detects recurring temporal patterns: "Monday mornings trigger weekly schedule requests", "Alice messages at 9pm on weekdays". Enables proactive anticipation of needs before they're expressed.
+
+`temporal-patterns.ts` — Records events with day/hour/topic/participant, clusters by time+topic, computes confidence from occurrence frequency.
+
+### Cognitive Load Estimator
+
+Estimates the owner's cognitive load from time of day, calendar density, message volume, message complexity, and day of week. ARIA adapts: high load defers proactive messages, simplifies outputs, batches updates.
+
+`cognitive-load.ts` — 5-factor weighted score (0-1) mapped to levels (low/moderate/high/overloaded) with behavioral adaptations.
+
+### Scene Predictor (MemOS)
+
+Predicts the next likely conversational context from calendar events, active threads, due follow-ups, and time-of-day patterns. Pre-stages relevant memory nodes in working memory so the next think tick gets a "warm start" with relevant context already activated.
+
+`scene-predictor.ts` — Multi-signal analysis, node staging with dedup, 15-node cap.
+
+### Preference Learner
+
+Extracts behavioral preferences from the owner's message patterns: preferred message length, active hours, topic receptivity (measured by reply speed), language pattern (Dutch/English ratio). Creates preference nodes that shape ARIA's communication style over time.
+
+`preference-learner.ts` — Outgoing message analysis, preference node creation/updates.
+
+### Emotion Tracker (DialogueLLM, AFlow)
+
+Detects emotional signals from observations using 150+ regex patterns covering English and Dutch. Tracks emotional trajectories per contact over time. Creates emotion nodes with valence scores that protect emotionally significant memories from decay.
+
+`emotion-tracker.ts` — Pattern-based emotion detection, trajectory analysis, valence inference.
+
+### Belief Tracker (Hindsight)
+
+Manages belief nodes with confidence scores that evolve from evidence. New observations can strengthen, weaken, or contradict existing beliefs. Stale beliefs (not reinforced recently) are flagged for review during reflection.
+
+`belief-tracker.ts` — Evidence-based confidence updates, contradiction detection, staleness monitoring.
+
+### Causal Tracker (REMI)
+
+Detects cause-effect relationships between events using temporal proximity, shared tags, and causal language patterns ("because", "therefore", "led to"). Builds causal chains that enable consequence prediction.
+
+`causal-tracker.ts` — Causal link detection, edge creation, consequence chain traversal.
+
+### Metacognitive Self-Assessment (MUSE)
+
+Adds confidence scoring to brain decisions before acting. Computes confidence from information completeness, recency, memory relevance, and graph health. Tracks calibration over time — are ARIA's confidence scores actually predictive?
+
+`metacognitive.ts` — 4-factor confidence assessment, calibration tracking.
+
+### Sleep Consolidation (SleepGate)
+
+Enhanced consolidation during quiet hours: detects contradicting facts, deduplicates near-identical nodes, promotes frequently-accessed episodic memories to semantic memory, and merges overlapping emotion signals.
+
+`sleep-consolidation.ts` — Conflict resolution, dedup, episodic-to-semantic promotion.
+
+### Response Critique (Pre-send Quality Gate)
+
+Before sending proactive messages, a fast self-critique scores the proposed message 1-10 on whether it's warranted, well-timed, adds value, and is safe. Messages below threshold (default: 6) are suppressed. Direct replies and digests bypass the gate.
+
+`response-critique.ts` — HaikuRunner-based evaluation, threshold gating, bypass logic.
+
+### Frequency Anomaly Detection
+
+Tracks daily message counts per contact against a 30-day rolling baseline. Detects silence (>2 standard deviations below mean) and spikes (>2 SD above). Unusual patterns trigger initiative signals.
+
+`frequency-tracker.ts` — Per-contact daily counts, standard deviation analysis, anomaly flagging.
+
+### Initiative Signals
+
+Detects 6 types of proactive triggers: follow-up due (with urgency decay over time), person absent (7+ days), goal deadline approaching/overdue, conversation stale (48h+ quiet), frequency anomaly, and meeting approaching. Weekend-aware suppression prevents false positives.
+
+`initiative.ts` — Multi-signal detection, priority scoring, daily budget tracking.
+
+### Reconstruction & Gap Detection
+
+Proactive memory integrity monitoring. When nodes are archived, searches observation logs for evidence they were important and restores them. Detects "invisible gaps" — topics silently fading without anyone noticing. Tracks graph snapshots for delta comparison.
+
+`memory/reconstruction.ts` — Log-based reconstruction, gap detection, snapshot comparison, fidelity validation.
 
 ## Integrations
 
@@ -242,65 +399,88 @@ If ARIA crashes 3+ times in a row (tracked by boot counter):
 
 ```
 backend/
-├── index.ts                # Entry point, HTTP server, WhatsApp setup
-├── brain.ts                # Autonomous brain tick loop
-├── brain-config.ts         # Brain configuration with presets
-├── brain-prompt.ts         # Think/consolidate/reflect prompt builders
-├── aria-identity.ts        # Shared personality definition
-├── system-prompt.ts        # Interactive chat system prompt
-├── claude.ts               # Claude CLI wrapper
-├── observer.ts             # Message observation pipeline
-├── scheduler.ts            # Scheduled message delivery
-├── history.ts              # Chat history management
-├── contact-whitelist.ts    # Contact whitelist management
-├── goals.ts                # Goal tracking system
-├── initiative.ts           # Proactive initiative signal detection
-├── recurring.ts            # Recurring task management
-├── urgency.ts              # Message urgency classification
-├── self-improve.ts         # Self-modification worker
-├── self-improve-queue.ts   # Self-improve task queue
-├── self-improve-prompt.ts  # Self-improve/recovery prompts
-├── queue.ts                # Message queue
+├── index.ts                  # Entry point, HTTP server, WhatsApp setup
+├── brain.ts                  # Autonomous brain tick loop + hourly stats
+├── brain-config.ts           # Brain configuration with presets
+├── brain-prompt.ts           # Think/consolidate/reflect prompt builders
+├── brain-ticks.ts            # Think/consolidate/reflect tick orchestration
+├── brain-delivery.ts         # Scheduled + proactive message delivery
+├── aria-identity.ts          # Shared personality definition
+├── system-prompt.ts          # Interactive chat system prompt
+├── observer.ts               # Message observation pipeline
+├── scheduler.ts              # Scheduled message delivery queue
+├── history.ts                # Chat history management
+├── contact-whitelist.ts      # Contact whitelist management
+├── goals.ts                  # Goal tracking system
+├── initiative.ts             # Proactive initiative signal detection
+├── recurring.ts              # Recurring task management
+├── urgency.ts                # Message urgency classification + decay
+├── self-improve.ts           # Self-modification worker
+├── self-improve-queue.ts     # Self-improve task queue
+├── health-monitor.ts         # Cognitive health probes + circuit breakers
+│
+├── # ── Cognitive Modules ──
+├── reflective-consolidation.ts  # MaRS/MemOS gist extraction
+├── knowledge-compiler.ts        # SOAR/ACT-R procedural compilation
+├── narrative-builder.ts         # StorySage narrative construction
+├── affective-modulator.ts       # Emotional adaptation
+├── temporal-patterns.ts         # ProActLLM temporal detection
+├── cognitive-load.ts            # Adaptive load estimation
+├── scene-predictor.ts           # MemOS context pre-staging
+├── preference-learner.ts        # Behavioral preference extraction
+├── emotion-tracker.ts           # DialogueLLM emotion detection
+├── belief-tracker.ts            # Hindsight belief evolution
+├── causal-tracker.ts            # REMI causal reasoning
+├── metacognitive.ts             # MUSE confidence calibration
+├── sleep-consolidation.ts       # SleepGate overnight consolidation
+├── response-critique.ts         # Pre-send quality gate
+├── frequency-tracker.ts         # Contact frequency anomaly detection
+├── reflection-tracker.ts        # Reflexion post-send outcome tracking
+│
 ├── providers/
-│   ├── index.ts            # Provider registry
-│   ├── claude-provider.ts  # Claude Code CLI provider
-│   ├── codex-provider.ts   # OpenAI Codex provider
-│   ├── grok-provider.ts    # Grok/xAI provider
-│   ├── agent-store.ts      # Agent profile persistence
-│   └── types.ts            # Provider type definitions
+│   ├── claude-provider.ts    # Claude Code CLI provider
+│   ├── codex-provider.ts     # OpenAI Codex provider
+│   ├── grok-provider.ts      # Grok/xAI provider
+│   ├── haiku-runner.ts       # Fast Haiku for critique/vision
+│   └── embedding-provider.ts # OpenAI embedding provider
 ├── integrations/
-│   ├── integration-config.ts # Enable/disable toggle config
-│   ├── whatsapp.ts         # Baileys WhatsApp connection
-│   ├── gmail.ts            # Gmail API integration
-│   ├── gmail-routes.ts     # Gmail OAuth callback routes
-│   ├── calendar.ts         # Google Calendar polling
-│   ├── homeassistant.ts    # Home Assistant API integration
-│   ├── rss.ts              # RSS feed polling
-│   ├── owntracks.ts        # OwnTracks location tracking
-│   └── ssh.ts              # SSH key management and connections
+│   ├── whatsapp.ts           # Baileys WhatsApp (text + voice + image)
+│   ├── gmail.ts              # Gmail API (poll + send + OAuth)
+│   ├── calendar.ts           # Google Calendar (poll + dedup + create)
+│   ├── homeassistant.ts      # Home Assistant API
+│   ├── rss.ts                # RSS feed polling
+│   ├── owntracks.ts          # OwnTracks location tracking
+│   ├── slack.ts              # Slack integration
+│   ├── browser.ts            # Browser automation + CAPTCHA
+│   ├── twilio.ts             # Twilio voice calls
+│   └── ssh.ts                # SSH key management
 ├── memory/
-│   ├── graph.ts            # Associative memory graph
-│   ├── activation.ts       # Spreading activation algorithm
-│   ├── decay.ts            # Memory decay and consolidation
-│   ├── working-memory.ts   # Short-term context management
-│   └── types.ts            # Type definitions
+│   ├── graph.ts              # Multi-layer graph (active + archive + ghost + WAL)
+│   ├─�� types.ts              # 13 node types, edges, operations, ghost/WAL types
+│   ├── activation.ts         # Spreading activation + semantic search
+│   ├── retention.ts          # Ebbinghaus decay + 5 retention tiers
+│   ├── consolidation.ts      # Full consolidation orchestrator
+│   ├── reconstruction.ts     # Archive rescan, log reconstruction, gap detection
+│   ├── embeddings.ts         # Vector embeddings + cosine similarity
+│   └── working-memory.ts     # Short-term context + temporal awareness
 └── web/
-    ├── api.ts              # REST API endpoints
-    ├── auth.ts             # Session authentication
-    ├── router.ts           # Route handler
-    ├── dashboard.ts        # Dashboard data aggregation
-    ├── agents-api.ts       # Agent profile CRUD API
-    └── styles.ts           # Embedded CSS
+    ├── api.ts                # REST API endpoints
+    ├── brain-api.ts          # Brain/config API
+    ├── chat-api.ts           # Chat history API
+    ├── contact-api.ts        # Contact/whitelist API
+    ├── integration-api.ts    # Integration CRUD API
+    └── dashboard.ts          # Dashboard data aggregation
 
 frontend/
 ├── app/
-│   ├── pages/              # Overview, Dashboard, Chat, Brain, Memory,
-│   │                       # Integrations, Agents, Settings, Login
-│   ├── components/         # UI components
-│   ├── composables/        # Shared logic (useApi, useAuth, useTimeAgo)
-│   └── types/              # TypeScript types
+│   ├── pages/                # Overview, Dashboard, Chat, Brain, Memory,
+│   │                         # Integrations, AI Providers, Directives,
+│   │                         # Handlers, Sub-Agents, Settings, Login
+│   ├── components/           # UI components + integration cards
+│   ├── composables/          # Shared logic (useApi, useAuth, useTimeAgo)
+│   └── stores/               # Pinia stores (chat, etc.)
 └── server/
-    └── api/                # Nuxt server proxy routes
+    └── api/                  # Nuxt server proxy routes
 ```
 
 ## License
