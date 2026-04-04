@@ -123,6 +123,17 @@ export function getBrainHealth(): {
   };
 }
 
+/**
+ * Reset consecutive failures and circuit breaker.
+ * Called via API when the operator manually clears the unhealthy state.
+ */
+export function resetConsecutiveFailures(): void {
+  const state = loadState();
+  state.consecutiveFailures = 0;
+  saveState(state);
+  log("Consecutive failures reset by operator");
+}
+
 function resetBootCounter(): void {
   try {
     writeFileSync(BOOT_COUNTER_FILE, "0");

@@ -17,6 +17,11 @@
           <UiKvRow label="Queue Depth" :value="data.queueDepth ?? 0" />
           <UiKvRow label="Consecutive Failures" :value="failures" :value-class="failures > 0 ? (failures < 5 ? 'warn' : 'bad') : 'good'" />
           <UiKvRow label="Pending Self-Mod" :value="data.brainState?.pendingSelfMod ? 'Yes' : 'No'" :value-class="data.brainState?.pendingSelfMod ? 'warn' : ''" />
+          <div v-if="failures > 0" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+            <button class="btn sm" :disabled="resetting" @click="resetFailures">
+              {{ resetting ? 'Resetting...' : 'Reset Failures' }}
+            </button>
+          </div>
         </UiCard>
 
         <!-- Brain Activity -->
@@ -87,9 +92,11 @@ import type { DashboardData } from '~/types/aria'
 
 const { api } = useApi()
 const { timeAgo } = useTimeAgo()
+const { showToast } = useToast()
 
 const data = ref<DashboardData | null>(null)
 const error = ref('')
+const resetting = ref(false)
 
 const bs = computed(() => data.value?.brainState ?? {} as Partial<DashboardData['brainState']>)
 const wm = computed(() => data.value?.workingMemory ?? {} as Partial<DashboardData['workingMemory']>)
@@ -110,6 +117,19 @@ const icons = {
   brain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 017 7c0 3-2 5.5-4 7.5S12 22 12 22s-1-3.5-3-5.5S5 12 5 9a7 7 0 017-7z"/></svg>',
   link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>',
   monitor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>',
+}
+
+async function resetFailures() {
+  resetting.value = true
+  try {
+    await api('/api/brain/reset-failures', { method: 'POST' })
+    showToast('Failures reset', 'success')
+    await loadDashboard()
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Reset failed', 'error')
+  } finally {
+    resetting.value = false
+  }
 }
 
 async function loadDashboard() {

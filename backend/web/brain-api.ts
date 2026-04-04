@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse } from "http";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { spawn } from "child_process";
 import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS, CHARACTER_PRESETS } from "../brain-config.js";
+import { resetConsecutiveFailures } from "../brain.js";
 import { getDefaultDetectionPrompt } from "../prompt-detector.js";
 import type { BrainConfig } from "../brain-config.js";
 import {
@@ -303,6 +304,13 @@ export function handleBrainRoutes(
   if (pathname.match(/^\/api\/improve-queue\/[^/]+$/) && req.method === "DELETE" && isAuthenticated(req)) {
     const id = sanitizeId(pathname.split("/")[3]);
     handleImproveQueueAction(req, res, () => { deleteItem(id); return { ok: true }; });
+    return true;
+  }
+
+  // -- Reset consecutive failures --
+  if (pathname === "/api/brain/reset-failures" && req.method === "POST" && isAuthenticated(req)) {
+    resetConsecutiveFailures();
+    respondJson(res, 200, { ok: true, message: "Consecutive failures reset" });
     return true;
   }
 
