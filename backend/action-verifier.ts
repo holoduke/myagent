@@ -284,8 +284,15 @@ export function rotateAuditLog(): void {
   }
 }
 
-/** Get recent audit entries (for dashboard/debugging). */
-export function getRecentAuditEntries(limit = 50): unknown[] {
+/** Get recent audit entries (for dashboard/debugging).
+ *  Transforms compact storage format {t,type,src,v,...} into frontend AuditEntry format. */
+export function getRecentAuditEntries(limit = 50): {
+  timestamp: number;
+  action: string;
+  source: string;
+  details: string;
+  success: boolean;
+}[] {
   try {
     if (!existsSync(AUDIT_LOG_FILE)) return [];
     const content = readFileSync(AUDIT_LOG_FILE, "utf-8");
@@ -293,9 +300,24 @@ export function getRecentAuditEntries(limit = 50): unknown[] {
     return lines
       .slice(-limit)
       .map(line => {
-        try { return JSON.parse(line); } catch { return null; }
+        try {
+          const raw = JSON.parse(line);
+          // Build details string from available fields
+          const detailParts: string[] = [];
+          if (raw.jid) detailParts.push(`target: ${raw.jid}`);
+          if (raw.ops) detailParts.push(`${raw.ops} operations`);
+          if (raw.msgLen) detailParts.push(`${raw.msgLen} chars`);
+          if (raw.reasons?.length) detailParts.push(raw.reasons.join("; "));
+          return {
+            timestamp: raw.t,
+            action: raw.type,
+            source: raw.src,
+            details: detailParts.join(" | "),
+            success: raw.v === "allowed" || raw.v === "flagged",
+          };
+        } catch { return null; }
       })
-      .filter(Boolean)
+      .filter((e): e is NonNullable<typeof e> => e !== null)
       .reverse();
   } catch {
     return [];

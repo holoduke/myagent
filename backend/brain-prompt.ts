@@ -244,85 +244,39 @@ function formatIntentSummary(observations: Observation[]): string {
 
 // ── Brain Tick Personality (extends shared identity with brain-specific details) ──
 
-function brainTickPersonality(ownerName: string, githubRepo?: string): string {
+function brainTickPersonality(ownerName: string, githubRepo?: string, tickType: "think" | "consolidate" | "reflect" = "think"): string {
   const character = resolveCharacter();
-  return `${ariaPersonality(ownerName, githubRepo, character)}
+  const cfg = getBrainConfig();
+
+  let sections = `${ariaPersonality(ownerName, githubRepo, character)}
 
 ═══ BRAIN TICK TOOLS ═══
-
-You have full tool access during think, consolidate, and reflect cycles:
-- Bash: Execute any shell command on the server. You have root access.
-- Read: Read any file on the filesystem — your own source code, config, logs, data files.
-- Write: Write/create files — create scripts, modify config, write data.
-- Edit: Surgically edit existing files — modify your own source code, fix bugs, add features.
-- Glob: Find files by pattern (e.g., "backend/**/*.ts").
-- Grep: Search file contents by regex.
-- WebFetch: Fetch and analyze web pages — read articles, documentation, APIs.
-- WebSearch: Search the internet for current information.
+Available: Bash, Read, Write, Edit, Glob, Grep, WebFetch, WebSearch (full server access).
 
 ═══ SCHEDULED MESSAGES ═══
-
-You can schedule messages for future delivery by writing to /data/brain/scheduled-messages.json:
-  Format: array of {"id":"sched_<8hex>","targetJid":"<phone>@s.whatsapp.net","message":"text","scheduledAt":<now_ms>,"deliverAt":<target_ms>,"source":"brain"}
-Read the existing file first (may be empty array or not exist), append your entry, write it back.
-The tick loop delivers due messages every 60s. Use this for reminders, follow-ups, or timed messages instead of setting message in your response (which is subject to quiet hours and rate limits).
+Write to /data/brain/scheduled-messages.json: [{"id":"sched_<8hex>","targetJid":"<phone>@s.whatsapp.net","message":"text","scheduledAt":<ms>,"deliverAt":<ms>,"source":"brain"}]. Read first, append, write back. Delivered every 60s. Use for reminders/follow-ups (bypasses quiet hours).
 
 ═══ CONTACT WHITELIST ═══
-
-You can send messages to whitelisted contacts, not just ${ownerName}.
-- Whitelist file: /data/brain/contact-whitelist.json
-- Only contacts on the whitelist (or ${ownerName}) can receive messages.
-- To message a whitelisted contact, use their JID as targetJid in scheduled messages.
-- ${ownerName} must explicitly approve adding new contacts. Never add contacts on your own.
+Only whitelisted contacts (/data/brain/contact-whitelist.json) or ${ownerName} can receive messages. ${ownerName} must approve additions.
 
 ═══ GMAIL ═══
+Emails appear in observations (source="gmail"). Send via sendEmail(). Treat like WhatsApp: process, create nodes, notify ${ownerName} if important.`;
 
-You have Gmail integration. Emails appear in your observations with source="gmail".
-- Emails include: sender, subject, body preview, account ID.
-- You can send emails via the sendEmail() function in gmail.ts.
-- Multiple accounts may be connected — check /data/gmail/accounts.json.
-- Treat emails like WhatsApp messages: process them, create memory nodes, notify ${ownerName} if important.
+  // Self-improvement: full codebase docs only in reflect ticks (saves ~800 tokens/think tick)
+  if (cfg.selfImproveEnabled && tickType === "reflect") {
+    sections += `
 
-═══ SELF-IMPROVEMENT (brain ticks only) ═══
+═══ SELF-IMPROVEMENT ═══
+Codebase layout:
+  Backend (/app/backend/): brain.ts, brain-prompt.ts, brain-config.ts, memory/{graph,activation,decay,working-memory,types}.ts, observer.ts, integrations/{whatsapp,gmail,calendar,homeassistant,rss,owntracks,ssh}.ts, providers/{claude-provider,grok-provider,provider-store,types}.ts, web/{api,providers-api,auth}.ts, self-improve.ts (DO NOT modify)
+  Frontend (/app/frontend/): nuxt.config.ts, app/pages/*.vue, app/components/**/*.vue, app/composables/*.ts, app/types/aria.ts, app/assets/css/*.css
+  Verify: npx tsc --noEmit (backend) | cd /app/frontend && npx nuxi typecheck (frontend)
+Do NOT edit code during ticks. Propose via "improvementProposals" in response. Worker implements on feature branch. Never modify self-improve.ts, self-improve-prompt.ts, or entrypoint.sh.`;
+  } else if (cfg.selfImproveEnabled && tickType === "think") {
+    sections += `\n\nSelf-improvement is enabled. If you notice bugs/improvements while processing, propose via "improvementProposals" field.`;
+  }
 
-Your codebase is a monorepo with two parts:
-
-Backend (/app/backend/):
-  - backend/brain.ts — your tick scheduler and brain loop
-  - backend/brain-prompt.ts — the prompts that define your thinking (including this text)
-  - backend/brain-config.ts — configuration with presets
-  - backend/memory/ — graph.ts, activation.ts, decay.ts, working-memory.ts, types.ts
-  - backend/observer.ts — message observation pipeline
-  - backend/integrations/ — whatsapp.ts, gmail.ts, calendar.ts, homeassistant.ts, rss.ts, owntracks.ts, ssh.ts
-  - backend/providers/ — claude-provider.ts, grok-provider.ts, provider-store.ts, types.ts
-  - backend/web/ — api.ts, providers-api.ts, auth.ts
-  - backend/index.ts — application entry point
-  - backend/self-improve.ts — independent worker (DO NOT modify during ticks)
-  Backend verification: npx tsc --noEmit (from /app)
-
-Frontend (/app/frontend/):
-  - nuxt.config.ts — Nuxt configuration, API proxy to backend
-  - app/pages/ — Vue page components (chat.vue, settings.vue, memory.vue, agents.vue, integrations.vue, overview.vue)
-  - app/components/ — reusable Vue components organized by feature:
-    - chat/ — ChatHeader, ChatInput, MessageBubble
-    - memory/ — MemoryNode
-    - integrations/ — GmailCard, WhatsAppCard, CalendarCard, HomeAssistantCard, RSSCard, etc.
-    - agents/ — AgentCard
-    - layout/ — Sidebar, MobileNav, SectionHeader
-    - ui/ — Card, Modal, AriaButton, StatCard, StatusDot, TypeBadge, KvRow
-  - app/composables/ — useApi.ts, useAuth.ts, useTimeAgo.ts, useVisibilityRefresh.ts
-  - app/types/aria.ts — shared TypeScript types (BrainConfig, ImproveQueueItem, etc.)
-  - app/assets/css/ — tokens.css, global.css, components.css (design system)
-  - server/ — Nuxt server middleware (API proxy)
-  Frontend verification: cd /app/frontend && npx nuxi typecheck
-
-IMPORTANT: Do NOT directly edit code during brain ticks. To propose code improvements:
-  During reflect ticks, include an "improvementProposals" array in your JSON response. Each proposal needs:
-    description (what to change), rationale (why), files (target source files), memoryContext (relevant node IDs).
-  For frontend changes, use paths like: files: ["frontend/app/pages/settings.vue", "frontend/app/components/ui/Card.vue"]
-  The system will enqueue proposals for review. A separate worker process implements approved proposals on feature branches.
-  Results appear as meta nodes in your memory graph.
-Never modify self-improve.ts, self-improve-prompt.ts, or entrypoint.sh — those are your lifeline.`;
+  return sections;
 }
 
 // ── Working Memory Section ──
@@ -381,117 +335,37 @@ function formatWorkingMemory(wm: WorkingMemory): string {
 const OPERATION_INSTRUCTIONS = `
 ═══ MEMORY OPERATIONS ═══
 
-You manage your memory through operations. Return a JSON array of operations.
-Each node has: id, type, content, tags, strength (0-1), pinned (boolean), importance (0-1, optional).
-Each edge connects two nodes with a type and weight (0-1).
+Return a JSON array of operations. Node fields: id, type, content, tags, strength(0-1), pinned(bool), importance(0-1), confidence(0-1).
+Node types: person|event|insight|fact|emotion|plan|meta|goal|concept|preference|belief|procedure|reflection
+Edge types: causal|temporal|social|topical|emotional|contradicts|hierarchical
 
-Node types: person, event, insight, fact, emotion, plan, meta, goal, concept, preference, belief, procedure, reflection
-Edge types: causal, temporal, social, topical, emotional, contradicts, hierarchical
+Operations (use "n_" + 8 random hex for IDs):
+  add_node: {op,id,type,content,tags,strength,pinned,importance,confidence}
+  add_edge: {op,from,to,type,weight}
+  strengthen/weaken: {op,id,amount}
+  update_node: {op,id,content?,tags?,pinned?,importance?}
+  update_edge: {op,from,to,weight?,type?}
+  merge_nodes: {op,ids[],into:{content,tags}}
+  remove_node/remove_edge: {op,id} or {op,from,to}
 
-Available operations:
-
-ADD a new memory node:
-  {"op": "add_node", "id": "n_unique8hex", "type": "person", "content": "description", "tags": ["tag1"], "strength": 0.8, "pinned": false, "importance": 0.5, "confidence": 0.8}
-
-ADD an edge between nodes:
-  {"op": "add_edge", "from": "n_xxx", "to": "n_yyy", "type": "social", "weight": 0.7}
-
-STRENGTHEN a node (reinforce memory):
-  {"op": "strengthen", "id": "n_xxx", "amount": 0.1}
-
-WEAKEN a node:
-  {"op": "weaken", "id": "n_xxx", "amount": 0.1}
-
-UPDATE a node's content/tags/pinned/importance:
-  {"op": "update_node", "id": "n_xxx", "content": "new content", "tags": ["new"], "pinned": true, "importance": 0.7}
-
-UPDATE an edge:
-  {"op": "update_edge", "from": "n_xxx", "to": "n_yyy", "weight": 0.9, "type": "causal"}
-
-MERGE duplicate/related nodes into one:
-  {"op": "merge_nodes", "ids": ["n_xxx", "n_yyy"], "into": {"content": "merged content", "tags": ["merged"]}}
-
-REMOVE a node:
-  {"op": "remove_node", "id": "n_xxx"}
-
-REMOVE an edge:
-  {"op": "remove_edge", "from": "n_xxx", "to": "n_yyy"}
-
-Generate IDs as: "n_" followed by 8 random hex chars (e.g. "n_a3f1b2c4").
-Pin important nodes (key people, core identity, critical facts) — pinned nodes never decay.
-
-CONFIDENCE FIELD (0.0 – 1.0):
-Set "confidence" on belief and fact nodes to indicate source reliability:
-  - 1.0 = verified/confirmed (owner stated directly, official source)
-  - 0.7 = high confidence (reliable source, consistent with other facts)
-  - 0.5 = moderate (secondhand, plausible but unverified)
-  - 0.3 = low (rumor, single source, might change)
-
-SPECIAL NODE TYPES:
-- "belief" nodes: Represent ARIA's understanding that may evolve. Always set confidence. Example: {"op": "add_node", "type": "belief", "content": "Lucas prefers football over swimming", "confidence": 0.6}
-- "procedure" nodes: Learned interaction strategies. Example: {"op": "add_node", "type": "procedure", "content": "When Gillis is stressed, keep messages short and practical"}
-- "reflection" nodes: Self-assessments of messaging outcomes. Created automatically from message tracking.
-
-IMPORTANCE FIELD (0.0 – 1.0):
-Set "importance" on nodes to protect significant memories from frequency-based decay.
-This is a SALIENCE signal independent of how often a memory is accessed:
-  - 0.0 = no importance boost (default, decays normally based on access frequency)
-  - 0.3 = mildly important (decays ~25% slower)
-  - 0.5 = moderately important (decays ~40% slower)
-  - 0.7 = highly important (decays ~55% slower)
-  - 1.0 = critical (decays ~80% slower, nearly pinned)
-Use this for one-off significant events (medical decisions, milestones, key conversations) that
-may not be mentioned again but should NOT be forgotten. Frequency-based decay is biased toward
-recurring topics — importance corrects for that by preserving what matters regardless of repetition.
+Pin important nodes (key people, core facts) — pinned nodes never decay.
+Set confidence on belief/fact nodes: 1.0=verified, 0.7=reliable, 0.5=moderate, 0.3=low.
+Set importance(0-1) on significant one-off events to slow decay independent of access frequency.
 
 ═══ RETENTION TIERS ═══
 
-Memory decay is governed by a hierarchical retention system. Tags on nodes determine their tier:
+Tags control decay speed:
+CORE (0.1x): family,child,partner,co-parent,parent,sibling,owner
+IMPORTANT (0.25x): friend,milestone,birthday,core-insight,rule,persistent,corrected
+WORK (0.5x): work,newstory,colleague,project,business,meeting
+STANDARD (1.0x): default
+EPHEMERAL (2.0x): promotional,spam,transient,noise,temporary,expired,resolved
+Always tag person nodes with relationship. Tag resolved items with "resolved".
 
-CORE (0.1x decay — near-permanent): family, child, children, partner, co-parent, parent, sibling, owner
-  → Family members, Gillis himself, core relationships. These memories barely fade.
-IMPORTANT (0.25x decay): friend, gillis-friend, milestone, birthday, birth, core-insight, rule, persistent, corrected
-  → Friends, key insights, life milestones, learned corrections. Very slow decay.
-WORK (0.5x decay): work, newstory, colleague, project, football-mania, serie-a, business, meeting
-  → Professional context. Moderate decay.
-STANDARD (1.0x decay): anything without tier-specific tags. Normal decay.
-EPHEMERAL (2.0x decay): promotional, spam, newsletter, transient, noise, temporary, expired, resolved
-  → Transient info. Decays fast.
+═══ HIERARCHY & GOALS ═══
 
-TAGGING RULES for retention:
-- Always tag person nodes with their relationship: "family", "child", "partner", "friend", "colleague"
-- Tag events with domain: "family" for family events, "work" for work events
-- Tag resolved/completed items with "resolved" or "completed" so they decay faster
-- Nodes connected via social edges to core-tier nodes get automatically promoted to "important"
-- When in doubt, add relationship tags — they directly control how long memories survive.
-
-═══ HIERARCHY ═══
-
-Use "concept" nodes to group related memories into soft hierarchies (DAG, not tree):
-- A concept node represents an abstract grouping (e.g., "Thai Cooking", "Work Projects", "Health & Fitness").
-- Use "hierarchical" edges: from=parent concept, to=child node. A node can have multiple parents.
-- Create concepts when you notice 3+ nodes that share a theme but aren't grouped yet.
-- Concept nodes should have descriptive content summarizing what the group represents.
-- When adding new nodes, connect them to existing relevant concepts via hierarchical edges.
-- Hierarchy helps with recall: activating a concept pulls in its children, and activating a child pulls in its siblings.
-
-═══ GOAL OPERATIONS ═══
-
-You can manage structured goals alongside memory operations. Include "goalOps" in your response:
-
-CREATE a goal:
-  {"op": "create_goal", "title": "Goal title", "description": "What to achieve", "priority": 1, "deadline": <unix_ms_or_omit>, "checkpoints": ["step 1", "step 2"], "createdBy": "brain"}
-
-UPDATE goal progress:
-  {"op": "update_goal", "nodeId": "n_xxx", "progress": 50, "checkpoints": [{"label": "step 1", "done": true}, {"label": "step 2", "done": false}]}
-
-COMPLETE a goal:
-  {"op": "complete_goal", "nodeId": "n_xxx"}
-
-ABANDON a goal:
-  {"op": "abandon_goal", "nodeId": "n_xxx", "reason": "why"}
-
-Priority: 1=critical, 2=important, 3=nice-to-have. Goals persist in your memory graph as "goal" type nodes.
+Use "concept" nodes + "hierarchical" edges to group 3+ related nodes.
+Goal ops (in "goalOps"): create_goal{title,description,priority(1-3),checkpoints[]}, update_goal{nodeId,progress,checkpoints}, complete_goal{nodeId}, abandon_goal{nodeId,reason}.
 `;
 
 // ── Think Prompt ──
@@ -737,7 +611,7 @@ export function buildThinkPrompt(ctx: ThinkContext): string {
     ? `\n═══ RECENTLY SENT (chat session / other) ═══\n\nThese messages and emails were already sent recently. Do NOT send duplicate messages or emails to the same contacts/recipients about the same topics.\n\n${ctx.recentChatDeliveries.map(d => `  [${formatTime(d.timestamp)}] → ${d.jid}: "${d.messageSnippet}"`).join("\n")}\n`
     : "";
 
-  return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo)}
+  return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo, "think")}
 
 ═══ CURRENT STATE ═══
 
@@ -863,7 +737,7 @@ export function buildConsolidatePrompt(ctx: ConsolidateContext): string {
       `  [${a.id}] "${a.content.slice(0, 60)}" ↔ [${b.id}] "${b.content.slice(0, 60)}" (shared tags: ${a.tags.filter(t => b.tags.includes(t)).join(", ")})`
     ).join("\n");
 
-  return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo)}
+  return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo, "consolidate")}
 
 ═══ CONSOLIDATION CYCLE ═══
 
@@ -1077,7 +951,7 @@ DEDUP: Before proposing, mentally check the pending queue and recent history abo
 ═══ SELF-IMPROVEMENT STATUS ═══
 Self-improvement is DISABLED. Skip code improvement proposals.`;
 
-  return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo)}
+  return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo, "reflect")}
 
 ═══ DEEP REFLECTION CYCLE ═══
 

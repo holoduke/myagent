@@ -43,7 +43,7 @@ const log = createLogger("brain");
 
 // ── Config from env ──
 
-const TIME_AWARENESS_INTERVAL = 30 * 60 * 1000; // 30 min
+const TIME_AWARENESS_INTERVAL = 2 * 60 * 60 * 1000; // 2h — idle think ticks when no observations
 const TICK_TIMEOUT = Number(process.env.BRAIN_TICK_TIMEOUT) || 120_000;
 const CB_MAX_FAILURES = Number(process.env.BRAIN_CB_MAX_FAILURES) || 3;
 const CB_MAX_BACKOFF = Number(process.env.BRAIN_CB_MAX_BACKOFF) || 30 * 60 * 1000;

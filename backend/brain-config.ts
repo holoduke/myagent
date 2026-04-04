@@ -170,7 +170,7 @@ function envDefaults(): BrainConfig {
     ownerTimezone: process.env.OWNER_TIMEZONE || "Europe/Amsterdam",
     thinkCooldown: Number(process.env.BRAIN_THINK_COOLDOWN ?? 3600000),
     consolidateInterval: Number(process.env.BRAIN_CONSOLIDATE_INTERVAL ?? 14400000),
-    reflectInterval: Number(process.env.BRAIN_REFLECT_INTERVAL ?? 21600000),
+    reflectInterval: Number(process.env.BRAIN_REFLECT_INTERVAL ?? 43200000),
     tickInterval: Number(process.env.BRAIN_TICK_INTERVAL ?? 60000),
     preset: null,
     selfImproveEnabled: process.env.SELF_IMPROVE_ENABLED !== "false",
