@@ -40,16 +40,32 @@
       <!-- Graph Statistics -->
       <UiCard title="Graph Statistics" :icon="icons.graph" style="margin-bottom:16px">
         <div class="stat-grid">
-          <UiStatCard :value="g.nodeCount || 0" label="Nodes" />
+          <UiStatCard :value="g.nodeCount || 0" label="Active Nodes" />
           <UiStatCard :value="g.edgeCount || 0" label="Edges" />
           <UiStatCard :value="(g.avgStrength || 0).toFixed(3)" label="Avg Strength" />
           <UiStatCard :value="pinnedList.length" label="Pinned" />
           <UiStatCard :value="conceptCount" label="Concepts" />
+          <UiStatCard :value="g.archivedCount || 0" label="Archived" />
+          <UiStatCard :value="g.ghostCount || 0" label="Ghosts" />
+          <UiStatCard :value="g.embeddingCount || 0" label="Embeddings" />
         </div>
         <div v-if="g.byType && Object.keys(g.byType).length" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
           <span v-for="(count, type) in g.byType" :key="type" class="type-badge" :class="type">
             {{ type }}: {{ count }}
           </span>
+        </div>
+      </UiCard>
+
+      <!-- Retention Tiers -->
+      <UiCard v-if="hasTiers" title="Retention Tiers" :icon="icons.tier" style="margin-bottom:16px">
+        <div class="tier-grid">
+          <div v-for="tier in tierData" :key="tier.name" class="tier-row">
+            <span class="tier-label" :class="tier.name">{{ tier.label }}</span>
+            <div class="tier-bar-bg">
+              <div class="tier-bar-fill" :class="tier.name" :style="{ width: tier.pct + '%' }"></div>
+            </div>
+            <span class="tier-count">{{ tier.count }}</span>
+          </div>
         </div>
       </UiCard>
 
@@ -175,7 +191,7 @@
 </template>
 
 <script setup lang="ts">
-import type { AriaStatus, GraphNode, ConceptTreeNode } from '~/types/aria'
+import type { AriaStatus, GraphNode, ConceptTreeNode, RetentionTier } from '~/types/aria'
 
 const { api } = useApi()
 const { showToast } = useToast()
@@ -204,6 +220,25 @@ const conceptTree = computed<ConceptTreeNode[]>(() => {
 })
 
 const conceptCount = computed(() => g.value.byType?.concept ?? 0)
+
+const hasTiers = computed(() => {
+  const tiers = g.value.retentionTiers
+  return tiers && Object.values(tiers).some(v => v > 0)
+})
+
+const tierData = computed(() => {
+  const tiers = g.value.retentionTiers ?? {} as Record<RetentionTier, number>
+  const total = Object.values(tiers).reduce((s, v) => s + v, 0) || 1
+  const labels: Record<string, string> = {
+    core: 'Core', important: 'Important', work: 'Work', standard: 'Standard', ephemeral: 'Ephemeral'
+  }
+  return (['core', 'important', 'work', 'standard', 'ephemeral'] as const).map(name => ({
+    name,
+    label: labels[name],
+    count: tiers[name] ?? 0,
+    pct: Math.round(((tiers[name] ?? 0) / total) * 100),
+  }))
+})
 
 // Build a map of nodeId → parent concept names for badge display
 const parentConceptMap = computed(() => {
@@ -298,6 +333,7 @@ const icons = {
   fade: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>',
   concept: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 8v3m-4.5 3L10 11.5m7 2.5L14 11.5"/></svg>',
+  tier: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18"/></svg>',
 }
 
 async function loadMemory() {
@@ -478,6 +514,55 @@ onMounted(loadMemory)
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* Retention Tiers */
+.tier-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tier-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tier-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  width: 80px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.tier-label.core { color: #22c55e; }
+.tier-label.important { color: #3b82f6; }
+.tier-label.work { color: #a855f7; }
+.tier-label.standard { color: var(--text-dim); }
+.tier-label.ephemeral { color: var(--text-ghost); }
+.tier-bar-bg {
+  flex: 1;
+  height: 8px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.tier-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.tier-bar-fill.core { background: #22c55e; }
+.tier-bar-fill.important { background: #3b82f6; }
+.tier-bar-fill.work { background: #a855f7; }
+.tier-bar-fill.standard { background: var(--text-dim); }
+.tier-bar-fill.ephemeral { background: var(--text-ghost); }
+.tier-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  width: 40px;
+  text-align: right;
+  flex-shrink: 0;
 }
 
 @media (max-width: 768px) {

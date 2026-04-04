@@ -75,11 +75,17 @@ export interface ConceptTreeNode {
   children: GraphNode[]
 }
 
+export type RetentionTier = 'core' | 'important' | 'work' | 'standard' | 'ephemeral'
+
 export interface GraphData {
   nodeCount: number
   edgeCount: number
   byType: Record<string, number>
   avgStrength: number
+  retentionTiers?: Record<RetentionTier, number>
+  archivedCount?: number
+  ghostCount?: number
+  embeddingCount?: number
   pinnedNodes: GraphNode[]
   strongestNodes: GraphNode[]
   weakestNodes: GraphNode[]
@@ -266,11 +272,20 @@ export interface SSHStatus {
   targets: SSHTarget[]
 }
 
+export interface ChannelHealthStatus {
+  channelId: string
+  connected: boolean
+  lastMessageAt: number
+  errorCount: number
+  lastError?: string
+}
+
 export interface AriaStatus {
   brainState: BrainState
   workingMemory: WorkingMemory
   graph: GraphData
   selfImprove: SelfImprove
+  channelHealth?: ChannelHealthStatus[]
   timestamp: number
 }
 
@@ -332,6 +347,14 @@ export interface BrainConfig {
   characterCustomPrompt: string | null
   detectionMode: 'regex' | 'prompt' | 'hybrid'
   detectionPrompt: string | null
+  selfCritiqueEnabled: boolean
+  selfCritiqueThreshold: number
+  urgencyInterruptThreshold: number
+  activationSpreadFactor: number
+  archiveRecallMin: number
+  archiveRecallMax: number
+  archiveRecallDivisor: number
+  maxThinkContextNodes: number
 }
 
 export interface CharacterPreset {

@@ -296,6 +296,78 @@
         </div>
       </UiCard>
 
+      <!-- Self-Critique -->
+      <UiCard title="Self-Critique" :icon="icons.critique" style="margin-bottom:16px">
+        <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">Quality gate for proactive messages. When enabled, ARIA scores each outgoing message (1-10) and suppresses low-quality ones.</div>
+        <div class="br-toggle-row">
+          <span class="br-toggle-label">Enable self-critique</span>
+          <button class="br-toggle" :class="{ on: brainForm.selfCritiqueEnabled }" @click="brainForm.selfCritiqueEnabled = !brainForm.selfCritiqueEnabled; brainDirty = true">
+            <span class="br-toggle-knob" />
+          </button>
+        </div>
+        <div v-if="brainForm.selfCritiqueEnabled" class="br-field" style="max-width:300px">
+          <label class="intg-label">Minimum quality score (1-10)</label>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input type="range" min="1" max="10" step="1" v-model.number="brainForm.selfCritiqueThreshold" @input="brainDirty = true" style="flex:1" />
+            <span class="range-value">{{ brainForm.selfCritiqueThreshold }}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-ghost);margin-top:2px">Lower = more messages sent, higher = stricter quality gate</div>
+        </div>
+        <div class="br-footer">
+          <div class="br-status">{{ brainForm.selfCritiqueEnabled ? `Threshold: ${brainForm.selfCritiqueThreshold}/10` : 'Disabled' }}</div>
+          <button v-if="brainDirty" class="btn primary" :disabled="brainSaving" @click="saveBrainConfig">
+            {{ brainSaving ? 'Saving...' : 'Save' }}
+          </button>
+        </div>
+      </UiCard>
+
+      <!-- Memory Tuning -->
+      <UiCard title="Memory Tuning" :icon="icons.memory" style="margin-bottom:16px">
+        <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">Fine-tune how ARIA's memory graph operates: context retrieval, archive recall, and spreading activation.</div>
+        <div class="br-adv" style="border-top:none;margin-top:0;padding-top:0">
+          <div class="br-field">
+            <label class="intg-label">Max think context nodes</label>
+            <input type="number" class="intg-input intg-input-sm" v-model.number="brainForm.maxThinkContextNodes" min="10" max="100" @input="brainDirty = true">
+            <div style="font-size:11px;color:var(--text-ghost);margin-top:2px">Nodes loaded per think cycle</div>
+          </div>
+          <div class="br-field">
+            <label class="intg-label">Activation spread factor</label>
+            <div style="display:flex;align-items:center;gap:10px">
+              <input type="range" min="0" max="1" step="0.05" v-model.number="brainForm.activationSpreadFactor" @input="brainDirty = true" style="flex:1" />
+              <span class="range-value">{{ brainForm.activationSpreadFactor?.toFixed(2) }}</span>
+            </div>
+            <div style="font-size:11px;color:var(--text-ghost);margin-top:2px">How far activation spreads through edges (0=none, 1=full)</div>
+          </div>
+          <div class="br-field">
+            <label class="intg-label">Archive recall min</label>
+            <input type="number" class="intg-input intg-input-sm" v-model.number="brainForm.archiveRecallMin" min="0" max="50" @input="brainDirty = true">
+          </div>
+          <div class="br-field">
+            <label class="intg-label">Archive recall max</label>
+            <input type="number" class="intg-input intg-input-sm" v-model.number="brainForm.archiveRecallMax" min="1" max="100" @input="brainDirty = true">
+          </div>
+          <div class="br-field">
+            <label class="intg-label">Archive recall divisor</label>
+            <input type="number" class="intg-input intg-input-sm" v-model.number="brainForm.archiveRecallDivisor" min="10" max="2000" @input="brainDirty = true">
+            <div style="font-size:11px;color:var(--text-ghost);margin-top:2px">Higher = fewer restores per cycle</div>
+          </div>
+          <div class="br-field">
+            <label class="intg-label">Urgency interrupt threshold</label>
+            <div style="display:flex;align-items:center;gap:10px">
+              <input type="range" min="0" max="1" step="0.05" v-model.number="brainForm.urgencyInterruptThreshold" @input="brainDirty = true" style="flex:1" />
+              <span class="range-value">{{ brainForm.urgencyInterruptThreshold?.toFixed(2) }}</span>
+            </div>
+            <div style="font-size:11px;color:var(--text-ghost);margin-top:2px">Score above which ARIA overrides quiet hours</div>
+          </div>
+        </div>
+        <div class="br-footer">
+          <div class="br-status">Context: {{ brainForm.maxThinkContextNodes }} nodes, Spread: {{ brainForm.activationSpreadFactor?.toFixed(2) }}</div>
+          <button v-if="brainDirty" class="btn primary" :disabled="brainSaving" @click="saveBrainConfig">
+            {{ brainSaving ? 'Saving...' : 'Save' }}
+          </button>
+        </div>
+      </UiCard>
+
       <!-- Session -->
       <UiCard title="Session" :icon="icons.logout">
         <UiKvRow label="Status" value="Active" value-class="good" />
@@ -336,6 +408,18 @@ const brainForm = reactive<BrainConfig>({
   selfImproveEnabled: true,
   selfImproveAutoApprove: false,
   selfImproveMaxPerWeek: 3,
+  characterType: 'default',
+  characterCustomPrompt: null,
+  detectionMode: 'hybrid',
+  detectionPrompt: null,
+  selfCritiqueEnabled: true,
+  selfCritiqueThreshold: 6,
+  urgencyInterruptThreshold: 0.8,
+  activationSpreadFactor: 0.6,
+  archiveRecallMin: 5,
+  archiveRecallMax: 15,
+  archiveRecallDivisor: 400,
+  maxThinkContextNodes: 35,
 })
 const brainDirty = ref(false)
 const brainSaving = ref(false)
@@ -367,6 +451,8 @@ const icons = {
   brain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4 7l1 1.5V21h4v-3.5L15 16c2-1.5 4-4 4-7a7 7 0 0 0-7-7z"/><line x1="10" y1="21" x2="14" y2="21"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
   logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
+  critique: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>',
+  memory: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg>',
 }
 
 function selectPreset(name: string) {
@@ -839,6 +925,14 @@ onMounted(load)
 .btn.sm {
   font-size: 12px;
   padding: 4px 12px;
+}
+
+.range-value {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--accent-warm);
+  min-width: 30px;
+  text-align: right;
 }
 
 @media (max-width: 768px) {

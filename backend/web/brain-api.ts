@@ -32,6 +32,9 @@ import { loadWorkingMemory } from "../memory/working-memory.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
 import type { GoalData, RetentionTier } from "../memory/types.js";
 import { classifyRetentionTier } from "../memory/decay.js";
+import { getEmbeddingCount } from "../memory/embeddings.js";
+import { getChannelHealth } from "../integrations/channel-adapter.js";
+import type { ChannelStatus } from "../integrations/channel-adapter.js";
 import { isAuthenticated } from "./auth.js";
 import { respondJson, apiHandler, apiGetHandler, ApiError } from "../utils/api-helpers.js";
 import { createLogger } from "../logger.js";
@@ -52,6 +55,10 @@ export const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
   "selfImproveEnabled", "selfImproveAutoApprove", "selfImproveMaxPerWeek",
   "characterType", "characterCustomPrompt",
   "detectionMode", "detectionPrompt",
+  "selfCritiqueEnabled", "selfCritiqueThreshold",
+  "urgencyInterruptThreshold",
+  "activationSpreadFactor", "archiveRecallMin", "archiveRecallMax", "archiveRecallDivisor",
+  "maxThinkContextNodes",
 ];
 
 export function parseGoalData(content: string): GoalData | null {
@@ -174,12 +181,17 @@ export function getAriaStatus(): Record<string, unknown> {
         tierDistribution[tier]++;
       }
 
+      const graphStats = tierGraph.getStats();
+
       status.graph = {
         nodeCount: nodeList.length,
         edgeCount: edges.length,
         byType,
         avgStrength: nodeList.length > 0 ? totalStrength / nodeList.length : 0,
         retentionTiers: tierDistribution,
+        archivedCount: graphStats.archivedCount,
+        ghostCount: graphStats.ghostCount,
+        embeddingCount: getEmbeddingCount(),
         pinnedNodes: pinned.map(n => ({ id: n.id, type: n.type, content: n.content || "", tags: n.tags || [], strength: n.strength ?? 0 })),
         strongestNodes: strongest.map(n => ({ id: n.id, type: n.type, content: n.content || "", tags: n.tags || [], strength: n.strength ?? 0, accessCount: n.accessCount ?? 0 })),
         weakestNodes: weakest.map(n => ({ id: n.id, type: n.type, content: n.content || "", strength: n.strength ?? 0 })),
@@ -205,6 +217,10 @@ export function getAriaStatus(): Record<string, unknown> {
       lastGoodCommit: existsSync(lastGoodCommitFile) ? readFileSync(lastGoodCommitFile, "utf-8").trim() : null,
     };
   } catch { /* expected: self-improve files may not exist */ }
+
+  try {
+    status.channelHealth = getChannelHealth();
+  } catch { /* channels may not be initialized */ }
 
   status.timestamp = Date.now();
   return status;
