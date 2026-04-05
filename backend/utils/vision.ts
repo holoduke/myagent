@@ -8,6 +8,7 @@
 import { writeFileSync, unlinkSync, existsSync, mkdirSync } from "fs";
 import { randomBytes } from "crypto";
 import { HaikuRunner } from "../providers/haiku-runner.js";
+import { getBrainConfig } from "../brain-config.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("vision");
@@ -15,12 +16,15 @@ const log = createLogger("vision");
 const TEMP_DIR = "/tmp/aria-vision";
 const MAX_IMAGE_SIZE_MB = 10;
 
-// Singleton runner
+// Runner cache — keyed by model so config changes take effect
 let runner: HaikuRunner | null = null;
+let runnerModel: string | undefined;
 
 function getRunner(): HaikuRunner {
-  if (!runner) {
-    runner = new HaikuRunner({ name: "vision", timeout: 30_000 });
+  const model = getBrainConfig().models?.vision;
+  if (!runner || model !== runnerModel) {
+    runnerModel = model;
+    runner = new HaikuRunner({ name: "vision", timeout: 30_000, model });
   }
   return runner;
 }

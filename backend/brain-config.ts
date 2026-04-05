@@ -31,6 +31,17 @@ export interface BrainConfig {
   maxThinkContextNodes: number;          // base budget for think context node selection
   selfCritiqueEnabled: boolean;          // enable pre-send quality gate for proactive messages
   selfCritiqueThreshold: number;         // minimum score (1-10) to allow sending; default 6
+  /** Per-action model selection. Claude: "sonnet", "haiku", "opus". Grok: "grok", "grok-mini". */
+  models: {
+    think: string;          // brain think ticks
+    consolidate: string;    // brain consolidation
+    reflect: string;        // brain reflection
+    selfCritique: string;   // pre-send quality gate
+    messageEval: string;    // incoming message evaluation
+    driftAudit: string;     // weekly code drift analysis
+    selfImprove: string;    // code improvement worker
+    vision: string;         // image description
+  };
 }
 
 export interface BrainPreset {
@@ -188,6 +199,16 @@ function envDefaults(): BrainConfig {
     maxThinkContextNodes: 35,
     selfCritiqueEnabled: process.env.SELF_CRITIQUE_ENABLED !== "false",
     selfCritiqueThreshold: Number(process.env.SELF_CRITIQUE_THRESHOLD ?? 6),
+    models: {
+      think: "sonnet",
+      consolidate: "haiku",
+      reflect: "sonnet",
+      selfCritique: "haiku",
+      messageEval: "haiku",
+      driftAudit: "sonnet",
+      selfImprove: "sonnet",
+      vision: "haiku",
+    },
   };
 }
 
@@ -214,7 +235,9 @@ export function getBrainConfig(): BrainConfig {
 
   if (existsSync(CONFIG_FILE)) {
     const saved = safeReadJSON<Partial<BrainConfig>>(CONFIG_FILE, {});
-    cachedConfig = { ...defaults, ...saved };
+    // Deep-merge the models sub-object so partial saves don't clobber defaults
+    const mergedModels = { ...defaults.models, ...(saved.models ?? {}) };
+    cachedConfig = { ...defaults, ...saved, models: mergedModels };
   } else {
     cachedConfig = defaults;
   }

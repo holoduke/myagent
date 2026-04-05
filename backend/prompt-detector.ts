@@ -72,7 +72,7 @@ export async function detectWithPrompt(
   const fullPrompt = `${prompt}\n\nMessage from ${senderName}:\n"${text}"`;
 
   try {
-    const detector = new HaikuRunner({ name: "prompt-detector", timeout: 30_000 });
+    const detector = new HaikuRunner({ name: "prompt-detector", timeout: 30_000, model: getBrainConfig().models?.messageEval });
     const result = await detector.run(fullPrompt);
 
     if (!result) {

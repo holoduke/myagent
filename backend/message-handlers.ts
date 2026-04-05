@@ -306,7 +306,18 @@ function matchesGate(text: string, gate?: HandlerGate): boolean {
 
 // ── Tier 3: LLM evaluation ──
 
-const llm = new HaikuRunner({ name: "handler-evaluator", timeout: 20_000 });
+// Runner cache — keyed by model so config changes take effect
+let _handlerLlm: HaikuRunner | null = null;
+let _handlerLlmModel: string | undefined;
+
+function getHandlerLlm(): HaikuRunner {
+  const model = getBrainConfig().models?.messageEval;
+  if (!_handlerLlm || model !== _handlerLlmModel) {
+    _handlerLlmModel = model;
+    _handlerLlm = new HaikuRunner({ name: "handler-evaluator", timeout: 20_000, model });
+  }
+  return _handlerLlm;
+}
 
 function buildFilterPrompt(obs: Observation, handler: MessageHandler): string {
   const context = obs.isGroup ? `in group "${obs.groupName || "unknown"}"` : "private chat";
@@ -328,7 +339,7 @@ Respond with ONLY: {"match": true/false, "reason": "brief reason"}`;
 async function evaluateWithLLM(obs: Observation, handler: MessageHandler): Promise<{ match: boolean; reason: string }> {
   const prompt = buildFilterPrompt(obs, handler);
   const start = Date.now();
-  const raw = await llm.run(prompt);
+  const raw = await getHandlerLlm().run(prompt);
   const latency = Date.now() - start;
 
   if (!raw) {
@@ -403,7 +414,7 @@ Message: "${obs.text.slice(0, 500)}"
 
 Respond with ONLY the reply text. No JSON, no quotes, no explanation.`;
 
-      const reply = await llm.run(replyGenPrompt);
+      const reply = await getHandlerLlm().run(replyGenPrompt);
       if (!reply) return "reply skipped: LLM returned null";
 
       const chatJid = obs.isGroup ? (obs.chatJid || obs.senderJid) : obs.senderJid;

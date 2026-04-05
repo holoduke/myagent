@@ -158,9 +158,9 @@ export class ClaudeProvider extends BaseProvider {
   }
 
   async ask(message: string, options: ProviderAskOptions = {}): Promise<AgentResult> {
-    const { timeout, allowedTools, noSession } = this.resolveOptions(options);
+    const { timeout, allowedTools, noSession, model } = this.resolveOptions(options);
     return this.withAuthRetry(
-      () => this.runClaude(message, { timeout, allowedTools, noSession }),
+      () => this.runClaude(message, { timeout, allowedTools, noSession, model }),
       noSession,
     );
   }
@@ -170,18 +170,19 @@ export class ClaudeProvider extends BaseProvider {
     onDelta: (text: string) => void,
     options: ProviderAskOptions = {},
   ): Promise<AgentResult> {
-    const { timeout, allowedTools, noSession } = this.resolveOptions(options);
+    const { timeout, allowedTools, noSession, model } = this.resolveOptions(options);
     return this.withAuthRetry(
-      () => this.runClaudeStreaming(message, onDelta, { timeout, allowedTools, noSession }),
+      () => this.runClaudeStreaming(message, onDelta, { timeout, allowedTools, noSession, model }),
       noSession,
     );
   }
 
-  private resolveOptions(options: ProviderAskOptions): { timeout: number; allowedTools: string; noSession: boolean } {
+  private resolveOptions(options: ProviderAskOptions): { timeout: number; allowedTools: string; noSession: boolean; model?: string } {
     return {
       timeout: options.timeout ?? this.config.timeout ?? (process.env.CLAUDE_TIMEOUT ? Number(process.env.CLAUDE_TIMEOUT) : 120_000),
       allowedTools: options.allowedTools ?? this.config.allowedTools ?? process.env.CLAUDE_ALLOWED_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit",
       noSession: options.noSession ?? false,
+      model: options.model,
     };
   }
 
@@ -257,9 +258,9 @@ export class ClaudeProvider extends BaseProvider {
 
   private runClaude(
     message: string,
-    options: { timeout: number; allowedTools: string; noSession?: boolean },
+    options: { timeout: number; allowedTools: string; noSession?: boolean; model?: string },
   ): Promise<AgentResult & { isAuthError?: boolean }> {
-    const { timeout, allowedTools, noSession } = options;
+    const { timeout, allowedTools, noSession, model } = options;
 
     const prompt = this.buildPrompt(message, noSession ?? false);
 
@@ -268,6 +269,10 @@ export class ClaudeProvider extends BaseProvider {
       "--output-format", "json",
       "--allowedTools", allowedTools,
     ];
+
+    if (model) {
+      args.push("--model", model);
+    }
 
     if (!noSession && this.currentSessionId) {
       args.push("--resume", this.currentSessionId);
@@ -331,9 +336,9 @@ export class ClaudeProvider extends BaseProvider {
   private runClaudeStreaming(
     message: string,
     onDelta: (text: string) => void,
-    options: { timeout: number; allowedTools: string; noSession?: boolean },
+    options: { timeout: number; allowedTools: string; noSession?: boolean; model?: string },
   ): Promise<AgentResult & { isAuthError?: boolean }> {
-    const { timeout, allowedTools, noSession } = options;
+    const { timeout, allowedTools, noSession, model } = options;
 
     const prompt = this.buildPrompt(message, noSession ?? false);
 
@@ -344,6 +349,10 @@ export class ClaudeProvider extends BaseProvider {
       "--include-partial-messages",
       "--allowedTools", allowedTools,
     ];
+
+    if (model) {
+      args.push("--model", model);
+    }
 
     if (!noSession && this.currentSessionId) {
       args.push("--resume", this.currentSessionId);
