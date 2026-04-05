@@ -98,11 +98,25 @@ echo "[entrypoint] Boot count: $BOOT_COUNT (deploy: ${CURRENT_DEPLOY})"
 
 # If boot counter > 2, a repeated crash occurred — run recovery in background
 # We start the app immediately so healthcheck passes, recovery runs alongside
+# Skip recovery when brain is disabled (respects the master kill switch)
 if [ "$BOOT_COUNT" -gt 2 ]; then
-  echo "[entrypoint] Repeated crashes detected (boot #$BOOT_COUNT), running recovery worker in background..."
-  (timeout 300 npx tsx backend/self-improve.ts --recover 2>&1 || echo "[entrypoint] Recovery worker exited with code $?") &
-  RECOVERY_PID=$!
-  echo "[entrypoint] Recovery worker started (PID: $RECOVERY_PID), continuing with app startup..."
+  BRAIN_CONFIG="/data/brain/config.json"
+  BRAIN_OFF="false"
+  if [ -f "$BRAIN_CONFIG" ]; then
+    BRAIN_ENABLED=$(python3 -c "import json; print(json.load(open('$BRAIN_CONFIG')).get('enabled', True))" 2>/dev/null || echo "True")
+    if [ "$BRAIN_ENABLED" = "False" ] || [ "$BRAIN_ENABLED" = "false" ]; then
+      BRAIN_OFF="true"
+    fi
+  fi
+
+  if [ "$BRAIN_OFF" = "true" ]; then
+    echo "[entrypoint] Repeated crashes detected (boot #$BOOT_COUNT), but brain is DISABLED — skipping recovery worker"
+  else
+    echo "[entrypoint] Repeated crashes detected (boot #$BOOT_COUNT), running recovery worker in background..."
+    (timeout 300 npx tsx backend/self-improve.ts --recover 2>&1 || echo "[entrypoint] Recovery worker exited with code $?") &
+    RECOVERY_PID=$!
+    echo "[entrypoint] Recovery worker started (PID: $RECOVERY_PID), continuing with app startup..."
+  fi
 fi
 
 # Start the agent (reset boot counter on clean exit via trap)
