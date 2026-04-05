@@ -3,6 +3,7 @@ import { readFileSync, existsSync, unlinkSync } from "fs";
 import { safeReadJSON, atomicWriteJSON } from "./utils/file-store.js";
 import { execSync } from "child_process";
 import { askClaude } from "./claude.js";
+import { getBrainConfig } from "./brain-config.js";
 import { MemoryGraph } from "./memory/graph.js";
 import { buildImprovementPrompt, buildRecoveryPrompt } from "./self-improve-prompt.js";
 import type { ImprovementTask } from "./self-improve-prompt.js";
@@ -117,6 +118,7 @@ async function runImprove(): Promise<void> {
       timeout: 600_000,
       allowedTools: WORKER_TOOLS,
       noSession: true,
+      model: getBrainConfig().models?.selfImprove,
     });
 
     const responseText = result.messages.join("\n");
@@ -198,6 +200,7 @@ async function runRecover(): Promise<void> {
         timeout: 600_000,
         allowedTools: WORKER_TOOLS,
         noSession: true,
+        model: getBrainConfig().models?.selfImprove,
       });
 
       const responseText = result.messages.join("\n");

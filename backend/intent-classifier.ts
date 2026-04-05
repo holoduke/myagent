@@ -11,6 +11,7 @@
  */
 
 import { HaikuRunner } from "./providers/haiku-runner.js";
+import { getBrainConfig } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("intent-classifier");
@@ -149,7 +150,7 @@ Message from ${senderName}:
 {"intent":"<category>","reason":"<brief reason>"}`;
 
   try {
-    const classifier = new HaikuRunner({ name: "intent-classifier" });
+    const classifier = new HaikuRunner({ name: "intent-classifier", model: getBrainConfig().models?.messageEval });
     const result = await classifier.run(prompt);
 
     if (!result) {

@@ -16,6 +16,7 @@ import { randomUUID } from "crypto";
 import { appendFileSync, readFileSync, existsSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { HaikuRunner } from "./providers/haiku-runner.js";
+import { getBrainConfig } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 import type { Observation } from "./observer.js";
 import { verify } from "./action-verifier.js";
@@ -402,7 +403,7 @@ Message: "${params.testMessage}"
 Respond ONLY with valid JSON, no markdown, no code fences:
 {"shouldReply": true or false, "reply": "your reply text or null if shouldReply is false", "reason": "brief reason for your decision"}`;
 
-  const tester = new HaikuRunner({ name: "reply-test" });
+  const tester = new HaikuRunner({ name: "reply-test", model: getBrainConfig().models?.messageEval });
   const raw = await tester.run(prompt);
   if (!raw) {
     return { shouldReply: false, reply: null, reason: "LLM evaluation failed" };

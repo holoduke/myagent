@@ -16,12 +16,15 @@ export interface CritiqueResult {
   shouldSend: boolean;
 }
 
-// Singleton runner
+// Runner cache — keyed by model so config changes take effect
 let runner: HaikuRunner | null = null;
+let runnerModel: string | undefined;
 
 function getRunner(): HaikuRunner {
-  if (!runner) {
-    runner = new HaikuRunner({ name: "self-critique", timeout: 10_000 });
+  const model = getBrainConfig().models?.selfCritique;
+  if (!runner || model !== runnerModel) {
+    runnerModel = model;
+    runner = new HaikuRunner({ name: "self-critique", timeout: 10_000, model });
   }
   return runner;
 }

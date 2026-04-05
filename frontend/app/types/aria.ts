@@ -356,6 +356,17 @@ export interface BrainConfig {
   archiveRecallMax: number
   archiveRecallDivisor: number
   maxThinkContextNodes: number
+  /** Per-action model: Claude "sonnet"|"haiku"|"opus", Grok "grok"|"grok-mini" */
+  models: {
+    think: string
+    consolidate: string
+    reflect: string
+    selfCritique: string
+    messageEval: string
+    driftAudit: string
+    selfImprove: string
+    vision: string
+  }
 }
 
 export interface CharacterPreset {

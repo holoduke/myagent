@@ -60,6 +60,7 @@ export const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
   "urgencyInterruptThreshold",
   "activationSpreadFactor", "archiveRecallMin", "archiveRecallMax", "archiveRecallDivisor",
   "maxThinkContextNodes",
+  "models",
 ];
 
 export function parseGoalData(content: string): GoalData | null {

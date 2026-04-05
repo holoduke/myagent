@@ -68,7 +68,18 @@ function resolveReplyDirective(senderJid: string): ReplyDirective | null {
 
 // ── LLM provider ──
 
-const llm = new HaikuRunner({ name: "message-evaluator", timeout: 20_000 });
+// Runner cache — keyed by model so config changes take effect
+let _llm: HaikuRunner | null = null;
+let _llmModel: string | undefined;
+
+function getLlm(): HaikuRunner {
+  const model = getBrainConfig().models?.messageEval;
+  if (!_llm || model !== _llmModel) {
+    _llmModel = model;
+    _llm = new HaikuRunner({ name: "message-evaluator", timeout: 20_000, model });
+  }
+  return _llm;
+}
 
 // ── Prompt builder ──
 
@@ -233,7 +244,7 @@ export async function evaluateMessage(obs: Observation): Promise<EvaluationResul
     detectionMode,
   });
 
-  const raw = await llm.run(prompt);
+  const raw = await getLlm().run(prompt);
   result.usedLLM = true;
 
   if (!raw) {

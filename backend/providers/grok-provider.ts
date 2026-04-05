@@ -1,8 +1,10 @@
-import type { AgentResult, ProviderAskOptions, GrokConfig } from "./types.js";
+import type { AgentResult, AgentStats, ProviderAskOptions, GrokConfig } from "./types.js";
 import { BaseProvider } from "./base-provider.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("grok-provider");
+
+const GROK_API_URL = "https://api.x.ai/v1/chat/completions";
 
 // Keep recent messages for context (Grok has no session support)
 interface HistoryEntry {
@@ -47,68 +49,78 @@ export class GrokProvider extends BaseProvider {
   }
 
   private async runGrok(message: string, timeout: number): Promise<AgentResult> {
-    const model = this.config.model || "grok-4-latest";
-    const apiKey = this.config.apiKey;
+    const model = this.config.model || "grok-3-latest";
+    const apiKey = this.config.apiKey || process.env.GROK_API_KEY;
 
     if (!apiKey) {
-      throw new Error("Grok API key is required. Configure it in the agent profile.");
+      throw new Error("Grok API key is required. Set GROK_API_KEY env var or configure in agent profile.");
     }
 
-    // Prepend recent history for context
-    let prompt = message;
-    if (this.history.length > 0) {
-      const context = this.history
-        .map(h => `${h.role === "user" ? "User" : "Assistant"}: ${h.content}`)
-        .join("\n\n");
-      prompt = `Previous conversation:\n${context}\n\nUser: ${message}`;
-    }
-
-    const args = [
-      "-p", prompt,
-      "-m", model,
+    // Build messages array with history for context
+    const messages: Array<{ role: string; content: string }> = [
+      ...this.history.map(h => ({ role: h.role, content: h.content })),
+      { role: "user", content: message },
     ];
-
-    if (this.config.maxToolRounds !== undefined) {
-      args.push("--max-tool-roundtrips", String(this.config.maxToolRounds));
-    }
 
     const startTime = Date.now();
 
-    const { promise } = this.spawnWithTimeout({
-      command: "grok",
-      args,
-      env: { XAI_API_KEY: apiKey },
-      timeout,
-    });
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
 
-    const { code, stdout, stderr } = await promise;
-    const durationMs = Date.now() - startTime;
+      const response = await fetch(GROK_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          max_tokens: 8192,
+        }),
+        signal: controller.signal,
+      });
 
-    log(`Exit code: ${code}`);
-    if (stderr) log(`stderr: ${stderr.slice(0, 500)}`);
+      clearTimeout(timer);
+      const durationMs = Date.now() - startTime;
 
-    if (code !== 0 && !stdout.trim()) {
-      throw new Error(`Grok exited with code ${code}: ${stderr.slice(0, 500)}`);
-    }
-
-    const text = stdout.trim() || "No response from Grok.";
-    log(`Result: ${text.slice(0, 200)}`);
-
-    // Only store real responses in history, not fallback text
-    if (stdout.trim()) {
-      this.history.push({ role: "user", content: message });
-      this.history.push({ role: "assistant", content: text });
-      if (this.history.length > this.maxHistory * 2) {
-        this.history = this.history.slice(-this.maxHistory * 2);
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`Grok API ${response.status}: ${body.slice(0, 500)}`);
       }
+
+      const data = await response.json() as {
+        choices?: Array<{ message?: { content?: string } }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+      };
+
+      const text = data.choices?.[0]?.message?.content?.trim() || "No response from Grok.";
+      log(`Result: ${text.slice(0, 200)}`);
+
+      // Store in history
+      if (text !== "No response from Grok.") {
+        this.history.push({ role: "user", content: message });
+        this.history.push({ role: "assistant", content: text });
+        if (this.history.length > this.maxHistory * 2) {
+          this.history = this.history.slice(-this.maxHistory * 2);
+        }
+      }
+
+      const stats: AgentStats = this.buildStats({
+        durationMs,
+        provider: "grok",
+        model,
+        inputTokens: data.usage?.prompt_tokens || 0,
+        outputTokens: data.usage?.completion_tokens || 0,
+      });
+
+      return { messages: this.splitMessage(text), stats };
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new Error(`Grok timed out after ${timeout / 1000}s`);
+      }
+      throw err;
     }
-
-    const stats = this.buildStats({
-      durationMs,
-      provider: "grok",
-      model,
-    });
-
-    return { messages: this.splitMessage(text), stats };
   }
 }

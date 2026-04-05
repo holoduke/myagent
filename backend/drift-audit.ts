@@ -11,6 +11,7 @@ import { readFileSync, existsSync, readdirSync, unlinkSync } from "fs";
 import { execSync } from "child_process";
 import { createLogger } from "./logger.js";
 import { askClaude } from "./claude.js";
+import { getBrainConfig } from "./brain-config.js";
 import { ensureDir, atomicWriteJSON, atomicWriteFile, safeReadJSON } from "./utils/file-store.js";
 import { BRAIN_DIR } from "./config.js";
 
@@ -231,7 +232,7 @@ export async function runDriftAudit(): Promise<DriftReport | null> {
   const prompt = buildDriftPrompt(gitLog, diffs, changed);
 
   try {
-    const result = await askClaude(prompt, { timeout: 120_000, noSession: true });
+    const result = await askClaude(prompt, { timeout: 120_000, noSession: true, model: getBrainConfig().models?.driftAudit });
     const responseText = result.messages.join("\n");
 
     // Parse response

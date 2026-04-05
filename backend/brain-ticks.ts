@@ -227,6 +227,7 @@ export async function thinkTick(
         timeout: 300_000,
         allowedTools: BRAIN_TOOLS,
         noSession: true,
+        model: cfg.models?.think,
       });
     });
 
@@ -600,6 +601,7 @@ export async function consolidateTick(
         timeout: 300_000,
         allowedTools: BRAIN_TOOLS,
         noSession: true,
+        model: getBrainConfig().models?.consolidate,
       });
     });
 
@@ -795,6 +797,7 @@ export async function reflectTick(
         timeout: 600_000,
         allowedTools: BRAIN_TOOLS,
         noSession: true,
+        model: getBrainConfig().models?.reflect,
       });
     });
 

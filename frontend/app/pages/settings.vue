@@ -321,6 +321,33 @@
         </div>
       </UiCard>
 
+      <!-- Model Selection -->
+      <UiCard title="Model Selection" :icon="icons.model" style="margin-bottom:16px">
+        <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">Choose which AI model to use for each action. Mix Claude and Grok models based on cost and capability needs.</div>
+        <div class="model-grid">
+          <div v-for="(label, key) in modelLabels" :key="key" class="model-row">
+            <label class="model-label">{{ label }}</label>
+            <select class="intg-input intg-input-sm" v-model="brainForm.models[key as keyof typeof brainForm.models]" @change="brainDirty = true">
+              <optgroup label="Claude">
+                <option value="haiku">Haiku (fast, cheap)</option>
+                <option value="sonnet">Sonnet (balanced)</option>
+                <option value="opus">Opus (most capable)</option>
+              </optgroup>
+              <optgroup label="Grok">
+                <option value="grok">Grok (fast, capable)</option>
+                <option value="grok-mini">Grok Mini (fastest)</option>
+              </optgroup>
+            </select>
+          </div>
+        </div>
+        <div class="br-footer">
+          <div class="br-status">{{ modelSummary }}</div>
+          <button v-if="brainDirty" class="btn primary" :disabled="brainSaving" @click="saveBrainConfig">
+            {{ brainSaving ? 'Saving...' : 'Save' }}
+          </button>
+        </div>
+      </UiCard>
+
       <!-- Memory Tuning -->
       <UiCard title="Memory Tuning" :icon="icons.memory" style="margin-bottom:16px">
         <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">Fine-tune how ARIA's memory graph operates: context retrieval, archive recall, and spreading activation.</div>
@@ -421,6 +448,16 @@ const brainForm = reactive<BrainConfig>({
   archiveRecallMax: 15,
   archiveRecallDivisor: 400,
   maxThinkContextNodes: 35,
+  models: {
+    think: 'sonnet',
+    consolidate: 'haiku',
+    reflect: 'sonnet',
+    selfCritique: 'haiku',
+    messageEval: 'haiku',
+    driftAudit: 'sonnet',
+    selfImprove: 'sonnet',
+    vision: 'haiku',
+  },
 })
 const brainDirty = ref(false)
 const brainSaving = ref(false)
@@ -454,7 +491,28 @@ const icons = {
   logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
   critique: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>',
   memory: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg>',
+  model: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>',
 }
+
+const modelLabels: Record<string, string> = {
+  think: 'Think (brain reasoning)',
+  consolidate: 'Consolidate (memory cleanup)',
+  reflect: 'Reflect (self-reflection)',
+  selfCritique: 'Self-Critique (quality gate)',
+  messageEval: 'Message Eval (incoming msgs)',
+  driftAudit: 'Drift Audit (weekly code review)',
+  selfImprove: 'Self-Improve (code changes)',
+  vision: 'Vision (image description)',
+}
+
+const modelSummary = computed(() => {
+  const vals = Object.values(brainForm.models)
+  const counts: Record<string, number> = {}
+  for (const v of vals) {
+    counts[v] = (counts[v] || 0) + 1
+  }
+  return Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')
+})
 
 function selectPreset(name: string) {
   const preset = brainPresets.value.find(p => p.name === name)
@@ -937,10 +995,33 @@ onMounted(load)
   text-align: right;
 }
 
+/* ── Model Selection ── */
+.model-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.model-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.model-row .intg-input-sm {
+  width: 180px;
+  flex-shrink: 0;
+}
+
 @media (max-width: 768px) {
   .section { padding: 16px 12px; }
   .ch-presets { grid-template-columns: repeat(2, 1fr); }
   .br-presets { grid-template-columns: repeat(2, 1fr); }
   .br-adv { grid-template-columns: 1fr; }
+  .model-grid { grid-template-columns: 1fr; }
 }
 </style>

@@ -61,4 +61,6 @@ export interface ProviderAskOptions {
   timeout?: number;
   noSession?: boolean;
   allowedTools?: string;
+  /** Claude CLI model name: "sonnet", "haiku", "opus". If omitted, uses CLI default. */
+  model?: string;
 }
