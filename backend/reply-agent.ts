@@ -377,6 +377,10 @@ export async function testReplyDirective(params: {
   isGroup: boolean;
   groupName?: string;
 }): Promise<ReplyDecision> {
+  if (!getBrainConfig().enabled) {
+    return { shouldReply: false, reply: null, reason: "Brain is disabled" };
+  }
+
   const directive = getReplyDirective(params.directiveId);
   if (!directive) {
     return { shouldReply: false, reply: null, reason: "Directive not found" };

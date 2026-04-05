@@ -5,6 +5,7 @@ import Twilio from "twilio";
 import { createLogger } from "../logger.js";
 import { recordObservation } from "../observer.js";
 import { isIntegrationEnabled } from "./integration-config.js";
+import { getBrainConfig } from "../brain-config.js";
 
 const log = createLogger("twilio");
 
@@ -547,6 +548,9 @@ export async function handleTurn(req: IncomingMessage, res: ServerResponse): Pro
 // ── Claude CLI for agent turns ──
 
 async function callClaudeForTurn(call: ActiveCall): Promise<{ text: string; shouldEnd: boolean }> {
+  if (!getBrainConfig().enabled) {
+    return { text: "I'm currently offline. Goodbye.", shouldEnd: true };
+  }
   const TIMEOUT_MS = 12_000;
 
   // Build conversation context for Claude

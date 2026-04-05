@@ -38,6 +38,8 @@ export async function describeImage(
   mimetype: string,
   caption?: string,
 ): Promise<string | null> {
+  if (!getBrainConfig().enabled) return null;
+
   if (buffer.length === 0) {
     log("Empty image buffer — skipping");
     return null;
