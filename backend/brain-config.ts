@@ -248,7 +248,10 @@ export function getBrainConfig(): BrainConfig {
 
 export function saveBrainConfig(partial: Partial<BrainConfig>): BrainConfig {
   const current = getBrainConfig();
-  const updated = { ...current, ...partial };
+  const mergedModels = partial.models
+    ? { ...current.models, ...partial.models }
+    : current.models;
+  const updated = { ...current, ...partial, models: mergedModels };
 
   try {
     ensureDir(BRAIN_DIR);

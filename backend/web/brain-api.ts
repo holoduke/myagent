@@ -699,10 +699,29 @@ const handleBrainConfigUpdate = apiHandler(async (_req, _res, data: Record<strin
   } else {
     update = {};
     for (const key of BRAIN_CONFIG_ALLOWED_KEYS) {
-      if (key in data && key !== "preset") {
+      if (key in data && key !== "preset" && key !== "models") {
         (update as Record<string, unknown>)[key] = data[key];
       }
     }
+
+    // Validate models sub-object: only known keys with known values
+    if ("models" in data && data.models !== null && typeof data.models === "object" && !Array.isArray(data.models)) {
+      const VALID_MODELS = new Set(["haiku", "sonnet", "opus", "grok", "grok-mini"]);
+      const VALID_MODEL_KEYS = new Set(["think", "consolidate", "reflect", "selfCritique", "messageEval", "driftAudit", "selfImprove", "vision"]);
+      const incoming = data.models as Record<string, unknown>;
+      const validated: Record<string, string> = {};
+      for (const k of VALID_MODEL_KEYS) {
+        if (k in incoming) {
+          const v = incoming[k];
+          if (typeof v !== "string" || !VALID_MODELS.has(v)) {
+            throw new ApiError(400, `Invalid model value for "${k}": ${v}`);
+          }
+          validated[k] = v;
+        }
+      }
+      update.models = validated as unknown as BrainConfig["models"];
+    }
+
     update.preset = null;
   }
 

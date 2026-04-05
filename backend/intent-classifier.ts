@@ -10,7 +10,7 @@
  * (missing genuine requests).
  */
 
-import { HaikuRunner } from "./providers/haiku-runner.js";
+import { LlmRunner } from "./providers/llm-runner.js";
 import { getBrainConfig } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 
@@ -150,7 +150,7 @@ Message from ${senderName}:
 {"intent":"<category>","reason":"<brief reason>"}`;
 
   try {
-    const classifier = new HaikuRunner({ name: "intent-classifier", model: getBrainConfig().models?.messageEval });
+    const classifier = new LlmRunner({ name: "intent-classifier", model: getBrainConfig().models?.messageEval });
     const result = await classifier.run(prompt);
 
     if (!result) {
@@ -216,4 +216,4 @@ export function classifyIntentSync(
   return { intent: "casual", confidence: LOW_CONFIDENCE, method: "heuristic", reason: "no strong patterns, defaulting to casual" };
 }
 
-// Lightweight LLM for intent classification — uses shared HaikuRunner.
+// Lightweight LLM for intent classification — uses shared LlmRunner.

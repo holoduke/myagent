@@ -1,10 +1,10 @@
 /**
  * Pre-send self-critique for proactive/initiative messages.
- * Uses HaikuRunner to score a proposed message 1-10 before sending.
+ * Uses LlmRunner to score a proposed message 1-10 before sending.
  * Messages scoring below threshold are suppressed with a logged reason.
  */
 
-import { HaikuRunner } from "./providers/haiku-runner.js";
+import { LlmRunner } from "./providers/llm-runner.js";
 import { getBrainConfig } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 
@@ -17,14 +17,14 @@ export interface CritiqueResult {
 }
 
 // Runner cache — keyed by model so config changes take effect
-let runner: HaikuRunner | null = null;
+let runner: LlmRunner | null = null;
 let runnerModel: string | undefined;
 
-function getRunner(): HaikuRunner {
+function getRunner(): LlmRunner {
   const model = getBrainConfig().models?.selfCritique;
   if (!runner || model !== runnerModel) {
     runnerModel = model;
-    runner = new HaikuRunner({ name: "self-critique", timeout: 10_000, model });
+    runner = new LlmRunner({ name: "self-critique", timeout: 10_000, model });
   }
   return runner;
 }

@@ -15,7 +15,7 @@
 import { randomUUID } from "crypto";
 import { appendFileSync, readFileSync, existsSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
-import { HaikuRunner } from "./providers/haiku-runner.js";
+import { LlmRunner } from "./providers/llm-runner.js";
 import { createLogger } from "./logger.js";
 import { getBrainConfig } from "./brain-config.js";
 import type { Observation } from "./observer.js";
@@ -307,14 +307,14 @@ function matchesGate(text: string, gate?: HandlerGate): boolean {
 // ── Tier 3: LLM evaluation ──
 
 // Runner cache — keyed by model so config changes take effect
-let _handlerLlm: HaikuRunner | null = null;
+let _handlerLlm: LlmRunner | null = null;
 let _handlerLlmModel: string | undefined;
 
-function getHandlerLlm(): HaikuRunner {
+function getHandlerLlm(): LlmRunner {
   const model = getBrainConfig().models?.messageEval;
   if (!_handlerLlm || model !== _handlerLlmModel) {
     _handlerLlmModel = model;
-    _handlerLlm = new HaikuRunner({ name: "handler-evaluator", timeout: 20_000, model });
+    _handlerLlm = new LlmRunner({ name: "handler-evaluator", timeout: 20_000, model });
   }
   return _handlerLlm;
 }
