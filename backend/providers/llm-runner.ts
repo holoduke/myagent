@@ -8,11 +8,12 @@
  */
 
 import { BaseProvider } from "./base-provider.js";
+import { GrokProvider } from "./grok-provider.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("llm-runner");
 
-export interface HaikuRunnerOptions {
+export interface LlmRunnerOptions {
   /** Identifier used in log messages. */
   name: string;
   /** Spawn timeout in ms (default 15 000). */
@@ -27,7 +28,7 @@ export function isGrokModel(model: string | undefined): boolean {
 }
 
 /** Map short model names to Grok API model IDs. */
-function resolveGrokModel(model: string): string {
+export function resolveGrokModel(model: string): string {
   switch (model) {
     case "grok": return "grok-3-latest";
     case "grok-mini": return "grok-3-mini-fast";
@@ -35,9 +36,7 @@ function resolveGrokModel(model: string): string {
   }
 }
 
-const GROK_API_URL = "https://api.x.ai/v1/chat/completions";
-
-export class HaikuRunner extends BaseProvider {
+export class LlmRunner extends BaseProvider {
   readonly name: string;
   readonly supportsStreaming = false;
   readonly supportsSessions = false;
@@ -45,14 +44,14 @@ export class HaikuRunner extends BaseProvider {
   private readonly timeout: number;
   private readonly model: string;
 
-  constructor(options: HaikuRunnerOptions) {
+  constructor(options: LlmRunnerOptions) {
     super();
     this.name = options.name;
     this.timeout = options.timeout ?? 15_000;
     this.model = options.model ?? "haiku";
   }
 
-  // Required by BaseProvider but unused — HaikuRunner exposes `run()` instead.
+  // Required by BaseProvider but unused — LlmRunner exposes `run()` instead.
   async ask(_msg: string) { return { messages: [] as string[] }; }
   async askStreaming(_msg: string, _cb: (t: string) => void) { return { messages: [] as string[] }; }
   resetSession() { /* no-op */ }
@@ -101,7 +100,7 @@ export class HaikuRunner extends BaseProvider {
     }
   }
 
-  /** Call xAI API directly (grok CLI is broken with live search deprecation). */
+  /** Call xAI API via GrokProvider (single-shot, no history). */
   private async runGrok(prompt: string): Promise<string | null> {
     const apiKey = process.env.GROK_API_KEY;
     if (!apiKey) {
@@ -109,45 +108,10 @@ export class HaikuRunner extends BaseProvider {
       return null;
     }
 
-    const grokModel = resolveGrokModel(this.model);
-
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.timeout);
-
-      const response = await fetch(GROK_API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: grokModel,
-          messages: [{ role: "user", content: prompt }],
-          max_tokens: 4096,
-        }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timer);
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        log(`${this.name} grok API ${response.status}: ${body.slice(0, 200)}`);
-        return null;
-      }
-
-      const data = await response.json() as {
-        choices?: Array<{ message?: { content?: string } }>;
-      };
-
-      const text = data.choices?.[0]?.message?.content?.trim();
-      if (!text) {
-        log(`${this.name} grok returned empty response`);
-        return null;
-      }
-
-      return text;
+      const provider = new GrokProvider({ apiKey, model: resolveGrokModel(this.model) });
+      const result = await provider.ask(prompt, { timeout: this.timeout, noSession: true });
+      return result.messages[0] ?? null;
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         log(`${this.name} grok timed out`);
@@ -158,3 +122,7 @@ export class HaikuRunner extends BaseProvider {
     }
   }
 }
+
+// Backward-compatible aliases
+export { LlmRunner as HaikuRunner };
+export type { LlmRunnerOptions as HaikuRunnerOptions };

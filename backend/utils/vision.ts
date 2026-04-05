@@ -1,13 +1,13 @@
 /**
  * Image understanding using Claude CLI with built-in vision.
- * Reuses the HaikuRunner pattern — spawns `claude -p ... --model haiku`.
+ * Reuses the LlmRunner pattern — spawns `claude -p ... --model haiku`.
  * Saves image to temp file, asks Claude to read & describe it.
  * Cost: ~$0.0004/image via Haiku.
  */
 
 import { writeFileSync, unlinkSync, existsSync, mkdirSync } from "fs";
 import { randomBytes } from "crypto";
-import { HaikuRunner } from "../providers/haiku-runner.js";
+import { LlmRunner } from "../providers/llm-runner.js";
 import { getBrainConfig } from "../brain-config.js";
 import { createLogger } from "../logger.js";
 
@@ -17,14 +17,14 @@ const TEMP_DIR = "/tmp/aria-vision";
 const MAX_IMAGE_SIZE_MB = 10;
 
 // Runner cache — keyed by model so config changes take effect
-let runner: HaikuRunner | null = null;
+let runner: LlmRunner | null = null;
 let runnerModel: string | undefined;
 
-function getRunner(): HaikuRunner {
+function getRunner(): LlmRunner {
   const model = getBrainConfig().models?.vision;
   if (!runner || model !== runnerModel) {
     runnerModel = model;
-    runner = new HaikuRunner({ name: "vision", timeout: 30_000, model });
+    runner = new LlmRunner({ name: "vision", timeout: 30_000, model });
   }
   return runner;
 }

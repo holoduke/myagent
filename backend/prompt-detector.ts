@@ -6,7 +6,7 @@
  * via brain config and editable from the dashboard.
  */
 
-import { HaikuRunner } from "./providers/haiku-runner.js";
+import { LlmRunner } from "./providers/llm-runner.js";
 import { createLogger } from "./logger.js";
 import { getBrainConfig } from "./brain-config.js";
 
@@ -72,7 +72,7 @@ export async function detectWithPrompt(
   const fullPrompt = `${prompt}\n\nMessage from ${senderName}:\n"${text}"`;
 
   try {
-    const detector = new HaikuRunner({ name: "prompt-detector", timeout: 30_000, model: getBrainConfig().models?.messageEval });
+    const detector = new LlmRunner({ name: "prompt-detector", timeout: 30_000, model: getBrainConfig().models?.messageEval });
     const result = await detector.run(fullPrompt);
 
     if (!result) {
@@ -99,7 +99,7 @@ export async function detectWithPrompt(
   }
 }
 
-// Lightweight LLM for prompt detection — uses shared HaikuRunner.
+// Lightweight LLM for prompt detection — uses shared LlmRunner.
 
 export function getDefaultDetectionPrompt(): string {
   return DEFAULT_DETECTION_PROMPT;

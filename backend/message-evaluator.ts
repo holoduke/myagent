@@ -14,7 +14,7 @@
  * 3. A reply directive applies to this sender
  */
 
-import { HaikuRunner } from "./providers/haiku-runner.js";
+import { LlmRunner } from "./providers/llm-runner.js";
 import { createLogger } from "./logger.js";
 import { classifyIntentSync } from "./intent-classifier.js";
 import type { IntentClassification, MessageIntent } from "./intent-classifier.js";
@@ -69,14 +69,14 @@ function resolveReplyDirective(senderJid: string): ReplyDirective | null {
 // ── LLM provider ──
 
 // Runner cache — keyed by model so config changes take effect
-let _llm: HaikuRunner | null = null;
+let _llm: LlmRunner | null = null;
 let _llmModel: string | undefined;
 
-function getLlm(): HaikuRunner {
+function getLlm(): LlmRunner {
   const model = getBrainConfig().models?.messageEval;
   if (!_llm || model !== _llmModel) {
     _llmModel = model;
-    _llm = new HaikuRunner({ name: "message-evaluator", timeout: 20_000, model });
+    _llm = new LlmRunner({ name: "message-evaluator", timeout: 20_000, model });
   }
   return _llm;
 }

@@ -19,8 +19,8 @@ vi.mock("../backend/logger.js", () => ({
   createLogger: () => Object.assign((...args: unknown[]) => {}, { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }),
 }));
 
-vi.mock("../backend/providers/haiku-runner.js", () => ({
-  HaikuRunner: class {
+vi.mock("../backend/providers/llm-runner.js", () => ({
+  LlmRunner: class {
     run = mockRun;
     name = "self-critique";
   },
