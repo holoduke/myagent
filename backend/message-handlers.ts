@@ -17,6 +17,7 @@ import { appendFileSync, readFileSync, existsSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { HaikuRunner } from "./providers/haiku-runner.js";
 import { createLogger } from "./logger.js";
+import { getBrainConfig } from "./brain-config.js";
 import type { Observation } from "./observer.js";
 import { BRAIN_DIR } from "./config.js";
 
@@ -563,6 +564,9 @@ async function checkWhitelisted(jid: string): Promise<boolean> {
  * Called from observer.ts for every recorded observation.
  */
 export async function runMessageHandlers(obs: Observation): Promise<void> {
+  // Master kill switch: skip all handler LLM processing when brain is disabled
+  if (!getBrainConfig().enabled) return;
+
   const handlers = getHandlers().filter(h => h.enabled);
   if (handlers.length === 0) return;
 

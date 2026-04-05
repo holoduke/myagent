@@ -227,6 +227,7 @@ export interface MoltbookStatus {
 }
 
 export interface DashboardData {
+  brainEnabled: boolean
   brainState: BrainState
   workingMemory: WorkingMemory
   graph: { nodeCount: number; edgeCount: number }

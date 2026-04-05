@@ -21,6 +21,7 @@ import { isAuthenticated, readBody } from "./auth.js";
 import { respondJson } from "../utils/api-helpers.js";
 import { createLogger } from "../logger.js";
 import { getAriaStatus, getMoltbookStatus } from "./brain-api.js";
+import { getBrainConfig } from "../brain-config.js";
 
 const log = createLogger("web");
 
@@ -136,6 +137,7 @@ function getDashboardData(queue: MessageQueue) {
     whitelistCount: whitelist.length,
     scheduledCount: scheduled.length,
     queueDepth: queue.size,
+    brainEnabled: getBrainConfig().enabled,
     claudeUsage: getUsageData(),
     integrationsEnabled: getIntegrationsConfig(),
     timestamp: Date.now(),

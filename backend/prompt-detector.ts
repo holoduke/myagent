@@ -55,6 +55,12 @@ export async function detectWithPrompt(
   senderName: string,
 ): Promise<PromptDetectionResult> {
   const config = getBrainConfig();
+
+  // Master kill switch: skip LLM detection when brain is disabled
+  if (!config.enabled) {
+    return { events: [], requests: [] };
+  }
+
   const promptTemplate = config.detectionPrompt || DEFAULT_DETECTION_PROMPT;
 
   // Fill in template variables

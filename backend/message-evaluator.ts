@@ -204,6 +204,9 @@ export async function evaluateMessage(obs: Observation): Promise<EvaluationResul
 
   const needsLLM = !obs.isFromMe && obs.text && (needsIntentLLM || needsActionableLLM || needsReplyLLM);
 
+  // Master kill switch: skip ALL LLM calls when brain is disabled
+  const brainDisabled = !config.enabled;
+
   // ── Step 3: Base result (no LLM) ──
   const result: EvaluationResult = {
     intent: heuristicIntent,
@@ -216,7 +219,7 @@ export async function evaluateMessage(obs: Observation): Promise<EvaluationResul
     usedLLM: false,
   };
 
-  if (!needsLLM) {
+  if (!needsLLM || brainDisabled) {
     return result;
   }
 

@@ -399,6 +399,12 @@ async function tick(
   tickLock = true;
   try {
   const cfg = getBrainConfig();
+
+  // ── Master kill switch: skip ALL brain operations when disabled ──
+  if (!cfg.enabled) {
+    return;
+  }
+
   const state = loadState();
   const now = Date.now();
   const today = getOwnerLocalDate(cfg.ownerTimezone);
