@@ -130,6 +130,7 @@ async function pollHA(): Promise<void> {
         Authorization: `Bearer ${conn.token}`,
         "Content-Type": "application/json",
       },
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!res.ok) {
@@ -168,7 +169,11 @@ async function pollHA(): Promise<void> {
       log(`Recorded ${changedCount} entity state changes`);
     }
   } catch (err) {
-    log(`HA poll failed (mode: ${config.mode}): ${err}`);
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      log(`HA poll timed out after 15s (mode: ${config.mode}) — server may be unreachable`);
+    } else {
+      log(`HA poll failed (mode: ${config.mode}): ${err}`);
+    }
   }
 }
 
@@ -244,6 +249,7 @@ export async function testHAConnection(mode: HAConnectionMode, url: string, toke
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!res.ok) {
@@ -253,6 +259,9 @@ export async function testHAConnection(mode: HAConnectionMode, url: string, toke
     const entities = await res.json() as EntityState[];
     return { success: true, entityCount: entities.length };
   } catch (err) {
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      return { success: false, error: "Connection timed out after 15s — server may be unreachable" };
+    }
     return { success: false, error: String(err) };
   }
 }
