@@ -154,6 +154,14 @@
             {{ f.label }}
             <span v-if="f.count > 0" class="rq-filter-count">{{ f.count }}</span>
           </button>
+          <button
+            class="btn danger sm"
+            style="margin-left:auto"
+            :disabled="arClearing || actionableRequests.length === 0"
+            @click="handleClearAllActionable"
+          >
+            {{ arClearing ? 'Clearing…' : 'Clear all' }}
+          </button>
         </div>
 
         <div v-if="filteredActionableRequests.length === 0" class="rq-empty">
@@ -265,6 +273,7 @@ const actingId = ref('')
 const actionableRequests = ref<ActionableRequest[]>([])
 const arActiveFilter = ref<'all' | 'pending_confirmation'>('pending_confirmation')
 const arActingId = ref('')
+const arClearing = ref(false)
 
 // Contact directives
 const directives = ref<Directive[]>([])
@@ -452,6 +461,20 @@ async function handleArReject(id: string) {
     showToast(e instanceof Error ? e.message : 'Failed to reject request', 'error')
   } finally {
     arActingId.value = ''
+  }
+}
+
+async function handleClearAllActionable() {
+  if (!confirm(`Clear all ${actionableRequests.value.length} actionable requests? This cannot be undone.`)) return
+  arClearing.value = true
+  try {
+    await api<{ success: boolean; removed: number }>('/api/actionable-requests', { method: 'DELETE' })
+    await loadActionableRequests()
+    showToast('Actionable requests cleared', 'success')
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to clear actionable requests', 'error')
+  } finally {
+    arClearing.value = false
   }
 }
 

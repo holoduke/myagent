@@ -33,6 +33,19 @@ export interface CalendarConfig {
 const stateStore = new FileStore<CalendarState>({ filePath: STATE_FILE, defaultValue: {} });
 const configStore = new FileStore<CalendarConfig>({ filePath: CONFIG_FILE, defaultValue: { calendars: [] } });
 
+// Accounts where the Calendar API is disabled in the Google Cloud project.
+// Populated at runtime when we detect the "API not enabled" error so we
+// don't spam the logs every poll cycle. Cleared on process restart.
+const calendarApiDisabledAccounts = new Set<string>();
+
+export function isCalendarApiDisabled(accountId: string): boolean {
+  return calendarApiDisabledAccounts.has(accountId);
+}
+
+export function resetCalendarApiDisabledAccounts(): void {
+  calendarApiDisabledAccounts.clear();
+}
+
 function loadState(): CalendarState {
   return stateStore.load();
 }
@@ -45,6 +58,10 @@ async function fetchUpcomingEvents(accountId: string): Promise<void> {
   const accounts = loadAccounts();
   const account = accounts.find(a => a.id === accountId);
   if (!account || (!account.tokens?.refresh_token && !account.tokens?.access_token)) return;
+
+  // Skip accounts where we already know the Calendar API is disabled —
+  // avoids spamming the log with the same actionable error every poll.
+  if (calendarApiDisabledAccounts.has(accountId)) return;
 
   const auth = createOAuth2Client(account);
   const calendar = google.calendar({ version: "v3", auth });
@@ -102,12 +119,35 @@ async function fetchUpcomingEvents(accountId: string): Promise<void> {
     if (newCount > 0) dedupCache.saveTo(SEEN_EVENTS_FILE);
     log(`Fetched ${events.length} upcoming events for ${accountId} (${newCount} new)`);
   } catch (err) {
-    const e = err as { code?: number; message?: string };
+    const e = err as { code?: number; message?: string; errors?: Array<{ reason?: string }> };
     if (e.code === 401) {
       log(`Calendar auth expired for ${accountId}`);
-    } else {
-      log(`Calendar poll failed for ${accountId}: ${e.message || err}`);
+      return;
     }
+
+    // Detect "Google Calendar API not enabled" for this account's Google Cloud
+    // project. Mark the account as disabled in-memory so we stop polling it,
+    // and log a single actionable message instead of spamming every cycle.
+    const msg = e.message || String(err);
+    const isApiDisabled =
+      e.code === 403 &&
+      (msg.includes("has not been used in project") ||
+        msg.includes("SERVICE_DISABLED") ||
+        e.errors?.some(x => x.reason === "accessNotConfigured"));
+
+    if (isApiDisabled) {
+      calendarApiDisabledAccounts.add(accountId);
+      const projectMatch = msg.match(/project[\s=]+(\d+)/i);
+      const projectId = projectMatch ? projectMatch[1] : "unknown";
+      log(
+        `Calendar API is DISABLED for account "${accountId}" in Google Cloud project ${projectId}. ` +
+        `Enable it at https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=${projectId} ` +
+        `(suppressing further errors until restart).`,
+      );
+      return;
+    }
+
+    log(`Calendar poll failed for ${accountId}: ${msg}`);
   }
 }
 
