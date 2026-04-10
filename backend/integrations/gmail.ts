@@ -12,6 +12,179 @@ import { verify } from "../action-verifier.js";
 const log = createLogger("gmail");
 
 const GMAIL_DIR = process.env.GMAIL_DIR || "/data/gmail";
+
+// ── Promotional Email Filter ──
+
+const PROMO_FILTER_FILE = `${GMAIL_DIR}/promo-filter.json`;
+
+interface PromoFilter {
+  domains: string[];
+  senderPatterns: string[];
+  subjectPatterns: string[];
+}
+
+// Built-in defaults — covers the most common noise sources.
+// Override at runtime by editing /data/gmail/promo-filter.json.
+const DEFAULT_PROMO_FILTER: PromoFilter = {
+  domains: [
+    "aliexpress.com",
+    "autoscout24.com",
+    "linkedin.com",
+    "marktplaats.nl",
+    "bol.com",
+    "coolblue.nl",
+    "amazon.com",
+    "amazon.nl",
+    "booking.com",
+    "airbnb.com",
+    "tripadvisor.com",
+    "ebay.com",
+    "ebay.nl",
+    "albert.nl",
+    "ah.nl",
+    "thuisbezorgd.nl",
+    "deliveroo.com",
+    "uber.com",
+    "ubereats.com",
+    "spotify.com",
+    "netflix.com",
+    "zalando.nl",
+    "h&m.com",
+    "zara.com",
+    "hm.com",
+    "facebook.com",
+    "twitter.com",
+    "instagram.com",
+    "youtube.com",
+    "google.com",
+    "mailchimp.com",
+    "sendgrid.net",
+    "exacttarget.com",
+    "salesforce.com",
+    "klaviyo.com",
+    "brevo.com",
+    "cegid.com",
+  ],
+  // Regex patterns matched against the sender address (lowercased)
+  senderPatterns: [
+    "^newsletter@",
+    "^noreply@",
+    "^no-reply@",
+    "^donotreply@",
+    "^do-not-reply@",
+    "^info@",
+    "^promotions@",
+    "^offers@",
+    "^deals@",
+    "^updates@",
+    "^notifications@",
+    "^marketing@",
+    "^news@",
+    "^alert@",
+    "^alerts@",
+    "^promo@",
+    "^mailings@",
+    "^mailing@",
+    "^subscriptions@",
+    "^unsubscribe@",
+    "^e-mail@",
+    "^email@",
+    "^bulk@",
+    "^campaigns@",
+  ],
+  // Regex patterns matched against the subject (lowercased)
+  subjectPatterns: [
+    "\\bunsubscribe\\b",
+    "\\bkorting\\b",
+    "\\bdiscount\\b",
+    "\\bpromotion\\b",
+    "\\bsale\\b",
+    "\\bnewsletter\\b",
+    "\\bsponsored\\b",
+    "\\bblack friday\\b",
+    "\\bcyber monday\\b",
+    "\\bnew arrivals\\b",
+    "\\bjob alert\\b",
+    "\\bjob recommendation\\b",
+    "\\bpeople you may know\\b",
+    "\\bconnect with\\b",
+    "\\bweekly digest\\b",
+    "\\bmonthly digest\\b",
+    "\\byour saved search\\b",
+    "\\bsaved search\\b",
+    "\\bnew matches\\b",
+    "\\bspecial offer\\b",
+    "\\bexclusive offer\\b",
+    "\\bflash sale\\b",
+    "\\bbeperkte tijd\\b",
+  ],
+};
+
+function loadPromoFilter(): PromoFilter {
+  try {
+    const raw = require("fs").readFileSync(PROMO_FILTER_FILE, "utf-8");
+    const parsed = JSON.parse(raw) as Partial<PromoFilter>;
+    return {
+      domains: parsed.domains ?? DEFAULT_PROMO_FILTER.domains,
+      senderPatterns: parsed.senderPatterns ?? DEFAULT_PROMO_FILTER.senderPatterns,
+      subjectPatterns: parsed.subjectPatterns ?? DEFAULT_PROMO_FILTER.subjectPatterns,
+    };
+  } catch {
+    return DEFAULT_PROMO_FILTER;
+  }
+}
+
+// Compile filter once at startup; re-used for every message check.
+let _compiledFilter: {
+  domainSet: Set<string>;
+  senderRegexes: RegExp[];
+  subjectRegexes: RegExp[];
+} | null = null;
+
+function getCompiledFilter() {
+  if (_compiledFilter) return _compiledFilter;
+  const f = loadPromoFilter();
+  _compiledFilter = {
+    domainSet: new Set(f.domains.map(d => d.toLowerCase())),
+    senderRegexes: f.senderPatterns.map(p => new RegExp(p, "i")),
+    subjectRegexes: f.subjectPatterns.map(p => new RegExp(p, "i")),
+  };
+  return _compiledFilter;
+}
+
+/**
+ * Returns true when the email matches a known promotional pattern and should
+ * be silently dropped (no observation recorded, no brain cycle consumed).
+ */
+function isPromotional(from: string, subject: string): boolean {
+  const filter = getCompiledFilter();
+
+  // Extract domain from the From header (handles "Name <addr@domain.com>" format)
+  const addrMatch = from.match(/<([^>]+)>/) || from.match(/(\S+@\S+)/);
+  const addr = (addrMatch?.[1] ?? from).toLowerCase().trim();
+  const domainMatch = addr.match(/@([^>]+)$/);
+  const domain = domainMatch?.[1] ?? "";
+
+  // Check root domain — e.g. "mail.aliexpress.com" → "aliexpress.com"
+  const domainParts = domain.split(".");
+  for (let i = 0; i < domainParts.length - 1; i++) {
+    const candidate = domainParts.slice(i).join(".");
+    if (filter.domainSet.has(candidate)) return true;
+  }
+
+  // Check sender address patterns
+  const localPart = addr.split("@")[0] + "@";
+  for (const re of filter.senderRegexes) {
+    if (re.test(localPart)) return true;
+  }
+
+  // Check subject patterns
+  for (const re of filter.subjectRegexes) {
+    if (re.test(subject)) return true;
+  }
+
+  return false;
+}
 const ACCOUNTS_FILE = `${GMAIL_DIR}/accounts.json`;
 const STATE_FILE = `${GMAIL_DIR}/state.json`;
 const SEEN_IDS_FILE = `${GMAIL_DIR}/seen-ids.json`;
@@ -265,6 +438,13 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
 
       // Determine if this is an outgoing email
       const isFromMe = msg.labelIds?.includes("SENT") || false;
+
+      // Drop promotional/newsletter emails — they consume brain context without value
+      if (!isFromMe && isPromotional(from, subject)) {
+        log(`Promo filter: dropped "${subject}" from ${from}`);
+        if (internalDate > newestTimestamp) newestTimestamp = internalDate;
+        return;
+      }
 
       // Record as observation
       const bodyPreview = body.length > MAX_BODY_LENGTH
