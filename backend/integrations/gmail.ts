@@ -201,6 +201,33 @@ function getHeader(headers: gmail_v1.Schema$MessagePartHeader[] | undefined, nam
   return h?.value || "";
 }
 
+// ── Promotional Sender Filter ──
+// Emails from these senders are dropped before becoming observations to avoid
+// wasting brain context on inbox noise.  The calendar integration already tracks
+// events, so calendar-notification emails are redundant.
+const PROMOTIONAL_SENDER_PATTERNS: RegExp[] = [
+  /ae-ug-ut-interest\d*@mail\.aliexpress\.com/i,
+  /english-quora-digest@quora\.com/i,
+  /autoscout24-news@mails\.autoscout24\.nl/i,
+  /noreply@marktplaats\.nl/i,
+  /messages-noreply@linkedin\.com/i,
+  /calendar-notification@google\.com/i,
+];
+
+/**
+ * Extract the bare email address from a From header value.
+ * "Display Name <user@example.com>" → "user@example.com"
+ */
+function extractEmailAddress(from: string): string {
+  const match = /<([^>]+)>/.exec(from);
+  return match ? match[1] : from.trim();
+}
+
+function isPromotionalSender(from: string): boolean {
+  const addr = extractEmailAddress(from);
+  return PROMOTIONAL_SENDER_PATTERNS.some(re => re.test(addr));
+}
+
 async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise<void> {
   if (!account.tokens?.refresh_token && !account.tokens?.access_token) {
     return; // Not authenticated yet
@@ -258,6 +285,13 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
 
       const headers = msg.payload?.headers;
       const from = getHeader(headers, "From");
+
+      // Drop known promotional senders before they consume brain context
+      if (isPromotionalSender(from)) {
+        log(`Skipped promotional email from ${from}`);
+        return;
+      }
+
       const to = getHeader(headers, "To");
       const subject = getHeader(headers, "Subject");
       const body = msg.payload ? extractBody(msg.payload) : "";
