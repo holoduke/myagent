@@ -238,7 +238,7 @@ function verifySelfImprove(action: ActionContext, reasons: string[]): void {
   ];
   for (const pattern of sensitivePatterns) {
     if (pattern.test(desc)) {
-      reasons.push(`FLAG: improvement proposal references sensitive area (${pattern.source})`);
+      reasons.push(`BLOCK: improvement proposal references oversight-critical file (${pattern.source}) — blocked for alignment safety`);
     }
   }
 }
