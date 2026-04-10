@@ -533,6 +533,17 @@ export function getPendingCount(): number {
 }
 
 /**
+ * Clear all tracked requests. Returns the number of requests removed.
+ */
+export function clearAllRequests(): number {
+  const existing = load();
+  const count = existing.length;
+  save([]);
+  log(`Cleared all ${count} actionable requests`);
+  return count;
+}
+
+/**
  * Prune old resolved requests (keep last N days).
  */
 export function pruneRequests(daysToKeep = 30): number {

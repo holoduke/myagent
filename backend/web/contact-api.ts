@@ -2,7 +2,7 @@ import { IncomingMessage, ServerResponse } from "http";
 import { syncContacts, findContacts, getAllContacts } from "../integrations/whatsapp.js";
 import { getWhitelist, addToWhitelist, removeFromWhitelist, updatePermissions } from "../contact-whitelist.js";
 import type { ContactPermissions } from "../contact-whitelist.js";
-import { getActionableRequests, approveRequest, rejectRequest, getPendingCount } from "../actionable-tracker.js";
+import { getActionableRequests, approveRequest, rejectRequest, getPendingCount, clearAllRequests } from "../actionable-tracker.js";
 import type { ActionableRequestStatus } from "../actionable-tracker.js";
 import { getDirectives, getDirectivesForContact, addDirective, updateDirective, removeDirective } from "../directives.js";
 import type { DirectiveActionType, DirectivePolicy } from "../directives.js";
@@ -58,6 +58,11 @@ export function handleContactRoutes(
   }
   if (pathname === "/api/actionable-requests/pending-count" && req.method === "GET" && isAuthenticated(req)) {
     respondJson(res, 200, { count: getPendingCount() });
+    return true;
+  }
+  if (pathname === "/api/actionable-requests" && req.method === "DELETE" && isAuthenticated(req)) {
+    const removed = clearAllRequests();
+    respondJson(res, 200, { success: true, removed });
     return true;
   }
   if (req.method === "POST" && isAuthenticated(req)) {
