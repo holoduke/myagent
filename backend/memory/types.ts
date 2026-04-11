@@ -175,6 +175,9 @@ export interface BrainState {
   lastSuccessfulTick: number;
   pendingSelfMod: boolean;
   selfModSpawnedAt?: number;
+
+  // backups
+  lastBackupTick: number;
 }
 
 // ── Tick Types ──
