@@ -12,6 +12,7 @@
 import type { MemoryGraph } from "./memory/graph.js";
 import type { MemoryNode } from "./memory/types.js";
 import { createLogger } from "./logger.js";
+import { getNodeEmbedding, cosine } from "./memory/embeddings.js";
 
 const log = createLogger("sleep-consolidation");
 
@@ -71,9 +72,21 @@ export function detectConflicts(graph: MemoryGraph): ConflictPair[] {
       const sharedTags = a.tags.filter(t => b.tags.includes(t));
       if (sharedTags.length === 0) continue;
 
-      const similarity = tokenSimilarity(a.content, b.content);
+      const tokenSim = tokenSimilarity(a.content, b.content);
 
-      // Near-duplicate: very high similarity
+      // Semantic similarity via embeddings — catches conflicts that share meaning but not words
+      // e.g. "Gillis works at NewStory" vs "Gillis joined Company X"
+      let semanticSim = 0;
+      const embA = getNodeEmbedding(a.id);
+      const embB = getNodeEmbedding(b.id);
+      if (embA && embB) {
+        semanticSim = cosine(embA, embB);
+      }
+
+      // Combined similarity: use the higher of token or semantic similarity
+      const similarity = Math.max(tokenSim, semanticSim);
+
+      // Near-duplicate: very high similarity (token or semantic)
       if (similarity > 0.7) {
         pairs.push({
           nodeA: a,
@@ -94,6 +107,18 @@ export function detectConflicts(graph: MemoryGraph): ConflictPair[] {
           nodeB: b,
           conflictType: "contradiction",
           similarity,
+        });
+        continue;
+      }
+
+      // Semantic near-miss: high embedding similarity with shared tags but low token overlap
+      // These are likely about the same topic with different wording — potential contradictions
+      if (semanticSim > 0.6 && tokenSim < 0.4 && sharedTags.length >= 1) {
+        pairs.push({
+          nodeA: a,
+          nodeB: b,
+          conflictType: "contradiction",
+          similarity: semanticSim,
         });
         continue;
       }

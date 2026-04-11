@@ -291,6 +291,13 @@ export async function thinkTick(
         if (current.uselessRetrievalCount && current.uselessRetrievalCount > 0) {
           current.uselessRetrievalCount = Math.max(0, current.uselessRetrievalCount - 1);
         }
+        // Importance boosting: consistently-referenced nodes earn durable importance
+        // accessCount tracks total retrievals; if referenced often enough, bump importance
+        // This is the durable signal that resists decay (unlike strength which is ephemeral)
+        if (current.accessCount >= 5 && (current.importance ?? 0) < 0.9) {
+          const importanceBoost = 0.02; // small per-reference, compounds over time
+          current.importance = Math.min(0.9, (current.importance ?? 0.3) + importanceBoost);
+        }
       } else {
         // In context but not referenced — minimal reinforcement + track
         current.strength = Math.min(1, current.strength + 0.01);
@@ -306,6 +313,9 @@ export async function thinkTick(
     if (response.workingMemory) {
       updateWorkingMemory(wm, response.workingMemory);
       wm.activatedNodeIds = contextNodes.slice(0, 10).map(n => n.id);
+      // Update daily temporal summary with latest context
+      const { updateDailySummary } = await import("./memory/working-memory.js");
+      updateDailySummary(wm);
       saveWorkingMemory(wm);
     }
 
@@ -537,6 +547,24 @@ export async function consolidateTick(
     log(`Temporal pattern analysis error (non-fatal): ${err}`);
   }
 
+  // Compile weekly temporal summaries from daily entries
+  try {
+    const { compileWeeklySummary } = await import("./memory/working-memory.js");
+    compileWeeklySummary(wm);
+    saveWorkingMemory(wm);
+  } catch (err) {
+    log(`Weekly summary compilation error (non-fatal): ${err}`);
+  }
+
+  // Rebuild structured person profiles from graph state
+  try {
+    const { rebuildPersonProfiles } = await import("./memory/person-profiles.js");
+    const profiles = rebuildPersonProfiles(graph);
+    log(`Person profiles: rebuilt ${profiles.length} profiles`);
+  } catch (err) {
+    log(`Person profile rebuild error (non-fatal): ${err}`);
+  }
+
   if (decayResult.uncapturedSignals.length > 0) {
     log(`Consolidate audit: ${decayResult.uncapturedSignals.length} uncaptured signals found in observation logs`);
   }
@@ -756,6 +784,18 @@ export async function reflectTick(
     log(`Drift audit error (non-fatal): ${err}`);
   }
 
+  // Load person profiles for reflect context
+  let personProfilesSection: string | undefined;
+  try {
+    const { loadPersonProfiles, serializeProfilesForPrompt } = await import("./memory/person-profiles.js");
+    const profiles = loadPersonProfiles();
+    if (profiles.length > 0) {
+      personProfilesSection = serializeProfilesForPrompt(profiles);
+    }
+  } catch (err) {
+    log(`Person profile loading error (non-fatal): ${err}`);
+  }
+
   log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals, ${recentMoltbookActivity.length} moltbook items, ${recentOutgoingActivity.length} outgoing conversations (${recentOutgoingFlat.length} msgs)`);
 
   const prompt = buildReflectPrompt({
@@ -777,6 +817,7 @@ export async function reflectTick(
     recentMoltbookActivity,
     recentOutgoingActivity,
     driftSummary,
+    personProfilesSection,
   });
 
   const reflectPromptChars = prompt.length;
