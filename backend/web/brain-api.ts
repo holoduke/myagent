@@ -1,6 +1,7 @@
 import { IncomingMessage, ServerResponse } from "http";
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync, openSync, readSync, closeSync } from "fs";
 import { spawn } from "child_process";
+import { listWorkerLogs, openWorkerLog, WORKER_LOGS_DIR } from "../worker-logs.js";
 import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS, CHARACTER_PRESETS } from "../brain-config.js";
 import { resetConsecutiveFailures } from "../brain.js";
 import { getDefaultDetectionPrompt } from "../prompt-detector.js";
@@ -497,8 +498,9 @@ export function handleBrainRoutes(
           tools: agent.tools,
           timeout: agent.timeout,
         }, null, 2));
+        const logFd = openWorkerLog(`sub-agent-${id}-${Date.now()}`);
         const child = spawn("npx", ["tsx", "backend/sub-agent-worker.ts", id], {
-          detached: true, stdio: "ignore", cwd: "/app", env: { ...process.env },
+          detached: true, stdio: ["ignore", logFd, logFd], cwd: "/app", env: { ...process.env },
         });
         markRunning(id, child.pid);
         child.unref();
@@ -508,7 +510,90 @@ export function handleBrainRoutes(
     return true;
   }
 
+  // -- Worker Logs --
+  if (pathname === "/api/worker-logs" && req.method === "GET" && isAuthenticated(req)) {
+    const logs = listWorkerLogs();
+    respondJson(res, 200, logs);
+    return true;
+  }
+
+  const workerLogStreamMatch = pathname.match(/^\/api\/worker-logs\/([^/]+)\/stream$/);
+  if (workerLogStreamMatch && req.method === "GET" && isAuthenticated(req)) {
+    const id = workerLogStreamMatch[1].replace(/[^a-zA-Z0-9_-]/g, "_");
+    handleWorkerLogStream(req, res, id);
+    return true;
+  }
+
+  const workerLogRawMatch = pathname.match(/^\/api\/worker-logs\/([^/]+)$/);
+  if (workerLogRawMatch && req.method === "GET" && isAuthenticated(req)) {
+    const id = workerLogRawMatch[1].replace(/[^a-zA-Z0-9_-]/g, "_");
+    const logPath = `${WORKER_LOGS_DIR}/${id}.log`;
+    if (!existsSync(logPath)) {
+      respondJson(res, 404, { error: "Log not found" });
+    } else {
+      const content = readFileSync(logPath, "utf-8");
+      respondJson(res, 200, { id, content, size: content.length });
+    }
+    return true;
+  }
+
   return false;
+}
+
+// -- Worker Log SSE streaming handler --
+
+function handleWorkerLogStream(req: IncomingMessage, res: ServerResponse, logId: string): void {
+  const logPath = `${WORKER_LOGS_DIR}/${logId}.log`;
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  // Send existing content first
+  let offset = 0;
+  if (existsSync(logPath)) {
+    const existing = readFileSync(logPath, "utf-8");
+    if (existing.length > 0) {
+      res.write(`data: ${JSON.stringify({ type: "content", text: existing })}\n\n`);
+      offset = Buffer.byteLength(existing, "utf-8");
+    }
+  }
+
+  // Poll for new content every 500ms
+  const interval = setInterval(() => {
+    try {
+      if (!existsSync(logPath)) return;
+      const stats = statSync(logPath);
+      if (stats.size > offset) {
+        const fd = openSync(logPath, "r");
+        const buf = Buffer.alloc(stats.size - offset);
+        readSync(fd, buf, 0, buf.length, offset);
+        closeSync(fd);
+        offset = stats.size;
+        const text = buf.toString("utf-8");
+        if (text) {
+          res.write(`data: ${JSON.stringify({ type: "delta", text })}\n\n`);
+        }
+      }
+    } catch { /* file might not exist yet */ }
+  }, 500);
+
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded) res.write(`:heartbeat\n\n`);
+  }, 15000);
+
+  req.on("close", () => {
+    clearInterval(interval);
+    clearInterval(heartbeat);
+  });
+
+  res.on("close", () => {
+    clearInterval(interval);
+    clearInterval(heartbeat);
+  });
 }
 
 // -- Sub-Agent handlers --
