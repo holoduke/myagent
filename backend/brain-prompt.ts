@@ -4,7 +4,7 @@ import type { MemoryGraph } from "./memory/graph.js";
 import { serializeNodesForPrompt } from "./memory/activation.js";
 import { ariaPersonality } from "./aria-identity.js";
 import type { CharacterOverride } from "./aria-identity.js";
-import { getBrainConfig, getCharacterPreset } from "./brain-config.js";
+import { getBrainConfig, getCharacterPreset, getOwnerLocalTime } from "./brain-config.js";
 import type { InitiativeSignal } from "./initiative.js";
 import { sanitizeForPrompt, detectInjection } from "./trust.js";
 import { extractAndClassifyCommitments } from "./commitments.js";
@@ -591,6 +591,7 @@ export interface ThinkContext {
   maxMessagesPerDay: number;
   quietStart: number;
   quietEnd: number;
+  ownerTimezone: string;
   goalsSection?: string;
   initiativeSignals?: InitiativeSignal[];
   responsivenessPreset?: string | null;
@@ -607,8 +608,15 @@ export interface ThinkContext {
 export function buildThinkPrompt(ctx: ThinkContext): string {
   const now = new Date();
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const currentHour = now.getHours();
-  const isQuiet = currentHour >= ctx.quietStart || currentHour < ctx.quietEnd;
+  const { hour: currentHour } = getOwnerLocalTime(ctx.ownerTimezone, now);
+  const isQuiet = ctx.quietStart !== ctx.quietEnd && (
+    ctx.quietStart > ctx.quietEnd
+      ? (currentHour >= ctx.quietStart || currentHour < ctx.quietEnd)
+      : (currentHour >= ctx.quietStart && currentHour < ctx.quietEnd)
+  );
+  // Digests bypass quiet hours — they're explicitly scheduled for this time
+  const hasDigestRequest = ctx.observations.some(o => o.text.startsWith("[DIGEST REQUEST:"));
+  const effectivelyQuiet = isQuiet && !hasDigestRequest;
 
   const goalsBlock = ctx.goalsSection
     ? `\n═══ ACTIVE GOALS ═══\n${ctx.goalsSection}\n`
@@ -633,7 +641,7 @@ Time: ${now.toISOString()} (${dayNames[now.getDay()]}, ${formatTime(Date.now())}
 Last think: ${timeAgo(ctx.lastThinkTime)}
 Last message to ${ctx.ownerName}: ${timeAgo(ctx.lastMessageTime)}
 Messages today: ${ctx.messagesToday}/${ctx.maxMessagesPerDay}
-Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — do NOT message" : "inactive"})
+Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${effectivelyQuiet ? "ACTIVE — do NOT message" : hasDigestRequest && isQuiet ? "active but DIGEST SCHEDULED — send the briefing" : "inactive"})
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
@@ -714,7 +722,7 @@ THINKING GUIDELINES:
   2. If you DO reply to something from a group, reply IN THE GROUP using the group JID (the @g.us address), NEVER as a DM to the individual person. Sending a DM about group context is confusing and unwanted.
   3. Even if something seems helpful, if nobody asked you — stay quiet. Observe and update memory only.
 - Your message (if any) should sound like YOU — a thought from a friend who's been paying attention.
-- ${isQuiet ? "QUIET HOURS — set message to null, no exceptions." : `Min 2h between messages (last was ${timeAgo(ctx.lastMessageTime)}).`}
+- ${effectivelyQuiet ? "QUIET HOURS — set message to null, no exceptions." : hasDigestRequest && isQuiet ? "Quiet hours active but a DIGEST is scheduled — you MUST send the briefing." : `Min 2h between messages (last was ${timeAgo(ctx.lastMessageTime)}).`}
 - Max ${ctx.maxMessagesPerDay} messages/day (sent ${ctx.messagesToday} today).
 ${ctx.selfImproveStats?.enabled ? `
 SELF-IMPROVEMENT (optional during think ticks):
@@ -903,6 +911,7 @@ export interface ReflectContext {
   maxMessagesPerDay: number;
   quietStart: number;
   quietEnd: number;
+  ownerTimezone: string;
   goalsSection?: string;
   initiativeSignals?: InitiativeSignal[];
   responsivenessPreset?: string | null;
@@ -926,8 +935,12 @@ export interface ReflectContext {
 export function buildReflectPrompt(ctx: ReflectContext): string {
   const now = new Date();
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const currentHour = now.getHours();
-  const isQuiet = currentHour >= ctx.quietStart || currentHour < ctx.quietEnd;
+  const { hour: currentHour } = getOwnerLocalTime(ctx.ownerTimezone, now);
+  const isQuiet = ctx.quietStart !== ctx.quietEnd && (
+    ctx.quietStart > ctx.quietEnd
+      ? (currentHour >= ctx.quietStart || currentHour < ctx.quietEnd)
+      : (currentHour >= ctx.quietStart && currentHour < ctx.quietEnd)
+  );
 
   const goalsBlock = ctx.goalsSection
     ? `\n═══ ACTIVE GOALS ═══\n${ctx.goalsSection}\n`

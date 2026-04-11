@@ -1,5 +1,5 @@
 import { FileStore } from "./utils/file-store.js";
-import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
+import { getBrainConfig, getOwnerLocalTime, getOwnerLocalDate } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 import { BRAIN_DIR } from "./config.js";
 
@@ -129,15 +129,8 @@ export function validatePattern(pattern: RecurringTask["pattern"]): void {
 
 // ── Scheduling Logic ──
 
-const MIN_RUN_INTERVAL = 50 * 60 * 1000; // 50 minutes minimum between runs
-
 export function isDue(task: RecurringTask, now: Date): boolean {
   if (!task.enabled) return false;
-
-  // Enforce minimum interval since last run
-  if (task.lastRunAt > 0 && (now.getTime() - task.lastRunAt) < MIN_RUN_INTERVAL) {
-    return false;
-  }
 
   // Use owner's timezone so recurring tasks fire at local time (e.g. 8am CET, not 8 UTC)
   const cfg = getBrainConfig();
@@ -148,6 +141,18 @@ export function isDue(task: RecurringTask, now: Date): boolean {
 
   // Check day match (if specified)
   if (task.pattern.daysOfWeek && !task.pattern.daysOfWeek.includes(currentDay)) return false;
+
+  // Same-window dedup: skip if already ran during this hour+day in the owner's timezone.
+  // This prevents double execution when ticks happen multiple times within the same hour.
+  if (task.lastRunAt > 0) {
+    const lastRunDate = new Date(task.lastRunAt);
+    const { hour: lastRunHour } = getOwnerLocalTime(cfg.ownerTimezone, lastRunDate);
+    const lastRunDay = getOwnerLocalDate(cfg.ownerTimezone, lastRunDate);
+    const todayDate = getOwnerLocalDate(cfg.ownerTimezone, now);
+    if (lastRunHour === currentHour && lastRunDay === todayDate) {
+      return false;
+    }
+  }
 
   return true;
 }
