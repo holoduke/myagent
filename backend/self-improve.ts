@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { readFileSync, existsSync, unlinkSync } from "fs";
 import { safeReadJSON, atomicWriteJSON } from "./utils/file-store.js";
 import { execSync } from "child_process";
-import { askClaude } from "./claude.js";
+import { askClaudeStreaming } from "./claude.js";
 import { getBrainConfig } from "./brain-config.js";
 import { MemoryGraph } from "./memory/graph.js";
 import { buildImprovementPrompt, buildRecoveryPrompt } from "./self-improve-prompt.js";
@@ -114,7 +114,9 @@ async function runImprove(): Promise<void> {
   const prompt = buildImprovementPrompt(task, memoryNodes);
 
   try {
-    const result = await askClaude(prompt, {
+    const result = await askClaudeStreaming(prompt, (delta) => {
+      process.stdout.write(delta);
+    }, {
       timeout: 600_000,
       allowedTools: WORKER_TOOLS,
       noSession: true,
@@ -196,7 +198,9 @@ async function runRecover(): Promise<void> {
     const prompt = buildRecoveryPrompt(logs, recentChanges, lastGoodCommit);
 
     try {
-      const result = await askClaude(prompt, {
+      const result = await askClaudeStreaming(prompt, (delta) => {
+        process.stdout.write(delta);
+      }, {
         timeout: 600_000,
         allowedTools: WORKER_TOOLS,
         noSession: true,

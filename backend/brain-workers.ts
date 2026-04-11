@@ -6,6 +6,7 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
 import { spawn } from "child_process";
 import { createLogger } from "./logger.js";
+import { openWorkerLog, pruneWorkerLogs } from "./worker-logs.js";
 import type { BrainState } from "./memory/types.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import {
@@ -44,9 +45,11 @@ const SUB_AGENT_STALE_TIMEOUT = 20 * 60 * 1000; // 20 minutes
 function spawnSelfImproveWorker(): void {
   log("Spawning self-improve worker as detached process");
   try {
+    pruneWorkerLogs();
+    const logFd = openWorkerLog(`self-improve-${Date.now()}`);
     const child = spawn("npx", ["tsx", "backend/self-improve.ts"], {
       detached: true,
-      stdio: "ignore",
+      stdio: ["ignore", logFd, logFd],
       cwd: "/app",
       env: { ...process.env },
     });
@@ -284,9 +287,10 @@ export function pickUpSubAgentResults(): void {
 }
 
 function spawnSubAgentWorker(agentId: string): void {
+  const logFd = openWorkerLog(`sub-agent-${agentId}-${Date.now()}`);
   const child = spawn("npx", ["tsx", "backend/sub-agent-worker.ts", agentId], {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", logFd, logFd],
     cwd: "/app",
     env: { ...process.env },
   });

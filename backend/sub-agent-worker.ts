@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
-import { askClaude } from "./claude.js";
+import { askClaudeStreaming } from "./claude.js";
 import type { SubAgentTask, SubAgentResult } from "./sub-agents.js";
 import { createLogger } from "./logger.js";
 import { BRAIN_DIR } from "./config.js";
@@ -110,7 +110,9 @@ Output ONLY a JSON object with your results (no markdown code fences):
 }`;
 
   try {
-    const result = await askClaude(prompt, {
+    const result = await askClaudeStreaming(prompt, (delta) => {
+      process.stdout.write(delta);
+    }, {
       timeout: task.timeout || 300_000,
       allowedTools: task.tools,
       noSession: true,
