@@ -252,6 +252,15 @@ export async function semanticSearchDiverse(
 }
 
 /**
+ * Get the cached embedding for a node (if it exists).
+ * Returns null if no embedding is stored for this node.
+ */
+export function getNodeEmbedding(nodeId: string): number[] | null {
+  const cache = loadEmbeddings();
+  return cache.get(nodeId) ?? null;
+}
+
+/**
  * Remove embedding for a node (e.g., when node is archived/removed).
  */
 export function removeEmbedding(nodeId: string): void {

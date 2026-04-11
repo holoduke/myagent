@@ -1,5 +1,5 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
-import type { WorkingMemory, PendingFollowUp, ConversationThread, TemporalContext } from "./types.js";
+import type { WorkingMemory, PendingFollowUp, ConversationThread, TemporalContext, TemporalSummaries } from "./types.js";
 import type { Observation } from "../observer.js";
 import { getBrainConfig, getOwnerLocalTime, getOwnerLocalDate } from "../brain-config.js";
 import { extractKeywordsFromText } from "./activation.js";
@@ -241,5 +241,81 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
       return b.lastMessageAt - a.lastMessageAt;
     });
     wm.conversationThreads = wm.conversationThreads.slice(0, 20);
+  }
+}
+
+// ── Hierarchical Temporal Summaries ──
+
+const MAX_DAILY_SUMMARIES = 14;   // Keep 2 weeks of daily summaries
+const MAX_WEEKLY_SUMMARIES = 12;  // Keep 3 months of weekly summaries
+
+/** Get the Monday of the week containing the given date (ISO week) */
+function getWeekStart(date: Date): string {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday
+  d.setDate(diff);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Update the daily summary for today. Called at the end of each think tick.
+ * The summary is a one-line compressed version of currentContext.
+ */
+export function updateDailySummary(wm: WorkingMemory): void {
+  if (!wm.temporalSummaries) {
+    wm.temporalSummaries = { daily: {}, weekly: {} };
+  }
+
+  const today = wm.temporal?.date || new Date().toISOString().slice(0, 10);
+  // Compress currentContext to a one-liner (first 200 chars)
+  if (wm.currentContext) {
+    wm.temporalSummaries.daily[today] = wm.currentContext.slice(0, 200);
+  }
+
+  // Prune old daily summaries beyond retention window
+  const dailyKeys = Object.keys(wm.temporalSummaries.daily).sort();
+  if (dailyKeys.length > MAX_DAILY_SUMMARIES) {
+    for (const key of dailyKeys.slice(0, dailyKeys.length - MAX_DAILY_SUMMARIES)) {
+      delete wm.temporalSummaries.daily[key];
+    }
+  }
+}
+
+/**
+ * Compile a weekly summary from daily summaries. Called during consolidation.
+ * Takes the daily summaries for the completed week and compresses them into one entry.
+ */
+export function compileWeeklySummary(wm: WorkingMemory): void {
+  if (!wm.temporalSummaries) {
+    wm.temporalSummaries = { daily: {}, weekly: {} };
+  }
+
+  const today = new Date();
+  const thisWeekStart = getWeekStart(today);
+  const dailyKeys = Object.keys(wm.temporalSummaries.daily).sort();
+
+  // Find daily entries from completed weeks (before this week)
+  const pastWeekDays = new Map<string, string[]>();
+  for (const key of dailyKeys) {
+    const weekStart = getWeekStart(new Date(key));
+    if (weekStart >= thisWeekStart) continue; // skip current week
+    if (!pastWeekDays.has(weekStart)) pastWeekDays.set(weekStart, []);
+    pastWeekDays.get(weekStart)!.push(wm.temporalSummaries.daily[key]);
+  }
+
+  // Create weekly summaries for completed weeks
+  for (const [weekStart, dailies] of pastWeekDays) {
+    if (wm.temporalSummaries.weekly[weekStart]) continue; // already compiled
+    // Combine daily summaries, truncate to 300 chars
+    wm.temporalSummaries.weekly[weekStart] = dailies.join(" | ").slice(0, 300);
+  }
+
+  // Prune old weekly summaries
+  const weeklyKeys = Object.keys(wm.temporalSummaries.weekly).sort();
+  if (weeklyKeys.length > MAX_WEEKLY_SUMMARIES) {
+    for (const key of weeklyKeys.slice(0, weeklyKeys.length - MAX_WEEKLY_SUMMARIES)) {
+      delete wm.temporalSummaries.weekly[key];
+    }
   }
 }

@@ -326,6 +326,20 @@ function formatWorkingMemory(wm: WorkingMemory): string {
     }
   }
 
+  // Hierarchical temporal summaries — compressed history for reflect ticks
+  if (wm.temporalSummaries) {
+    const dailyEntries = Object.entries(wm.temporalSummaries.daily || {}).sort().slice(-7);
+    if (dailyEntries.length > 0) {
+      const dailyLines = dailyEntries.map(([date, summary]) => `  ${date}: ${summary}`);
+      parts.push(`Recent days:\n${dailyLines.join("\n")}`);
+    }
+    const weeklyEntries = Object.entries(wm.temporalSummaries.weekly || {}).sort().slice(-4);
+    if (weeklyEntries.length > 0) {
+      const weeklyLines = weeklyEntries.map(([week, summary]) => `  w/${week}: ${summary}`);
+      parts.push(`Recent weeks:\n${weeklyLines.join("\n")}`);
+    }
+  }
+
   if (parts.length === 0) return "(empty — first awakening)";
   return parts.join("\n");
 }
@@ -905,6 +919,8 @@ export interface ReflectContext {
   recentOutgoingActivity?: { source: string; audience: string; messageCount: number; latestSnippet: string; texts: string[] }[];
   /** Weekly drift audit summary, if available */
   driftSummary?: string;
+  /** Structured person profiles for relationship reasoning */
+  personProfilesSection?: string;
 }
 
 export function buildReflectPrompt(ctx: ReflectContext): string {
@@ -972,7 +988,7 @@ By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(",
 
 ═══ STRONGEST MEMORIES ═══
 ${serializeNodesForPrompt(ctx.strongestNodes, ctx.graph)}
-${selfImproveBlock}
+${ctx.personProfilesSection ? `\n═══ PERSON PROFILES ═══\n${ctx.personProfilesSection}\n` : ""}${selfImproveBlock}
 ${driftBlock}
 ${OPERATION_INSTRUCTIONS}
 ═══ WHAT TO DO ═══

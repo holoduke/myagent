@@ -118,6 +118,14 @@ export interface TemporalContext {
   upcomingEvents: string[];
 }
 
+/** Hierarchical temporal summaries — compressed history at multiple time scales */
+export interface TemporalSummaries {
+  /** One-line summary per day, keyed by ISO date (e.g. "2026-04-10") */
+  daily: Record<string, string>;
+  /** One-line summary per week, keyed by ISO week start date (Monday) */
+  weekly: Record<string, string>;
+}
+
 export interface WorkingMemory {
   currentContext: string;
   mood: string;
@@ -128,6 +136,7 @@ export interface WorkingMemory {
   pendingFollowUps: PendingFollowUp[];
   conversationThreads: ConversationThread[];
   temporal: TemporalContext;
+  temporalSummaries?: TemporalSummaries;
 }
 
 // ── Brain State ──
