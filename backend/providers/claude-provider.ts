@@ -129,6 +129,7 @@ export class ClaudeProvider extends BaseProvider {
       const nodeId = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
 
       const graph = new MemoryGraph();
+      graph.load();
       graph.addNode({
         id: nodeId,
         type: "meta",
