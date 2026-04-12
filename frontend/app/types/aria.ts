@@ -454,6 +454,24 @@ export interface ContactRequest {
   resolutionNote?: string
 }
 
+// ── Backup Types ──
+
+export interface BackupMeta {
+  timestamp: number
+  date: string
+  nodeCount: number
+  edgeCount: number
+  archiveCount: number
+  ghostCount: number
+  totalSizeBytes: number
+  createdBy: 'auto' | 'manual'
+}
+
+export interface BackupDetail extends BackupMeta {
+  nodeTypeBreakdown: Record<string, number>
+  pinnedNodes: { id: string; type: string; content: string }[]
+}
+
 // ── Brain Dashboard Types ──
 
 export interface RecurringTask {

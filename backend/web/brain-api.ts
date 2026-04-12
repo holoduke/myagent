@@ -41,6 +41,13 @@ import { isAuthenticated } from "./auth.js";
 import { respondJson, apiHandler, apiGetHandler, ApiError } from "../utils/api-helpers.js";
 import { createLogger } from "../logger.js";
 import { BRAIN_DIR } from "../config.js";
+import {
+  createBackup,
+  listBackups,
+  getBackup,
+  restoreBackup,
+  deleteBackup,
+} from "../memory/backup.js";
 
 const log = createLogger("web");
 
@@ -375,6 +382,46 @@ export function handleBrainRoutes(
     const nodeId = sanitizeId(pathname.split("/")[4]);
     handleBrainGoalAction(res, nodeId, "abandon");
     return true;
+  }
+
+  // -- Memory backups CRUD --
+  if (pathname === "/api/brain/backups" && isAuthenticated(req)) {
+    if (req.method === "GET") {
+      respondJson(res, 200, listBackups());
+      return true;
+    }
+    if (req.method === "POST") {
+      handleBackupCreate(req, res);
+      return true;
+    }
+  }
+
+  if (pathname.match(/^\/api\/brain\/backups\/[^/]+\/restore$/) && req.method === "POST" && isAuthenticated(req)) {
+    const ts = sanitizeId(pathname.split("/")[4]);
+    handleBackupRestore(req, res, ts);
+    return true;
+  }
+
+  if (pathname.match(/^\/api\/brain\/backups\/[^/]+$/) && isAuthenticated(req)) {
+    const ts = sanitizeId(pathname.split("/")[4]);
+    if (req.method === "GET") {
+      const detail = getBackup(ts);
+      if (!detail) {
+        respondJson(res, 404, { error: "Backup not found" });
+      } else {
+        respondJson(res, 200, detail);
+      }
+      return true;
+    }
+    if (req.method === "DELETE") {
+      try {
+        deleteBackup(ts);
+        respondJson(res, 200, { ok: true });
+      } catch (err) {
+        respondJson(res, 400, { error: err instanceof Error ? err.message : "Delete failed" });
+      }
+      return true;
+    }
   }
 
   // -- Brain signals (read-only) --
@@ -765,6 +812,21 @@ function handleBrainGoalAction(res: ServerResponse, nodeId: string, action: "com
   } catch (err) {
     log(`Goal ${action} error: ${err}`);
     respondJson(res, 400, { error: "Invalid request" });
+  }
+}
+
+// -- Backup handlers --
+
+const handleBackupCreate = apiGetHandler(() => {
+  return createBackup("manual");
+});
+
+function handleBackupRestore(_req: IncomingMessage, res: ServerResponse, ts: string) {
+  try {
+    restoreBackup(ts);
+    respondJson(res, 200, { ok: true });
+  } catch (err) {
+    respondJson(res, 400, { error: err instanceof Error ? err.message : "Restore failed" });
   }
 }
 

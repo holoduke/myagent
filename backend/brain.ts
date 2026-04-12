@@ -27,6 +27,7 @@ import { BrainError, wrapError } from "./brain-errors.js";
 import { getBrainConfig, getOwnerLocalDate, getOwnerLocalTime } from "./brain-config.js";
 
 import { BRAIN_DIR, OWNER_NAME, GITHUB_REPO } from "./config.js";
+import { createBackup, shouldRunBackup, BACKUP_INTERVAL } from "./memory/backup.js";
 
 // ── Extracted modules ──
 import { thinkTick, consolidateTick, reflectTick } from "./brain-ticks.js";
@@ -86,6 +87,7 @@ function defaultState(): BrainState {
     consecutiveFailures: 0,
     lastSuccessfulTick: 0,
     pendingSelfMod: false,
+    lastBackupTick: 0,
   };
 }
 
@@ -696,6 +698,17 @@ async function tick(
 
   // Track cost delta for hourly stats
   hourlyStats.costUsd += Math.max(0, freshState.totalCost - prevCost);
+
+  // ── Daily backup check ──
+  if (shouldRunBackup(freshState.lastBackupTick ?? 0)) {
+    try {
+      createBackup("auto");
+      freshState.lastBackupTick = Date.now();
+      log("Daily memory backup completed");
+    } catch (err) {
+      log(`Daily backup failed: ${err}`);
+    }
+  }
 
   saveState(freshState);
   graph.save();
