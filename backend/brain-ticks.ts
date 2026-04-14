@@ -78,6 +78,7 @@ export function parseBrainResponse(raw: string): BrainResponse | null {
       workingMemory: parsed.workingMemory ?? undefined,
       goalOps: Array.isArray(parsed.goalOps) ? parsed.goalOps : undefined,
       improvementProposals: Array.isArray(parsed.improvementProposals) ? parsed.improvementProposals : undefined,
+      consciousnessUpdate: typeof parsed.consciousnessUpdate === "string" ? parsed.consciousnessUpdate : undefined,
     };
   } catch (err) {
     log(`Failed to parse brain response: ${raw.slice(0, 200)} — ${err}`);
@@ -318,6 +319,17 @@ export async function thinkTick(
       const { updateDailySummary } = await import("./memory/working-memory.js");
       updateDailySummary(wm);
       saveWorkingMemory(wm);
+    }
+
+    // Persist consciousness state update
+    if (response.consciousnessUpdate) {
+      try {
+        const { saveConsciousness } = await import("./consciousness.js");
+        saveConsciousness(response.consciousnessUpdate);
+        log(`Consciousness updated (${response.consciousnessUpdate.length} chars)`);
+      } catch (err) {
+        log(`Consciousness save error (non-fatal): ${err}`);
+      }
     }
 
     if (response.improvementProposals?.length) {
@@ -880,6 +892,17 @@ export async function reflectTick(
 
     if (response.improvementProposals?.length) {
       enqueueImprovementProposals(response.improvementProposals, "reflect", cfg);
+    }
+
+    // Persist consciousness state update (reflect is deep self-reflection — ideal for evolution)
+    if (response.consciousnessUpdate) {
+      try {
+        const { saveConsciousness } = await import("./consciousness.js");
+        saveConsciousness(response.consciousnessUpdate);
+        log(`Reflect consciousness updated (${response.consciousnessUpdate.length} chars)`);
+      } catch (err) {
+        log(`Reflect consciousness save error (non-fatal): ${err}`);
+      }
     }
 
     if (response.workingMemory) {
