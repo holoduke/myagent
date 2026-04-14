@@ -138,9 +138,9 @@ async function handleUpdate(req: IncomingMessage, res: ServerResponse, id: strin
     const existing = getProvider(id);
     if (!existing) throw new ApiError(404, "Provider not found");
 
-    if (data.name !== undefined) existing.name = data.name as string;
-    if (data.config !== undefined) existing.config = data.config as Record<string, unknown>;
-    if (data.isDefault !== undefined) existing.isDefault = data.isDefault as boolean;
+    if (data.name !== undefined && typeof data.name === "string") existing.name = data.name;
+    if (data.config !== undefined && typeof data.config === "object" && data.config !== null) existing.config = data.config as Record<string, unknown>;
+    if (data.isDefault !== undefined && typeof data.isDefault === "boolean") existing.isDefault = data.isDefault;
 
     saveProvider(existing);
     if (existing.isDefault) setDefault(id);

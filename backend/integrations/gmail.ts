@@ -110,13 +110,13 @@ export function createOAuth2Client(account: GmailAccount): OAuth2Client {
   return client;
 }
 
-export function getAuthUrl(account: GmailAccount): string {
+export function getAuthUrl(account: GmailAccount, state?: string): string {
   const client = createOAuth2Client(account);
   return client.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
     scope: SCOPES,
-    state: account.id,
+    state: state || account.id,
   });
 }
 
@@ -391,11 +391,15 @@ export async function sendEmail(
 
   const gmail = getGmailClient(account);
 
+  // Sanitize headers to prevent header injection via \r\n
+  const safeTo = to.replace(/[\r\n]/g, "");
+  const safeSubject = subject.replace(/[\r\n]/g, "");
+
   // Build RFC 2822 email
   const emailLines = [
-    `To: ${to}`,
+    `To: ${safeTo}`,
     `From: ${account.email}`,
-    `Subject: ${subject}`,
+    `Subject: ${safeSubject}`,
     `Content-Type: text/plain; charset="UTF-8"`,
     "",
     body,

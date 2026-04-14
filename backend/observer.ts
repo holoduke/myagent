@@ -400,6 +400,9 @@ function getObservationsSinceTail(since: number, filter?: ObservationFilter, lim
     if (foundOlder) break;
   }
 
+  // Sort by timestamp to ensure correct order even with clock skew
+  results.sort((a, b) => a.timestamp - b.timestamp);
+
   // Apply limit (return the most recent N if limit is set)
   if (limit !== undefined && results.length > limit) {
     return results.slice(results.length - limit);

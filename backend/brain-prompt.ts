@@ -39,7 +39,8 @@ function resolveCharacter(): CharacterOverride | undefined {
 // ── Shared Helpers ──
 
 function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const tz = getBrainConfig().ownerTimezone;
+  return new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz });
 }
 
 function timeAgo(ts: number): string {

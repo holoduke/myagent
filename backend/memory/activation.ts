@@ -127,9 +127,9 @@ export function spreadingActivation(
   }
 
   // Spread through edges
+  const activationDecay = getBrainConfig().activationSpreadFactor;
   for (let hop = 0; hop < maxHops; hop++) {
-    const decay = getBrainConfig().activationSpreadFactor;
-    const spreadFactor = Math.pow(decay, hop + 1); // e.g. 0.6, 0.36, ...
+    const spreadFactor = Math.pow(activationDecay, hop + 1); // e.g. 0.6, 0.36, ...
     const currentIds = Array.from(activations.keys());
 
     for (const id of currentIds) {
