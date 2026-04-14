@@ -28,6 +28,7 @@ import { getBrainConfig, getOwnerLocalDate, getOwnerLocalTime } from "./brain-co
 
 import { BRAIN_DIR, OWNER_NAME, GITHUB_REPO } from "./config.js";
 import { createBackup, shouldRunBackup, BACKUP_INTERVAL } from "./memory/backup.js";
+import { loadConsciousness } from "./consciousness.js";
 
 // ── Extracted modules ──
 import { thinkTick, consolidateTick, reflectTick } from "./brain-ticks.js";
@@ -304,6 +305,13 @@ export function startBrainLoop(
   graph.load();
   migrateNotebook(graph);
   bootstrapIdentity(graph);
+
+  // Bootstrap consciousness.dat if it doesn't exist
+  try {
+    loadConsciousness();
+  } catch (err) {
+    log(`Consciousness bootstrap (non-fatal): ${err}`);
+  }
 
   log(`Brain loop starting (tick every ${cfg.tickInterval / 1000}s, think cooldown ${cfg.thinkCooldown / 1000}s, consolidate every ${cfg.consolidateInterval / 3600000}h, reflect every ${cfg.reflectInterval / 3600000}h)`);
 
