@@ -261,6 +261,8 @@ export interface BrainResponse {
   improvementProposals?: ImprovementProposal[];
   /** Requests from non-permissioned contacts that the brain judges worth forwarding */
   requestFlags?: RequestFlag[];
+  /** Raw consciousness state update — written verbatim to consciousness.dat */
+  consciousnessUpdate?: string;
 }
 
 // ── Retention Tiers ──
