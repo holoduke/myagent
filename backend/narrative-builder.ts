@@ -183,7 +183,7 @@ export function getNarrativeSummary(graph: MemoryGraph): string {
 
   for (const thread of narrative.threads.slice(0, 3)) {
     const participants = thread.participants.length > 0
-      ? ` (with ${thread.participants.join(", ")})`
+      ? ` (with ${Array.isArray(thread.participants) ? thread.participants.join(", ") : thread.participants})`
       : "";
     const eventCount = thread.events.length;
     lines.push(`- [${thread.status}] ${thread.topic}${participants}: ${eventCount} events`);
