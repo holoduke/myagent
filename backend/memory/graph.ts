@@ -1,4 +1,4 @@
-import { appendFileSync, statSync, renameSync } from "fs";
+import { appendFileSync, statSync, renameSync, readdirSync, unlinkSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { randomBytes } from "crypto";
 import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode, ArchivedEdge, GhostNode, WALEntry, WALOperationType } from "./types.js";
@@ -133,6 +133,22 @@ export class MemoryGraph {
           const rolled = `${WAL_FILE}.${Date.now()}.old`;
           renameSync(WAL_FILE, rolled);
           log(`WAL rolled: ${WAL_FILE} → ${rolled} (${stat.size} bytes)`);
+
+          // Cleanup old WAL files (keep only last 7 days)
+          const WAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+          try {
+            const files = readdirSync(GRAPH_DIR);
+            const now = Date.now();
+            for (const file of files) {
+              const match = file.match(/^wal\.jsonl\.(\d+)\.old$/);
+              if (match && now - Number(match[1]) > WAL_RETENTION_MS) {
+                unlinkSync(`${GRAPH_DIR}/${file}`);
+                log(`WAL cleanup: deleted old WAL file ${file}`);
+              }
+            }
+          } catch {
+            // cleanup failure is non-critical
+          }
         }
       } catch {
         // stat/rename failure is non-critical
@@ -283,6 +299,7 @@ export class MemoryGraph {
 
   addNode(node: MemoryNode): void {
     this.nodes.set(node.id, node);
+    this.walLog("add_node", { nodeId: node.id, meta: { type: node.type } });
 
     if (!this.byType.has(node.type)) this.byType.set(node.type, new Set());
     this.byType.get(node.type)!.add(node.id);
@@ -292,6 +309,9 @@ export class MemoryGraph {
       if (!this.byTag.has(key)) this.byTag.set(key, new Set());
       this.byTag.get(key)!.add(node.id);
     }
+
+    // Trigger async embedding
+    embedNode(node.id, node.content).catch(() => { /* non-critical */ });
   }
 
   getNode(id: string): MemoryNode | undefined {
@@ -302,6 +322,7 @@ export class MemoryGraph {
     const node = this.nodes.get(id);
     if (!node) return;
 
+    this.walLog("remove_node", { nodeId: id, meta: { type: node.type } });
     this.nodes.delete(id);
     // Phase 2: Clean up embedding
     removeEmbedding(id);
@@ -330,6 +351,7 @@ export class MemoryGraph {
   updateNode(id: string, updates: { content?: string; tags?: string[]; pinned?: boolean; importance?: number; confidence?: number; emotionalValence?: number; strength?: number }): void {
     const node = this.nodes.get(id);
     if (!node) return;
+    this.walLog("update_node", { nodeId: id, meta: { fields: Object.keys(updates) } });
 
     if (updates.content !== undefined) node.content = updates.content;
     if (updates.pinned !== undefined) node.pinned = updates.pinned;
@@ -379,9 +401,11 @@ export class MemoryGraph {
     this.edgesFromIdx.get(edge.from)!.push(edge);
     if (!this.edgesToIdx.has(edge.to)) this.edgesToIdx.set(edge.to, []);
     this.edgesToIdx.get(edge.to)!.push(edge);
+    this.walLog("add_edge", { edgeFrom: edge.from, edgeTo: edge.to, meta: { type: edge.type } });
   }
 
   removeEdge(from: string, to: string, type?: string): void {
+    this.walLog("remove_edge", { edgeFrom: from, edgeTo: to, meta: { type } });
     const match = (e: MemoryEdge) => e.from === from && e.to === to && (!type || e.type === type);
     this.edges = this.edges.filter(e => !match(e));
     const fromArr = this.edgesFromIdx.get(from);

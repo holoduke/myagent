@@ -292,9 +292,11 @@ export function startBrainLoop(
       log(`Urgency interrupt: suppressed (last interrupt ${Math.round((now - lastUrgencyInterruptTime) / 1000)}s ago, cooldown ${URGENCY_INTERRUPT_COOLDOWN / 1000}s)`);
       return;
     }
-    lastUrgencyInterruptTime = now;
+    // Only update timestamp after confirming tick actually ran (not skipped by tickLock)
     log(`Urgency interrupt TRIGGERED: score ${urgencyScore.toFixed(2)} — scheduling immediate tick`);
-    tick(queue, sendMessage, ownerJid).catch((err) => {
+    tick(queue, sendMessage, ownerJid).then(() => {
+      lastUrgencyInterruptTime = Date.now();
+    }).catch((err) => {
       log(`Urgency interrupt tick error: ${err}`);
     });
   }, cfg.urgencyInterruptThreshold);
@@ -639,7 +641,8 @@ async function tick(
       log("First successful tick — boot counter reset, last good commit saved");
     }
 
-    const selfModChanges = checkSelfMod();
+    // Only check for self-modification on consolidate/reflect ticks (not every think tick)
+    const selfModChanges = (tickType === "consolidate" || tickType === "reflect") ? checkSelfMod() : null;
     if (selfModChanges) {
       let alreadyTracked = false;
       try {

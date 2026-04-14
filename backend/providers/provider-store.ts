@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "fs";
-import { ensureDir } from "../utils/file-store.js";
+import { readFileSync, existsSync, readdirSync, unlinkSync } from "fs";
+import { ensureDir, atomicWriteFile } from "../utils/file-store.js";
 import { join } from "path";
 import type { ProviderProfile } from "./types.js";
 import { createLogger } from "../logger.js";
@@ -69,7 +69,7 @@ export function getProvider(id: string): ProviderProfile | null {
 export function saveProvider(profile: ProviderProfile): ProviderProfile {
   ensureProviderDir();
   profile.updatedAt = Date.now();
-  writeFileSync(profilePath(profile.id), JSON.stringify(profile, null, 2));
+  atomicWriteFile(profilePath(profile.id), JSON.stringify(profile, null, 2));
   log(`Saved provider: ${profile.id} (${profile.name})`);
   return profile;
 }

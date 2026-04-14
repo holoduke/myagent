@@ -9,7 +9,9 @@ const OT_DIR = "/data/owntracks";
 const STATE_FILE = `${OT_DIR}/state.json`;
 const OWNTRACKS_USER = process.env.OWNTRACKS_USER || "";
 const OWNTRACKS_DEVICE = process.env.OWNTRACKS_DEVICE || "";
+const OWNTRACKS_TOKEN = process.env.OWNTRACKS_TOKEN || "";
 const MIN_DISTANCE_METERS = 500;
+const MAX_OT_BODY_SIZE = 64 * 1024; // 64KB
 
 interface OwnTracksLocation {
   lat: number;
@@ -47,8 +49,28 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
 }
 
 export function handleOwnTracksWebhook(req: IncomingMessage, res: ServerResponse): void {
+  // Authenticate via shared secret token (standard OwnTracks approach)
+  if (OWNTRACKS_TOKEN) {
+    const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    const providedToken = req.headers["x-limit-u"] as string || url.searchParams.get("token") || "";
+    if (providedToken !== OWNTRACKS_TOKEN) {
+      log("OwnTracks webhook: unauthorized (invalid or missing token)");
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+  }
+
   let body = "";
+  let size = 0;
   req.on("data", (chunk: Buffer) => {
+    size += chunk.length;
+    if (size > MAX_OT_BODY_SIZE) {
+      req.destroy();
+      res.writeHead(413, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Payload too large" }));
+      return;
+    }
     body += chunk.toString();
   });
   req.on("end", () => {

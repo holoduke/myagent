@@ -1,7 +1,7 @@
-import { randomBytes, timingSafeEqual } from "crypto";
+import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import { IncomingMessage, ServerResponse } from "http";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { ensureDir } from "../utils/file-store.js";
+import { existsSync, readFileSync } from "fs";
+import { ensureDir, atomicWriteFile } from "../utils/file-store.js";
 import { dirname } from "path";
 import { createLogger } from "../logger.js";
 import { BRAIN_DIR, WEB_PASSWORD } from "../config.js";
@@ -39,7 +39,7 @@ function saveSessions(): void {
   try {
     ensureDir(dirname(SESSIONS_FILE));
     const entries = Array.from(activeSessions.entries());
-    writeFileSync(SESSIONS_FILE, JSON.stringify(entries));
+    atomicWriteFile(SESSIONS_FILE, JSON.stringify(entries));
   } catch (e) {
     log(`Failed to save sessions: ${e}`);
   }
@@ -95,8 +95,10 @@ function isRateLimited(): boolean {
 }
 
 function safeCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  // Hash both inputs first to prevent length leakage via timing
+  const hashA = createHash("sha256").update(a).digest();
+  const hashB = createHash("sha256").update(b).digest();
+  return timingSafeEqual(hashA, hashB);
 }
 
 const READ_BODY_TIMEOUT = 30_000; // 30 seconds
@@ -184,6 +186,8 @@ export async function handleLogin(req: IncomingMessage, res: ServerResponse): Pr
         "Content-Type": "application/json",
         "Set-Cookie": `session=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400`,
       });
+      // Token included in response body for Nuxt proxy (proxy doesn't forward Set-Cookie).
+      // The HttpOnly cookie is also set as defense-in-depth for direct backend access.
       res.end(JSON.stringify({ success: true, token }));
     } else {
       log("Login failed: wrong password");

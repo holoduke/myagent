@@ -76,13 +76,16 @@ export function scoreUrgency(obs: Observation): number {
 
   // Keyword matching — patterns are sorted by score descending, so once
   // we find a match we can break: no remaining pattern can beat it.
+  // Track keyword score separately to avoid DM base score suppressing lower keywords.
+  let keywordScore = 0;
   for (const { pattern, score: weight } of COMPILED_URGENCY_PATTERNS) {
-    if (weight <= score) break; // remaining patterns have equal or lower scores
+    if (weight <= keywordScore) break; // remaining patterns have equal or lower scores
     if (pattern.test(text)) {
-      score = weight;
+      keywordScore = weight;
       break;
     }
   }
+  score = Math.max(score, keywordScore);
 
   // Owner mentioned in group (word-boundary match to avoid substring false positives)
   if (obs.isGroup && OWNER_NAME_PATTERN.test(text)) {

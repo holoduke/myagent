@@ -143,6 +143,26 @@ async function pollAllFeeds(): Promise<void> {
 }
 
 export function addFeed(name: string, url: string): RSSFeed {
+  // Validate URL to prevent SSRF (only allow http/https, reject internal addresses)
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new Error(`Invalid protocol "${parsed.protocol}" — only http and https are allowed`);
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" ||
+        hostname === "0.0.0.0" || hostname.endsWith(".local") ||
+        hostname.startsWith("10.") || hostname.startsWith("192.168.") ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) {
+      throw new Error(`Internal/private addresses are not allowed as RSS feed URLs`);
+    }
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error(`Invalid URL: ${url}`);
+    }
+    throw err;
+  }
+
   ensureDir(RSS_DIR);
   const feeds = loadFeeds();
   const feed: RSSFeed = { id: randomUUID(), name, url, enabled: true };
