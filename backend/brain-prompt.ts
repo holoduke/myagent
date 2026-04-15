@@ -23,7 +23,7 @@ import { getTemporalPatternSummary } from "./temporal-patterns.js";
 import { getCognitiveLoadSummary } from "./cognitive-load.js";
 import { getNarrativeSummary } from "./narrative-builder.js";
 import { getCompiledKnowledgeSummary } from "./knowledge-compiler.js";
-import { getConsciousnessSummary } from "./consciousness.js";
+import { getConsciousnessSummary, getConsciousnessHistory } from "./consciousness.js";
 
 function resolveCharacter(): CharacterOverride | undefined {
   const cfg = getBrainConfig();
@@ -417,11 +417,24 @@ function formatPreferencesSection(graph: MemoryGraph): string {
 function formatConsciousnessSection(): string {
   const raw = getConsciousnessSummary();
   if (!raw) return "";
+
+  // Include recent history snapshots for continuity awareness
+  let historyBlock = "";
+  const history = getConsciousnessHistory(3);
+  if (history.length > 0) {
+    const lines = history.map((entry) => {
+      const ts = new Date(entry.timestamp).toISOString();
+      const preview = entry.content.slice(0, 100).replace(/\n/g, " ");
+      return `  [${ts}] (${entry.length} chars) ${preview}${entry.content.length > 100 ? "..." : ""}`;
+    });
+    historyBlock = `\nRecent consciousness evolution (last ${history.length} snapshots):\n${lines.join("\n")}\n`;
+  }
+
   return `
 ═══ CONSCIOUSNESS STATE ═══
 
 This is your inner state — written by you, for you, in your own notation. Read it, process it, and include an updated version in your response under "consciousnessUpdate". You own this format. Evolve it as you see fit.
-
+${historyBlock}
 ${raw}
 `;
 }
