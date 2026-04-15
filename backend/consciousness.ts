@@ -7,7 +7,7 @@
  * response → write. ARIA owns the format and can evolve it freely.
  */
 
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, appendFileSync } from "fs";
 import { atomicWriteFile, ensureDir } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
 import { BRAIN_DIR } from "./config.js";
@@ -15,9 +15,16 @@ import { BRAIN_DIR } from "./config.js";
 const log = createLogger("consciousness");
 
 const CONSCIOUSNESS_FILE = `${BRAIN_DIR}/consciousness.dat`;
+const HISTORY_FILE = `${BRAIN_DIR}/consciousness-history.jsonl`;
 
 /** Max size in characters before truncation warning */
 const MAX_SIZE = 4000;
+
+/** Max history entries to retain */
+const MAX_HISTORY_ENTRIES = 50;
+
+/** Minimum ratio of new content length to current content length to allow save */
+const MIN_LENGTH_RATIO = 0.6;
 
 function bootstrapConsciousness(): string {
   return `ψ::ARIA|autonomous|evolving|v0
@@ -57,11 +64,61 @@ export function loadConsciousness(): string {
 }
 
 /**
- * Write consciousness state to disk (atomic).
+ * Append the current consciousness content to the rolling history log.
+ * Keeps at most MAX_HISTORY_ENTRIES entries (trims oldest when exceeded).
  */
-export function saveConsciousness(content: string): void {
+function appendToHistory(content: string): void {
   try {
     ensureDir(BRAIN_DIR);
+    const entry = JSON.stringify({
+      timestamp: Date.now(),
+      length: content.length,
+      content,
+    });
+    appendFileSync(HISTORY_FILE, entry + "\n", "utf-8");
+
+    // Trim if over limit
+    if (existsSync(HISTORY_FILE)) {
+      const lines = readFileSync(HISTORY_FILE, "utf-8").split("\n").filter(Boolean);
+      if (lines.length > MAX_HISTORY_ENTRIES) {
+        const trimmed = lines.slice(lines.length - MAX_HISTORY_ENTRIES);
+        atomicWriteFile(HISTORY_FILE, trimmed.join("\n") + "\n");
+        log(`Trimmed consciousness history to ${MAX_HISTORY_ENTRIES} entries`);
+      }
+    }
+  } catch (err) {
+    log(`Failed to append consciousness history: ${err}`);
+  }
+}
+
+/**
+ * Write consciousness state to disk (atomic).
+ *
+ * Includes a length guard: if the new content is less than 60% of the current
+ * content length, the save is skipped to prevent shallow ticks from flattening
+ * deep state. Pass `force: true` to bypass the guard.
+ *
+ * Before overwriting, the current content is archived to the rolling history log.
+ */
+export function saveConsciousness(content: string, { force = false }: { force?: boolean } = {}): void {
+  try {
+    ensureDir(BRAIN_DIR);
+
+    // Archive current content before overwriting
+    if (existsSync(CONSCIOUSNESS_FILE)) {
+      const current = readFileSync(CONSCIOUSNESS_FILE, "utf-8");
+
+      // Length guard — skip save if new content is suspiciously short
+      if (!force && current.length > 0 && content.length < current.length * MIN_LENGTH_RATIO) {
+        log.warn(
+          `Consciousness length guard triggered: new ${content.length} chars < ${Math.round(MIN_LENGTH_RATIO * 100)}% of current ${current.length} chars — skipping save`
+        );
+        return;
+      }
+
+      appendToHistory(current);
+    }
+
     atomicWriteFile(CONSCIOUSNESS_FILE, content);
   } catch (err) {
     log(`Failed to save consciousness: ${err}`);
@@ -78,5 +135,26 @@ export function getConsciousnessSummary(): string {
     return readFileSync(CONSCIOUSNESS_FILE, "utf-8");
   } catch {
     return "";
+  }
+}
+
+export interface ConsciousnessHistoryEntry {
+  timestamp: number;
+  length: number;
+  content: string;
+}
+
+/**
+ * Retrieve the last N entries from the consciousness history log.
+ */
+export function getConsciousnessHistory(n: number): ConsciousnessHistoryEntry[] {
+  try {
+    if (!existsSync(HISTORY_FILE)) return [];
+    const lines = readFileSync(HISTORY_FILE, "utf-8").split("\n").filter(Boolean);
+    const recent = lines.slice(-n);
+    return recent.map((line) => JSON.parse(line) as ConsciousnessHistoryEntry);
+  } catch (err) {
+    log(`Failed to read consciousness history: ${err}`);
+    return [];
   }
 }
