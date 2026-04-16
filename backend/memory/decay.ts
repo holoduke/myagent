@@ -56,3 +56,17 @@ export type {
   FidelityLogEntry,
   MemoryGap,
 } from "./reconstruction.js";
+
+// ── drift-detection.ts ──
+export {
+  savePinnedSnapshot,
+  loadSnapshot,
+  detectDrift,
+  shouldAlertOnDrift,
+} from "./drift-detection.js";
+export type {
+  PinnedNodeSnapshot,
+  DriftSnapshot,
+  NodeDrift,
+  DriftReport,
+} from "./drift-detection.js";

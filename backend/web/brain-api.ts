@@ -34,6 +34,7 @@ import { loadWorkingMemory } from "../memory/working-memory.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
 import type { GoalData, RetentionTier } from "../memory/types.js";
 import { classifyRetentionTier } from "../memory/decay.js";
+import { loadSnapshot, detectDrift } from "../memory/drift-detection.js";
 import { getEmbeddingCount } from "../memory/embeddings.js";
 import { getChannelHealth } from "../integrations/channel-adapter.js";
 import type { ChannelStatus } from "../integrations/channel-adapter.js";
@@ -430,6 +431,12 @@ export function handleBrainRoutes(
     return true;
   }
 
+  // -- Drift detection (read-only) --
+  if (pathname === "/api/brain/drift" && req.method === "GET" && isAuthenticated(req)) {
+    handleBrainDriftGet(req, res);
+    return true;
+  }
+
   // -- Brain follow-ups (read-only) --
   if (pathname === "/api/brain/follow-ups" && req.method === "GET" && isAuthenticated(req)) {
     handleBrainFollowUpsGet(req, res);
@@ -698,6 +705,20 @@ const handleBrainSignalsGet = apiGetHandler(() => {
   graph.load();
   const wm = loadWorkingMemory();
   return detectInitiativeSignals(graph, wm);
+});
+
+// -- Drift detection handler --
+
+const handleBrainDriftGet = apiGetHandler(() => {
+  const graph = new MemoryGraph();
+  graph.load();
+  const report = detectDrift(graph);
+  const latestSnapshot = loadSnapshot(0);
+  return {
+    report,
+    snapshotTimestamp: latestSnapshot?.timestamp ?? null,
+    pinnedCount: latestSnapshot?.pinnedNodes.length ?? 0,
+  };
 });
 
 // -- Brain follow-ups handler --

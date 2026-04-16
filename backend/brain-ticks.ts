@@ -584,6 +584,13 @@ export async function consolidateTick(
   if (decayResult.deltaReport) {
     log(`Consolidate delta: ${decayResult.deltaReport.summary}`);
   }
+  if (decayResult.driftReport) {
+    const dr = decayResult.driftReport;
+    log(`Consolidate drift: ${dr.driftedNodes.length} pinned nodes drifted (max ${dr.maxDriftScore.toFixed(3)}), ${dr.edgesLostTotal} edges lost, ${dr.missingNodes.length} missing`);
+  }
+  if (decayResult.driftAlert) {
+    log(`⚠ DRIFT ALERT: ${decayResult.driftAlert}`);
+  }
 
   populateTemporalContext(wm);
 

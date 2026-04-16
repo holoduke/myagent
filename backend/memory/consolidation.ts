@@ -23,6 +23,8 @@ import {
   validateReconstructionFidelity,
 } from "./reconstruction.js";
 import type { UncapturedSignal, MemoryGap, DeltaReport, FidelityResult } from "./reconstruction.js";
+import { savePinnedSnapshot, detectDrift, shouldAlertOnDrift } from "./drift-detection.js";
+import type { DriftReport } from "./drift-detection.js";
 
 const log = createLogger("decay");
 
@@ -44,6 +46,8 @@ export interface ConsolidationResult {
   memoryGaps: MemoryGap[];
   deltaReport: DeltaReport | null;
   fidelityResults: FidelityResult[];
+  driftReport: DriftReport | null;
+  driftAlert: string | null;
 }
 
 export interface ConsolidationLogEntry {
@@ -66,6 +70,9 @@ export interface ConsolidationLogEntry {
   gapCount?: number;           // memory gaps detected
   fidelityChecked?: number;    // reconstructed nodes validated for fidelity
   lowFidelityCount?: number;   // reconstructed nodes with fidelity < 0.5
+  driftScore?: number;         // max drift score across pinned nodes
+  driftedCount?: number;       // number of pinned nodes showing drift
+  pinnedEdgesLost?: number;    // edges lost from pinned nodes since last snapshot
 }
 
 export function appendConsolidationLog(entry: ConsolidationLogEntry): void {
@@ -222,6 +229,17 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): Consol
     // Reconstruction fidelity — validate quality of restored memories
     const fidelityResults = validateReconstructionFidelity(graph);
 
+    // Drift detection — compare pinned nodes against previous snapshot
+    // Run BEFORE saving new snapshot so we compare against the old one
+    const driftReport = detectDrift(graph);
+    const driftAlert = driftReport ? shouldAlertOnDrift(driftReport) : null;
+    if (driftAlert) {
+      log(`⚠ DRIFT ALERT: ${driftAlert}`);
+    }
+
+    // Save new pinned snapshot for next comparison
+    savePinnedSnapshot(graph);
+
     // Build tier distribution from cache
     const tierDistribution: Record<RetentionTier, number> = { core: 0, important: 0, work: 0, standard: 0, ephemeral: 0 };
     for (const tier of tierCache.values()) {
@@ -241,6 +259,8 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): Consol
       memoryGaps,
       deltaReport,
       fidelityResults,
+      driftReport,
+      driftAlert,
     };
 
     // Append health metrics to consolidation log
@@ -264,6 +284,9 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): Consol
       fidelityChecked: fidelityResults.length,
       lowFidelityCount: fidelityResults.filter(r => r.lowFidelity).length,
       gapCount: memoryGaps.length,
+      driftScore: driftReport?.maxDriftScore,
+      driftedCount: driftReport?.driftedNodes.length,
+      pinnedEdgesLost: driftReport?.edgesLostTotal,
     });
 
     return result;
