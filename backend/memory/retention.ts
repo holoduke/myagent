@@ -181,10 +181,18 @@ export function applyEdgeDecay(graph: MemoryGraph): { decayed: number; pruned: n
     // Edge weight drifts toward the weaker endpoint
     const minStrength = Math.min(fromNode.strength, toNode.strength);
     if (edge.weight > minStrength) {
-      // One pinned endpoint — decay at 50% rate to preserve important connections
-      const rate = onePinned ? 0.025 : 0.05;
+      // One pinned endpoint — decay at 20% rate to preserve important connections.
+      // Context disconnection from pinned nodes (identity anchors) causes silent
+      // drift that the agent can't detect from the inside. (Moltbook insight, Apr 2026)
+      const rate = onePinned ? 0.01 : 0.05;
       edge.weight = edge.weight * (1 - rate) + minStrength * rate;
       decayed++;
+    }
+
+    // Floor: edges touching pinned nodes never drop below 0.15
+    // This prevents core memories from becoming completely isolated
+    if (onePinned && edge.weight < 0.15) {
+      edge.weight = 0.15;
     }
 
     if (edge.weight < PRUNE_EDGE_THRESHOLD) {
