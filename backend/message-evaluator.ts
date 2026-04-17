@@ -56,10 +56,15 @@ const HEURISTIC_CONFIDENCE_THRESHOLD = 0.5;
 
 // ── Directive matching (duplicated from reply-agent to avoid circular dep) ──
 
-function resolveReplyDirective(senderJid: string): ReplyDirective | null {
+function resolveReplyDirective(senderJid: string, chatJid?: string): ReplyDirective | null {
   const directives = getReplyDirectives();
-  // Per-contact override
-  const override = directives.find(d => d.contactJid && d.contactJid === senderJid && d.enabled);
+  // Per-contact or per-group override
+  const override = directives.find(d => {
+    if (!d.contactJid || !d.enabled) return false;
+    if (d.contactJid === senderJid) return true;
+    if (chatJid && d.contactJid === chatJid) return true;
+    return false;
+  });
   if (override) return override;
   // Category default
   const category = isWhitelisted(senderJid) ? "whitelisted" : "others";
@@ -201,7 +206,7 @@ export async function evaluateMessage(obs: Observation): Promise<EvaluationResul
   // Reply directive lookup
   let replyDirective: ReplyDirective | null = null;
   if (!obs.isFromMe && !isOwner && isWA) {
-    replyDirective = resolveReplyDirective(obs.senderJid);
+    replyDirective = resolveReplyDirective(obs.senderJid, obs.chatJid);
   }
 
   // ── Step 2: Do we need the LLM? ──
