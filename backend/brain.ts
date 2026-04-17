@@ -838,6 +838,7 @@ async function handleRecurringTasks(
             isFromMe: true,
             text: `[RECURRING TASK: ${task.label}] ${action.topic}${action.context ? `\n${action.context}` : ""}`,
             source: "whatsapp",
+            trustLevel: "owner",
           };
           graph.addPendingObservation(syntheticObs);
           state.recurringThinksToday++;
@@ -878,6 +879,7 @@ Keep each section to 2-4 bullet points max. Skip empty sections. Be concise and 
             isFromMe: true,
             text: digestPrompt,
             source: "whatsapp",
+            trustLevel: "owner",
           };
           graph.addPendingObservation(digestObs);
           state.recurringThinksToday++;
