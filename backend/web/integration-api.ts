@@ -517,7 +517,7 @@ const handleTwilioSaveConfig = apiHandler(async (_req, _res, data: Record<string
     defaultVoice: String(data.defaultVoice || "Polly.Lotte"),
     defaultLanguage: String(data.defaultLanguage || "nl-NL"),
     maxCallDurationSec: Number(data.maxCallDurationSec) || 600,
-    model: String(data.model || "claude-sonnet-4-20250514"),
+    model: String(data.model || "claude-opus-4-7"),
   };
   saveTwilioConfig(config);
   return { success: true, status: getTwilioStatus() };

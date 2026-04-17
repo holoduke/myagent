@@ -36,7 +36,8 @@
               <option value="">Default</option>
               <option value="claude-haiku-4-5-20251001">Haiku 4.5 (fastest)</option>
               <option value="claude-sonnet-4-20250514">Sonnet 4 (balanced)</option>
-              <option value="claude-opus-4-20250514">Opus 4 (smartest)</option>
+              <option value="claude-opus-4-20250514">Opus 4</option>
+              <option value="claude-opus-4-7">Opus 4.7 (smartest)</option>
             </select>
           </div>
         </template>
@@ -114,7 +115,8 @@
           <select v-model="configForm.model" class="intg-input tw-select">
             <option value="claude-haiku-4-5-20251001">Haiku 4.5 (fastest)</option>
             <option value="claude-sonnet-4-20250514">Sonnet 4 (balanced)</option>
-            <option value="claude-opus-4-20250514">Opus 4 (smartest)</option>
+            <option value="claude-opus-4-20250514">Opus 4</option>
+            <option value="claude-opus-4-7">Opus 4.7 (smartest)</option>
           </select>
         </div>
         <div class="tw-col">
@@ -162,7 +164,7 @@ const configForm = reactive({
   defaultVoice: 'Polly.Lotte',
   defaultLanguage: 'nl-NL',
   maxCallDurationSec: 600,
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-opus-4-7',
 })
 
 const callForm = reactive({
@@ -200,7 +202,7 @@ onMounted(() => {
     configForm.defaultVoice = props.twilio.config.defaultVoice || 'Polly.Lotte'
     configForm.defaultLanguage = props.twilio.config.defaultLanguage || 'nl-NL'
     configForm.maxCallDurationSec = props.twilio.config.maxCallDurationSec || 600
-    configForm.model = props.twilio.config.model || 'claude-sonnet-4-20250514'
+    configForm.model = props.twilio.config.model || 'claude-opus-4-7'
     // Don't populate authToken — it's sensitive
   }
 })

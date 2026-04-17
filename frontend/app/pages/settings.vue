@@ -647,13 +647,15 @@ async function load() {
       api<ImproveQueueResponse>('/api/improve-queue'),
     ])
     si.value = dash.selfImprove || { pendingTask: null, lastResult: null, bootCounter: 0, lastGoodCommit: null }
-    Object.assign(brainForm, brainResp.config)
-    brainPresets.value = brainResp.presets
+    const cfg = brainResp?.config
+    if (!cfg) throw new Error('Brain config missing from server response')
+    Object.assign(brainForm, cfg)
+    brainPresets.value = brainResp.presets || []
     characterPresets.value = brainResp.characterPresets || []
-    characterType.value = brainResp.config.characterType || 'default'
-    characterCustomPrompt.value = brainResp.config.characterCustomPrompt || ''
-    detectionMode.value = brainResp.config.detectionMode || 'hybrid'
-    detectionPrompt.value = brainResp.config.detectionPrompt || ''
+    characterType.value = cfg.characterType || 'default'
+    characterCustomPrompt.value = cfg.characterCustomPrompt || ''
+    detectionMode.value = cfg.detectionMode || 'hybrid'
+    detectionPrompt.value = cfg.detectionPrompt || ''
     // Load default detection prompt
     try {
       const defaultPromptResp = await api<{ prompt: string }>('/api/detection-prompt/default')
