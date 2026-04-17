@@ -5,6 +5,7 @@ import { ensureValidToken } from "../auth-refresh.js";
 import { MemoryGraph } from "../memory/graph.js";
 import type { AgentResult, AgentStats, ProviderAskOptions, ClaudeConfig } from "./types.js";
 import { BaseProvider } from "./base-provider.js";
+import { resolveClaudeModel } from "./llm-runner.js";
 import { createLogger } from "../logger.js";
 import { CLAUDE_TIMEOUT as DEFAULT_CLAUDE_TIMEOUT, SESSION_MAX_COST_USD, SESSION_MAX_INPUT_TOKENS, SESSION_MAX_TURNS } from "../config.js";
 
@@ -272,7 +273,7 @@ export class ClaudeProvider extends BaseProvider {
     ];
 
     if (model) {
-      args.push("--model", model);
+      args.push("--model", resolveClaudeModel(model));
     }
 
     if (!noSession && this.currentSessionId) {
@@ -352,7 +353,7 @@ export class ClaudeProvider extends BaseProvider {
     ];
 
     if (model) {
-      args.push("--model", model);
+      args.push("--model", resolveClaudeModel(model));
     }
 
     if (!noSession && this.currentSessionId) {

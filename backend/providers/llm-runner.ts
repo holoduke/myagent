@@ -36,6 +36,16 @@ export function resolveGrokModel(model: string): string {
   }
 }
 
+/** Map versioned short aliases to full Claude model IDs. Returns input unchanged for bare aliases (haiku/sonnet/opus). */
+export function resolveClaudeModel(model: string): string {
+  switch (model) {
+    case "opus-4-7": return "claude-opus-4-7";
+    case "sonnet-4-6": return "claude-sonnet-4-6";
+    case "haiku-4-5": return "claude-haiku-4-5-20251001";
+    default: return model;
+  }
+}
+
 export class LlmRunner extends BaseProvider {
   readonly name: string;
   readonly supportsStreaming = false;
@@ -67,7 +77,7 @@ export class LlmRunner extends BaseProvider {
     try {
       const { promise } = this.spawnWithTimeout({
         command: "claude",
-        args: ["-p", prompt, "--output-format", "json", "--model", this.model, "--allowedTools", ""],
+        args: ["-p", prompt, "--output-format", "json", "--model", resolveClaudeModel(this.model), "--allowedTools", ""],
         env: {
           ANTHROPIC_API_KEY: "",
           CLAUDECODE: "",
