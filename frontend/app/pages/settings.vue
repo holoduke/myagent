@@ -332,6 +332,7 @@
                 <option value="haiku">Haiku (fast, cheap)</option>
                 <option value="sonnet">Sonnet (balanced)</option>
                 <option value="opus">Opus (most capable)</option>
+                <option value="opus-4-7">Opus 4.7 (smartest)</option>
               </optgroup>
               <optgroup label="Grok">
                 <option value="grok">Grok (fast, capable)</option>
