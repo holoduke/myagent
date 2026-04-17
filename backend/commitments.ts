@@ -11,6 +11,8 @@ export interface ExtractedCommitment {
   text: string;
   /** The commitment pattern that matched */
   pattern: string;
+  /** True if the match sits inside worker/session narration (forces trivial). */
+  isNarration?: boolean;
 }
 
 export type CommitmentWeight = "trivial" | "notable" | "significant";
@@ -69,6 +71,44 @@ const TRIVIAL_KEYWORDS = [
 ];
 
 /**
+ * Phrases that indicate the surrounding text is worker/session narration
+ * (sub-agent internal monologue, tool-runner output, prompt-scaffolding)
+ * rather than an actual commitment to a person. If any of these appear in
+ * the commitment text or a 40-char window around it, the match is forced
+ * to trivial and dropped by extractAndClassifyCommitments.
+ */
+const NARRATION_MARKERS = [
+  "let me compile",
+  "let me re-examine",
+  "let me check",
+  "let me re-read",
+  "i'll wait for the user",
+  "gather the output",
+  "the user hasn't asked",
+  "the prompt says",
+  "compile the final output",
+  "session log",
+];
+
+/** JSON-like payload marker, e.g. {"success":true ...} wrapping the match. */
+const JSON_PAYLOAD_REGEX = /\{\s*"[^"]+"\s*:\s*(?:true|false|"[^"]*"|\d+)/;
+
+function isNarrationContext(
+  fullText: string,
+  matchIndex: number,
+  matchLength: number,
+): boolean {
+  const start = Math.max(0, matchIndex - 40);
+  const end = Math.min(fullText.length, matchIndex + matchLength + 40);
+  const window = fullText.substring(start, end).toLowerCase();
+  for (const marker of NARRATION_MARKERS) {
+    if (window.includes(marker)) return true;
+  }
+  if (JSON_PAYLOAD_REGEX.test(window)) return true;
+  return false;
+}
+
+/**
  * Extract commitment-like phrases from text.
  * Returns deduplicated matches with the pattern that triggered them.
  */
@@ -84,9 +124,11 @@ export function extractCommitments(text: string): ExtractedCommitment[] {
     let match: RegExpExecArray | null;
     while ((match = regex.exec(text)) !== null) {
       const commitText = match[0].trim();
-      if (!seen.has(commitText.toLowerCase())) {
-        seen.add(commitText.toLowerCase());
-        results.push({ text: commitText, pattern: label });
+      const key = commitText.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        const narration = isNarrationContext(text, match.index, match[0].length);
+        results.push({ text: commitText, pattern: label, isNarration: narration });
       }
     }
   }
@@ -100,7 +142,10 @@ export function extractCommitments(text: string): ExtractedCommitment[] {
  * - notable: tasks requiring follow-up
  * - significant: features/promises with public visibility or substantial scope
  */
-export function classifyCommitment(commitmentText: string): ClassifiedCommitment {
+export function classifyCommitment(
+  commitmentText: string,
+  isNarration?: boolean,
+): ClassifiedCommitment {
   const lower = commitmentText.toLowerCase();
 
   // Detect pattern
@@ -111,6 +156,13 @@ export function classifyCommitment(commitmentText: string): ClassifiedCommitment
       matchedPattern = label;
       break;
     }
+  }
+
+  // Narration context (worker/session monologue) always downgrades to trivial.
+  // Covers embedded narration markers and the commitment text sitting inside a
+  // JSON-like payload emitted by sub-agents.
+  if (isNarration || NARRATION_MARKERS.some(m => lower.includes(m)) || JSON_PAYLOAD_REGEX.test(commitmentText)) {
+    return { commitment: commitmentText, weight: "trivial", pattern: matchedPattern };
   }
 
   // Check for significant keywords first
@@ -138,7 +190,7 @@ export function classifyCommitment(commitmentText: string): ClassifiedCommitment
 export function extractAndClassifyCommitments(text: string): ClassifiedCommitment[] {
   const raw = extractCommitments(text);
   return raw
-    .map(c => classifyCommitment(c.text))
+    .map(c => classifyCommitment(c.text, c.isNarration))
     .filter(c => c.weight !== "trivial");
 }
 
