@@ -407,10 +407,11 @@ export async function thinkTick(
       const isDigestTriggered = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
       const isDirectReply = allObs.some(o => !o.isFromMe && o.trustLevel === "owner");
 
-      // Autonomy gating: check if proactive messaging is permitted at current level
+      // Autonomy gating: check if proactive messaging is permitted at current level.
+      // A policy-level block is not a judgment failure, so it must not decrement trust —
+      // otherwise the demote-spiral drags the agent down from its own gating.
       if (!isDirectReply && initiativeSignals.length > 0 && !isActionPermitted("send_proactive")) {
         log(`Proactive message blocked by autonomy level (${response.message.slice(0, 60)}...)`);
-        recordFailure("send_proactive", "blocked by autonomy level");
       } else
       // Phase 3: Self-critique for proactive/initiative messages
       if (initiativeSignals.length > 0 || !isDirectReply) {
