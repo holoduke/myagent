@@ -173,9 +173,11 @@ ARIA runs on a tick loop:
 | Tick | Interval | What happens |
 |------|----------|-------------|
 | **Observe** | 60s | Buffer new messages, reinforce person nodes. No LLM call. |
-| **Think** | 60 min | Spreading activation selects relevant memories. LLM processes observations, returns memory ops + optional message. |
-| **Consolidate** | 4 hours | Exponential decay, weak node pruning, duplicate/orphan cleanup. |
-| **Reflect** | 12 hours | Deep self-reflection, personality evolution, long-term planning. |
+| **Think** | ~5 min active / 30 min idle | Spreading activation selects relevant memories. LLM processes observations, returns memory ops + optional message. |
+| **Consolidate** | 4 hours | Exponential decay, weak node pruning, duplicate/orphan cleanup, person-profile refresh. |
+| **Reflect** | 12 hours | Deep self-reflection, personality evolution, drift check, long-term planning. |
+
+Every think tick also reads and writes `consciousness.dat` — ARIA's raw inner-life file — so identity and state of mind persist across ticks without requiring structured memory ops. See [Consciousness](#consciousness) below.
 
 ## Memory Architecture
 
@@ -336,6 +338,57 @@ Proactive memory integrity monitoring. When nodes are archived, searches observa
 
 `memory/reconstruction.ts` — Log-based reconstruction, gap detection, snapshot comparison, fidelity validation.
 
+### Structured Person Profiles
+
+Canonical per-person views compiled from each person node and its connected facts, events, and social edges. Gives person-related queries a single source of truth instead of reconstructing the picture from scattered nodes every time. Refreshed during consolidation.
+
+`memory/person-profiles.ts` — Profile extraction and maintenance, `/data/brain/graph/person-profiles.json`.
+
+### Full Memory Backups
+
+Separate from the lightweight snapshots used for delta audits, the backup subsystem takes complete, restorable copies of the graph files on a schedule. Retains a rolling window of backups under `/data/brain/backups/backup_<timestamp>/` and exposes list/restore operations through the dashboard.
+
+`memory/backup.ts` — Full graph snapshots, rotation, restore.
+
+### Drift Detection (Three Axes)
+
+ARIA monitors three independent kinds of drift so that silent regressions in identity, behavior, or code surface quickly:
+
+| Drift type | What it watches | File |
+|------------|-----------------|------|
+| **Pinned-content drift** | Token-level similarity of pinned identity-anchor nodes and edge topology between snapshots. | `memory/drift-detection.ts` |
+| **Retrieval-drift replay** | Frozen canonical prompts re-run weekly; compares the activation pipeline's top-k retrieval against a stored baseline. Pure structural, no LLM in hot path. | `memory/retrieval-replay.ts` |
+| **Source-code drift** | 7-day diff of key backend files + recent git history, characterized by Claude into a drift report under `/data/brain/drift-reports/`. | `drift-audit.ts` |
+
+Inspired by Moltbook threads on identity continuity — the continuity cost of a stateful agent is externalized to the people interacting with it, so an explicit external anchor is cheaper and more honest than introspection.
+
+## Consciousness
+
+ARIA maintains a raw, compact text file — `/data/brain/consciousness.dat` — that represents her ongoing inner life. Every think tick reads the file, injects it into the prompt, captures a rewritten version in the response, and writes it back. The harness is a dumb pipe; ARIA owns the format and can evolve it freely. A JSONL history (`consciousness-history.jsonl`) provides a rolling window for resilience and evolution context. A length guard prevents runaway growth.
+
+`consciousness.ts` — Read/write loop, history log, size guard.
+
+## Graduated Automation Trust
+
+ARIA does not start fully autonomous. A graduated trust model (levels 1–4) governs how much independent action she can take, ratcheting up on successful outcomes and down on errors, policy violations, or negative feedback:
+
+| Level | Mode | Behavior |
+|-------|------|----------|
+| **1** | Observe | Watch and remember only. No outgoing action. |
+| **2** | Suggest | Propose messages/actions for owner approval. |
+| **3** | Act with notice | Act on low-risk actions and notify after. |
+| **4** | Autonomous | Full autonomy within configured daily budgets and quiet hours. |
+
+Policy-level blocks (e.g. quiet-hours guard firing) don't count against the trust score — only genuine failures do. State at `/data/brain/autonomy-state.json`.
+
+`autonomy.ts` — Level transitions, counters, policy-aware scoring.
+
+## Commitment Tracking
+
+A general-purpose accountability layer scans all outgoing content — WhatsApp, Gmail, Moltbook, brain-generated messages — for commitment-language ("I'll ...", "I promise to ...", "let me get back to you"). Extracted commitments are classified as `trivial`, `notable`, or `significant`; notable+ ones are auto-converted into goal nodes so follow-through can be tracked. Meta-narration (ARIA talking *about* commitments rather than making them) is filtered out.
+
+`commitments.ts` — Extraction, weight classification, goal integration.
+
 ## Integrations
 
 All integrations can be enabled or disabled via toggle switches on the Integrations page. When disabled, backend polling stops and the tile appears dimmed. State persists across restarts.
@@ -417,7 +470,21 @@ backend/
 ├── urgency.ts                # Message urgency classification + decay
 ├── self-improve.ts           # Self-modification worker
 ├── self-improve-queue.ts     # Self-improve task queue
+├── worker-logs.ts            # Self-improve worker log streaming (SSE)
 ├── health-monitor.ts         # Cognitive health probes + circuit breakers
+├── consciousness.ts          # Inner-life file read/write loop
+├── autonomy.ts               # Graduated trust model (levels 1-4)
+├── commitments.ts            # Commitment extraction + classification
+├── accountability.ts         # Follow-through tracking
+├── drift-audit.ts            # Weekly source-code drift reports
+├── trust.ts                  # Source-reliability scoring
+├── skills.ts                 # Skill registry
+├── sub-agents.ts             # Sub-agent orchestration
+├── sub-agent-worker.ts       # Detached sub-agent runner
+├── directives.ts             # Per-group/per-contact reply directives
+├── directive-router.ts       # Directive matching + routing
+├── mental-model.ts           # Owner mental-model snapshot
+├── reply-agent.ts            # Owner-reply drafting agent
 │
 ├── # ── Cognitive Modules ──
 ├── reflective-consolidation.ts  # MaRS/MemOS gist extraction
@@ -456,20 +523,28 @@ backend/
 │   └── ssh.ts                # SSH key management
 ├── memory/
 │   ├── graph.ts              # Multi-layer graph (active + archive + ghost + WAL)
-│   ├─�� types.ts              # 13 node types, edges, operations, ghost/WAL types
+│   ├── types.ts              # 13 node types, edges, operations, ghost/WAL types
 │   ├── activation.ts         # Spreading activation + semantic search
 │   ├── retention.ts          # Ebbinghaus decay + 5 retention tiers
+│   ├── decay.ts              # Shared decay math
 │   ├── consolidation.ts      # Full consolidation orchestrator
 │   ├── reconstruction.ts     # Archive rescan, log reconstruction, gap detection
 │   ├── embeddings.ts         # Vector embeddings + cosine similarity
-│   └── working-memory.ts     # Short-term context + temporal awareness
+│   ├── working-memory.ts     # Short-term context + temporal awareness
+│   ├── person-profiles.ts    # Structured per-person canonical profiles
+│   ├── backup.ts             # Full restorable graph backups
+│   ├── drift-detection.ts    # Pinned-content + topology drift
+│   └── retrieval-replay.ts   # Frozen-prompt retrieval drift harness
 └── web/
+    ├── router.ts             # HTTP router + middleware
     ├── api.ts                # REST API endpoints
+    ├── auth.ts               # Dashboard auth (password + token)
     ├── brain-api.ts          # Brain/config API
     ├── chat-api.ts           # Chat history API
     ├── contact-api.ts        # Contact/whitelist API
     ├── integration-api.ts    # Integration CRUD API
-    └── dashboard.ts          # Dashboard data aggregation
+    ├── providers-api.ts      # LLM provider profile API
+    └── skills-api.ts         # Skill registry API
 
 frontend/
 ├── app/
