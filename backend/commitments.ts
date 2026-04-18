@@ -69,8 +69,95 @@ const TRIVIAL_KEYWORDS = [
 ];
 
 /**
+ * JSON keys whose string values typically contain meta-narration / internal
+ * reasoning rather than outward-facing promises. Matches inside these fields
+ * should be treated as narration and filtered out.
+ */
+const NARRATION_JSON_KEYS = [
+  "summary", "details", "thinking", "reasoning", "notes",
+  "narration", "thought", "thoughts", "reflection", "observation",
+  "plan", "rationale", "analysis", "context",
+];
+
+/**
+ * Phrases that signal self-reflective / session-log narration about the
+ * prompt, task, or user rather than an actual commitment to act.
+ */
+const SELF_REFLECTIVE_PHRASES = [
+  "the prompt",
+  "the system prompt",
+  "the user's message",
+  "the user message",
+  "the task",
+  "the request",
+  "understand what they need",
+  "understand what the user",
+  "wait for the user",
+  "re-examine",
+  "reexamine",
+  "compile the final",
+  "final output",
+  "parse the",
+  "think about how",
+  "figure out what",
+];
+
+/**
+ * Returns true if the match at `matchIndex` appears to be meta-narration
+ * (inside JSON narration fields, markdown code fences, or self-reflective
+ * phrasing) rather than a real commitment.
+ *
+ * Heuristics are intentionally conservative — we'd rather skip a few real
+ * commitments than surface dozens of session-log lines on every reflect.
+ */
+function isNarrationContext(
+  text: string,
+  matchIndex: number,
+  matchText: string,
+): boolean {
+  const before = text.slice(0, matchIndex);
+
+  // (b) Inside an unclosed markdown code fence
+  const fenceCount = (before.match(/```/g) || []).length;
+  if (fenceCount % 2 === 1) return true;
+
+  // (a) Inside a JSON-like narration field value
+  // Scan back ~800 chars for the most recent `"key":"` among narration keys.
+  // If there are no unescaped `"` between that opener and the match, we're
+  // still inside the string value.
+  const lookback = Math.max(0, matchIndex - 800);
+  const window = text.slice(lookback, matchIndex);
+  for (const key of NARRATION_JSON_KEYS) {
+    const keyRe = new RegExp(`"${key}"\\s*:\\s*"`, "gi");
+    let keyMatch: RegExpExecArray | null;
+    let lastOpen = -1;
+    while ((keyMatch = keyRe.exec(window)) !== null) {
+      lastOpen = keyMatch.index + keyMatch[0].length;
+    }
+    if (lastOpen >= 0) {
+      const between = window.slice(lastOpen);
+      // Count unescaped closing quotes
+      const closing = between.match(/(?<!\\)"/g) || [];
+      if (closing.length === 0) return true;
+    }
+  }
+
+  // (c) Self-reflective phrasing in the local context around the match
+  const windowStart = Math.max(0, matchIndex - 120);
+  const windowEnd = Math.min(text.length, matchIndex + matchText.length + 120);
+  const ctx = text.slice(windowStart, windowEnd).toLowerCase();
+  for (const phrase of SELF_REFLECTIVE_PHRASES) {
+    if (ctx.includes(phrase)) return true;
+  }
+
+  return false;
+}
+
+/**
  * Extract commitment-like phrases from text.
  * Returns deduplicated matches with the pattern that triggered them.
+ * Filters out matches that appear to be meta-narration (JSON summary
+ * fields, code fences, self-reflective phrasing) rather than real promises.
  */
 export function extractCommitments(text: string): ExtractedCommitment[] {
   if (!text || text.length < 10) return [];
@@ -84,6 +171,7 @@ export function extractCommitments(text: string): ExtractedCommitment[] {
     let match: RegExpExecArray | null;
     while ((match = regex.exec(text)) !== null) {
       const commitText = match[0].trim();
+      if (isNarrationContext(text, match.index, match[0])) continue;
       if (!seen.has(commitText.toLowerCase())) {
         seen.add(commitText.toLowerCase());
         results.push({ text: commitText, pattern: label });
