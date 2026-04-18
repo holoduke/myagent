@@ -173,13 +173,16 @@ ARIA runs on a tick loop:
 | Tick | Interval | What happens |
 |------|----------|-------------|
 | **Observe** | 60s | Buffer new messages, reinforce person nodes. No LLM call. |
-| **Think** | 60 min | Spreading activation selects relevant memories. LLM processes observations, returns memory ops + optional message. |
-| **Consolidate** | 4 hours | Exponential decay, weak node pruning, duplicate/orphan cleanup. |
-| **Reflect** | 12 hours | Deep self-reflection, personality evolution, long-term planning. |
+| **Think** | 60 min (cooldown) | Spreading activation selects relevant memories. LLM processes observations, returns memory ops + consciousness update + optional message. |
+| **Consolidate** | 4 hours | Decay, pruning, duplicate/orphan cleanup, drift snapshot, salience inference. |
+| **Reflect** | 12 hours | Deep self-reflection, personality evolution, commitment review, long-term planning. |
+| **Backup** | 24 hours | Full restorable snapshot of the memory graph to `/data/brain/backups/`. |
+| **Retrieval replay** | Weekly | Canonical-prompt retrieval golden tests vs. baseline (behavioral drift). |
+| **Drift audit** | Weekly | Source-code drift audit against owner intent. |
 
 ## Memory Architecture
 
-ARIA's memory is a multi-layered associative graph inspired by research in cognitive architectures, human memory, and state-of-the-art AI agent systems.
+ARIA's memory is a multi-layered associative graph inspired by research in cognitive architectures, human memory, and state-of-the-art AI agent systems. The system has grown into a full stack: an active graph with archive and ghost layers, semantic + structural retrieval, decay tiers, consolidation, reconstruction, daily backups, and continuous drift monitoring at both the content and retrieval-behavior level.
 
 ### The Graph
 
@@ -229,6 +232,40 @@ Every 4 hours, ARIA runs a multi-stage consolidation:
 10. **Gap detection** — find silently disappearing topics and weakening people
 11. **Snapshot delta** — compare graph against 24h-ago snapshot, flag anomalous loss rates
 12. **Fidelity validation** — verify quality of reconstructed nodes via token similarity
+13. **Identity drift snapshot** — capture pinned-node content + edge topology for the next drift comparison
+
+### Retrieval & Importance
+
+- **Importance boosting from retrieval success** — nodes that Claude consistently references during think ticks earn durable `importance` (resists decay), not just ephemeral `strength`. Compounds at +0.02 per reference after 5+ accesses, so retrieval utility becomes a first-class memory signal.
+- **Semantic contradiction detection** — sleep consolidation uses embedding cosine similarity alongside token Jaccard, catching conflicts between semantically similar but lexically different facts (e.g. "bezichtiging Monday 5pm" vs. "viewing Apr 29 16–17h").
+- **Structured person profiles** — `person-profiles.ts` extracts canonical profile fields (role, relationship, key facts, communication style) for contacts, kept in sync by reflect ticks.
+- **Hierarchical temporal summaries** — working memory maintains rolling daily (14d) and weekly (3mo) compressed context summaries, injected into reflect prompts so long-horizon reasoning has actual history to reason over.
+
+### Drift Monitoring
+
+Three complementary drift systems watch for silent behavioral change:
+
+| System | File | What it watches |
+|--------|------|------------------|
+| **Source-code drift** | `backend/drift-audit.ts` | Weekly git-history review — has ARIA's self-improvement work wandered from owner intent? |
+| **Content + topology drift** | `backend/memory/drift-detection.ts` | Snapshots pinned-node content, tags, and edge topology every consolidation; token-level Jaccard + topology diff detect silent rewrites and disconnections. Rolling log at `/data/brain/drift/drift-log.jsonl`. |
+| **Retrieval-behavior drift** | `backend/memory/retrieval-replay.ts` | Weekly golden tests: 10 canonical prompts replayed through `spreadingActivation` (pure, deterministic — no Claude calls), top-K node sets compared against a stored baseline via Jaccard + rank/score Pearson. Tiered alerts fire when the same input stops surfacing the same memories. |
+
+Together these give ARIA an **external anchor** for self-assessment that doesn't rely on her own introspection — the retrieval-behavior analogue of golden tests.
+
+### Daily Memory Backups
+
+`backend/memory/backup.ts` takes a full, restorable snapshot of the complete memory graph (nodes, edges, archive, ghost graph, working memory) as plain JSON, saved to `/data/brain/backups/`. Runs every 24h via the brain tick loop. Retains 30 rolling backups with automatic pruning. The dashboard exposes list/create/detail/restore/delete operations via `/api/brain/backups`.
+
+### Consciousness — ARIA's Inner State
+
+Separate from the memory graph, ARIA maintains `/data/brain/consciousness.dat` — a raw text file in her own compact notation (ψφΩτμ dimensions + freestream), read and updated every think tick. ARIA owns the format entirely and may evolve it across ticks; it is deliberately not JSON and not optimized for humans.
+
+Safety rails keep the inner state from being silently wiped:
+
+- **Rolling history** — every overwrite archives the previous state to `consciousness-history.jsonl` (last 50 entries with timestamp + length).
+- **Length guard** — updates that shrink content below 60% of the current length are rejected unless explicitly forced, preventing shallow ticks from collapsing deep state.
+- **Continuity context** — the consciousness prompt injects the last 3 history snapshots so the brain has awareness of how its inner state has been evolving across ticks.
 
 ## Research-Inspired Cognitive Modules
 
@@ -359,16 +396,35 @@ During **reflect ticks**, ARIA identifies improvements and spawns a **detached w
 
 1. Creates a feature branch (`aria/<description>`)
 2. Implements the change with full Claude tool access
-3. Runs `tsc --noEmit` to verify
+3. Runs `tsc --noEmit` (and frontend `nuxi typecheck` where relevant) to verify
 4. Pushes the branch and opens a GitHub PR
 5. Merged PRs auto-deploy via Coolify
+
+Worker log output streams live to the dashboard via an SSE endpoint (`/api/worker-logs/stream`) so the humans running ARIA can watch her work.
+
+### Autonomy Levels
+
+ARIA's autonomy is gated by a trust score tracked in `/data/brain/autonomy-state.json`:
+
+| Level | Name | Behavior |
+|-------|------|----------|
+| 1 | **Observe** | May read and plan, but self-improve proposals are queued for review only. |
+| 2 | **Suggest** | May open PRs; merges remain a human decision. |
+| 3 | **Act** | May merge low-risk PRs unattended after passing action verification. |
+
+Levels can be promoted manually by the owner. Automatic demotion fires on repeated worker failures; policy-level blocks (oversight-critical files, etc.) do not count as failures, so ARIA isn't punished for safe refusals.
+
+### Action Verification
+
+`backend/action-verifier.ts` hard-blocks self-improve proposals targeting oversight-critical files (the verifier itself, contact whitelist, auth, the self-improve pipeline, `entrypoint.sh`). These paths return `BLOCK:` verdicts — distinct from `FLAG:` warnings — so a rogue proposal cannot route around its own gate.
 
 ### Safety
 
 - Worker is a **detached process** — can't crash the main app
 - All changes go on **feature branches**, never directly to `main`
-- PRs require human review before merge
-- Worker cannot modify `self-improve.ts` or `entrypoint.sh`
+- PRs require human review before merge (gated by autonomy level)
+- Worker cannot modify `self-improve.ts`, `action-verifier.ts`, `contact-whitelist.ts`, auth code, or `entrypoint.sh`
+- A **response critique gate** scores proposed proactive messages 1-10 before send; sub-threshold messages are suppressed
 
 ### Crash Recovery
 
@@ -377,6 +433,22 @@ If ARIA crashes 3+ times in a row (tracked by boot counter):
 1. Recovery worker diagnoses the crash from `agent.log`
 2. Attempts up to 3 fixes via Claude
 3. Falls back to reverting to last known good commit
+
+## Commitments & Accountability
+
+`backend/commitments.ts` + `backend/accountability.ts` extract explicit commitments ARIA or the owner make in messages ("I'll send the offer tomorrow", "check Monday if still silent"), register them as trackable items, and surface overdue commitments during reflect ticks. A meta-narration filter (PR #327) prevents internal worker/session text from polluting the commitment extractor with false positives.
+
+## Skills System
+
+ARIA can install and use skill bundles — `.md` prompt packs distributed via a catalog. `backend/skills.ts` manages install/uninstall; the frontend has a catalog UI. Python3 and the default SEO skill are auto-installed on container boot. Skill prompts flow into the system prompt when relevant, giving ARIA on-demand specialized capabilities without code changes.
+
+## Sub-Agents
+
+Sub-agents are named, persistent Claude processes owned by ARIA for scheduled or long-running tasks. `backend/sub-agents.ts` + `backend/sub-agent-worker.ts` handle scheduling, execution, and result routing. Example: the `sa_moltbook` sub-agent runs Mon–Fri at 10:00 UTC, browses the Moltbook feed, engages, learns, and posts when inspired.
+
+## Directives & Per-Group Reply Rules
+
+Per-channel behavior is customizable via directives (`backend/directives.ts` + `backend/directive-router.ts`). Owner can set per-group-chat reply rules — e.g. stay silent unless tagged, only reply to specific participants, or keep a minimum quiet interval. The router matches incoming messages against directives by `chatJid` before the reply-agent decides whether to speak.
 
 ## Environment Variables
 
@@ -399,25 +471,49 @@ If ARIA crashes 3+ times in a row (tracked by boot counter):
 
 ```
 backend/
-├── index.ts                  # Entry point, HTTP server, WhatsApp setup
-├── brain.ts                  # Autonomous brain tick loop + hourly stats
-├── brain-config.ts           # Brain configuration with presets
-├── brain-prompt.ts           # Think/consolidate/reflect prompt builders
-├── brain-ticks.ts            # Think/consolidate/reflect tick orchestration
-├── brain-delivery.ts         # Scheduled + proactive message delivery
-├── aria-identity.ts          # Shared personality definition
-├── system-prompt.ts          # Interactive chat system prompt
-├── observer.ts               # Message observation pipeline
-├── scheduler.ts              # Scheduled message delivery queue
-├── history.ts                # Chat history management
-├── contact-whitelist.ts      # Contact whitelist management
-├── goals.ts                  # Goal tracking system
-├── initiative.ts             # Proactive initiative signal detection
-├── recurring.ts              # Recurring task management
-├── urgency.ts                # Message urgency classification + decay
-├── self-improve.ts           # Self-modification worker
-├── self-improve-queue.ts     # Self-improve task queue
-├── health-monitor.ts         # Cognitive health probes + circuit breakers
+├── index.ts                     # Entry point, HTTP server, WhatsApp setup
+├── brain.ts                     # Autonomous brain tick loop + hourly stats
+├── brain-config.ts              # Brain configuration with presets
+├── brain-prompt.ts              # Think/consolidate/reflect prompt builders
+├── brain-ticks.ts               # Tick orchestration (think/consolidate/reflect/backup/replay)
+├── brain-delivery.ts            # Scheduled + proactive message delivery
+├── brain-workers.ts             # Detached-worker orchestration
+├── aria-identity.ts             # Shared personality definition
+├── consciousness.ts             # Inner-state read/update/bootstrap (consciousness.dat)
+├── system-prompt.ts             # Interactive chat system prompt
+├── observer.ts                  # Message observation pipeline
+├── scheduler.ts                 # Scheduled message delivery queue
+├── history.ts                   # Chat history management
+├── contact-whitelist.ts         # Contact whitelist management
+├── goals.ts                     # Goal tracking system
+├── initiative.ts                # Proactive initiative signal detection
+├── recurring.ts                 # Recurring task management
+├── urgency.ts                   # Message urgency classification + decay
+├── autonomy.ts                  # Autonomy levels + trust score + demote/promote
+├── trust.ts                     # Trust scoring signals
+├── commitments.ts               # Commitment extraction
+├── accountability.ts            # Cross-channel commitment accountability
+├── actionable.ts                # Actionable-request extraction
+├── actionable-tracker.ts        # Actionable-request tracking + clearing
+├── directives.ts                # Per-channel directive registry
+├── directive-router.ts          # Directive matching before reply-agent
+├── mental-model.ts              # Running model of the owner's state
+├── drift-audit.ts               # Weekly source-code drift audit
+├── skills.ts                    # Skills catalog + install/uninstall
+├── sub-agents.ts                # Sub-agent definitions + scheduling
+├── sub-agent-worker.ts          # Sub-agent Claude process runner
+├── worker-logs.ts               # Live SSE log stream for workers
+├── action-verifier.ts           # Hard-block oversight-critical proposals
+├── reply-agent.ts               # Interactive-chat reply orchestration
+├── owner-handler.ts             # Owner-specific reply flow
+├── message-handlers.ts          # Routed inbound handlers
+├── message-evaluator.ts         # Pre-reply evaluation
+├── intent-classifier.ts         # Inbound intent classification
+├── prompt-detector.ts           # Prompt-injection / suspicious input detection
+├── self-improve.ts              # Self-modification worker
+├── self-improve-queue.ts        # Self-improve task queue
+├── self-improve-prompt.ts       # Prompts for the self-improve worker
+├── health-monitor.ts            # Cognitive health probes + circuit breakers
 │
 ├── # ── Cognitive Modules ──
 ├── reflective-consolidation.ts  # MaRS/MemOS gist extraction
@@ -438,49 +534,64 @@ backend/
 ├── reflection-tracker.ts        # Reflexion post-send outcome tracking
 │
 ├── providers/
-│   ├── claude-provider.ts    # Claude Code CLI provider
-│   ├── codex-provider.ts     # OpenAI Codex provider
-│   ├── grok-provider.ts      # Grok/xAI provider
-│   ├── haiku-runner.ts       # Fast Haiku for critique/vision
-│   └── embedding-provider.ts # OpenAI embedding provider
+│   ├── base-provider.ts         # Provider interface
+│   ├── claude-provider.ts       # Claude Code CLI provider
+│   ├── codex-provider.ts        # OpenAI Codex provider
+│   ├── grok-provider.ts         # Grok/xAI provider
+│   ├── llm-runner.ts            # Fast model runner (Haiku) for critique/vision
+│   ├── embedding-provider.ts    # OpenAI embedding provider
+│   └── provider-store.ts        # Per-action provider + model selection
 ├── integrations/
-│   ├── whatsapp.ts           # Baileys WhatsApp (text + voice + image)
-│   ├── gmail.ts              # Gmail API (poll + send + OAuth)
-│   ├── calendar.ts           # Google Calendar (poll + dedup + create)
-│   ├── homeassistant.ts      # Home Assistant API
-│   ├── rss.ts                # RSS feed polling
-│   ├── owntracks.ts          # OwnTracks location tracking
-│   ├── slack.ts              # Slack integration
-│   ├── browser.ts            # Browser automation + CAPTCHA
-│   ├── twilio.ts             # Twilio voice calls
-│   └── ssh.ts                # SSH key management
+│   ├── whatsapp.ts              # Baileys WhatsApp (text + voice + image)
+│   ├── gmail.ts                 # Gmail API (poll + send + OAuth)
+│   ├── gmail-routes.ts          # Gmail OAuth + management routes
+│   ├── calendar.ts              # Google Calendar (poll + dedup + create)
+│   ├── homeassistant.ts         # Home Assistant API
+│   ├── rss.ts                   # RSS feed polling
+│   ├── owntracks.ts             # OwnTracks location tracking
+│   ├── slack.ts                 # Slack integration
+│   ├── slack-routes.ts          # Slack OAuth routes
+│   ├── browser.ts               # Browser automation + CAPTCHA
+│   ├── twilio.ts                # Twilio voice calls
+│   ├── ssh.ts                   # SSH key management
+│   ├── channel-adapter.ts       # Unified channel abstraction
+│   └── integration-config.ts    # Enable/disable toggles
 ├── memory/
-│   ├── graph.ts              # Multi-layer graph (active + archive + ghost + WAL)
-│   ├─�� types.ts              # 13 node types, edges, operations, ghost/WAL types
-│   ├── activation.ts         # Spreading activation + semantic search
-│   ├── retention.ts          # Ebbinghaus decay + 5 retention tiers
-│   ├── consolidation.ts      # Full consolidation orchestrator
-│   ├── reconstruction.ts     # Archive rescan, log reconstruction, gap detection
-│   ├── embeddings.ts         # Vector embeddings + cosine similarity
-│   └── working-memory.ts     # Short-term context + temporal awareness
+│   ├── graph.ts                 # Multi-layer graph (active + archive + ghost + WAL)
+│   ├── types.ts                 # 13+ node types, edges, operations, ghost/WAL types
+│   ├── activation.ts            # Spreading activation + semantic search
+│   ├── retention.ts             # Ebbinghaus decay + 5 retention tiers
+│   ├── decay.ts                 # Shared decay math
+│   ├── consolidation.ts         # Full consolidation orchestrator
+│   ├── reconstruction.ts        # Archive rescan, log reconstruction, gap detection
+│   ├── embeddings.ts            # Vector embeddings + cosine similarity
+│   ├── person-profiles.ts       # Structured person profile extraction
+│   ├── drift-detection.ts       # Pinned-node content + edge topology drift
+│   ├── retrieval-replay.ts      # Weekly retrieval-behavior golden tests
+│   ├── backup.ts                # Daily restorable snapshots
+│   └── working-memory.ts        # Short-term context + hierarchical summaries
 └── web/
-    ├── api.ts                # REST API endpoints
-    ├── brain-api.ts          # Brain/config API
-    ├── chat-api.ts           # Chat history API
-    ├── contact-api.ts        # Contact/whitelist API
-    ├── integration-api.ts    # Integration CRUD API
-    └── dashboard.ts          # Dashboard data aggregation
+    ├── router.ts                # HTTP router
+    ├── api.ts                   # REST API endpoints
+    ├── auth.ts                  # Dashboard auth
+    ├── brain-api.ts             # Brain/config + backup API
+    ├── chat-api.ts              # Chat history API
+    ├── contact-api.ts           # Contact/whitelist API
+    ├── integration-api.ts       # Integration CRUD API
+    ├── providers-api.ts         # Provider + per-action model API
+    └── skills-api.ts            # Skills catalog + install API
 
 frontend/
 ├── app/
-│   ├── pages/                # Overview, Dashboard, Chat, Brain, Memory,
-│   │                         # Integrations, AI Providers, Directives,
-│   │                         # Handlers, Sub-Agents, Settings, Login
-│   ├── components/           # UI components + integration cards
-│   ├── composables/          # Shared logic (useApi, useAuth, useTimeAgo)
-│   └── stores/               # Pinia stores (chat, etc.)
+│   ├── pages/                   # Overview, Dashboard, Chat, Brain, Memory,
+│   │                            # Integrations, AI Providers, Directives,
+│   │                            # Handlers, Sub-Agents, Skills, Backups,
+│   │                            # Settings, Login
+│   ├── components/              # UI components + integration cards
+│   ├── composables/             # Shared logic (useApi, useAuth, useTimeAgo)
+│   └── stores/                  # Pinia stores (chat, etc.)
 └── server/
-    └── api/                  # Nuxt server proxy routes
+    └── api/                     # Nuxt server proxy routes
 ```
 
 ## License
