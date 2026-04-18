@@ -28,6 +28,7 @@ import { getBrainConfig, getOwnerLocalDate, getOwnerLocalTime } from "./brain-co
 
 import { BRAIN_DIR, OWNER_NAME, GITHUB_REPO } from "./config.js";
 import { createBackup, shouldRunBackup, BACKUP_INTERVAL } from "./memory/backup.js";
+import { shouldRunReplay, replayAndCompare } from "./memory/retrieval-replay.js";
 import { loadConsciousness } from "./consciousness.js";
 
 // ── Extracted modules ──
@@ -718,6 +719,21 @@ async function tick(
       log("Daily memory backup completed");
     } catch (err) {
       log(`Daily backup failed: ${err}`);
+    }
+  }
+
+  // ── Weekly retrieval-drift replay (structural, no Claude call) ──
+  // Replays a fixed set of canonical prompts through the activation pipeline
+  // and compares top-K node sets against a stored baseline. External,
+  // non-circular drift signal distinct from source-code and pinned-node drift.
+  if (shouldRunReplay()) {
+    try {
+      const replayReport = replayAndCompare(graph);
+      if (replayReport?.alert) {
+        log(`⚠ RETRIEVAL REPLAY ALERT: ${replayReport.alert}`);
+      }
+    } catch (err) {
+      log(`Retrieval replay failed (non-fatal): ${err}`);
     }
   }
 
