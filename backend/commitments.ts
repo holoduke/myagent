@@ -100,6 +100,12 @@ const SELF_REFLECTIVE_PHRASES = [
   "parse the",
   "think about how",
   "figure out what",
+  "format the final",
+  "output json",
+  "json output",
+  "final json",
+  "wrapping up",
+  "outputting json",
 ];
 
 /**
