@@ -57,6 +57,106 @@ import { OWNER_NAME as RAW_OWNER_NAME } from "./config.js";
 const OWNER_NAME = RAW_OWNER_NAME.toLowerCase();
 const OWNER_NAME_PATTERN = new RegExp(`\\b${OWNER_NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
 
+// ── High-signal email sender content gating ──
+// Emails from Dutch gov / banking / insurance domains often get an intuitive
+// urgency boost, but many are routine receipt notifications ("document ontvangen",
+// "inzage beschikbaar") with no deadline or required action. Flagging these as
+// URGENT erodes the signal quality of the urgency system. Gate urgency on these
+// senders: require action/deadline language in the body before treating as urgent.
+
+const HIGH_SIGNAL_EMAIL_DOMAIN_PATTERNS: RegExp[] = [
+  // Dutch government
+  /@belastingdienst\.nl/i,
+  /@(?:[\w.-]+\.)?mijnoverheid\.nl/i,
+  /@(?:[\w.-]+\.)?overheid\.nl/i,
+  /@logius\.nl/i,
+  /@digid\.nl/i,
+  /@uwv\.nl/i,
+  /@svb\.nl/i,
+  /@duo\.nl/i,
+  /@rdw\.nl/i,
+  /@cjib\.nl/i,
+  /@gemeente[\w.-]*\.nl/i,
+  // Banking
+  /@ing\.nl/i,
+  /@rabobank\.nl/i,
+  /@abnamro\.nl/i,
+  /@snsbank\.nl/i,
+  /@asnbank\.nl/i,
+  /@triodos\.nl/i,
+  /@knab\.nl/i,
+  /@bunq\.com/i,
+  /@revolut\.com/i,
+];
+
+// Action-required / deadline language. If any of these match the email body,
+// the urgency keyword score is allowed to stand; otherwise it is capped at a
+// "routine-notification" level.
+const ACTION_REQUIRED_PATTERNS: RegExp[] = [
+  // Dutch — deadlines & action
+  /\buiterlijk\b/i,
+  /\bvervaldatum\b/i,
+  /\bvervalt\b/i,
+  /\bdeadline\b/i,
+  /\bactie\s+vereist\b/i,
+  /\bactie\s+nodig\b/i,
+  /\breageer\s+voor\b/i,
+  /\breageren\s+voor\b/i,
+  /\bbinnen\s+\d+\s+dagen\b/i,
+  /\bvoor\s+\d{1,2}[-/]\d{1,2}/i, // voor 30/04, voor 30-4
+  // Dutch — payment / filing
+  /\bbetaling\b/i,
+  /\bte\s+betalen\b/i,
+  /\bbetaal(?:\s|$)/i,
+  /\bovermaken\b/i,
+  /\bopenstaand(?:\s+bedrag)?\b/i,
+  /\bachterstand\b/i,
+  /\baanmaning\b/i,
+  /\bincasso\b/i,
+  /\baangifte\b/i,
+  /\bafrekening\b/i,
+  // English
+  /\baction\s+required\b/i,
+  /\brespond\s+by\b/i,
+  /\bpay\s+(?:by|before)\b/i,
+  /\bdue\s+(?:by|before|on)\b/i,
+  /\bpayment\s+due\b/i,
+  /\boverdue\b/i,
+  // Amount-due patterns
+  /€\s*\d/,
+  /\bEUR\s*\d/i,
+  /\b\d+[.,]\d{2}\s*(?:euro|EUR|€)/i,
+];
+
+function getEmailSenderAddress(obs: Observation): string {
+  const raw = obs.emailMeta?.from || obs.sender || "";
+  const match = /<([^>]+)>/.exec(raw);
+  return (match ? match[1] : raw).trim();
+}
+
+function isHighSignalEmailSender(obs: Observation): boolean {
+  if (obs.source !== "gmail") return false;
+  const addr = getEmailSenderAddress(obs);
+  return HIGH_SIGNAL_EMAIL_DOMAIN_PATTERNS.some(re => re.test(addr));
+}
+
+function hasActionRequiredContent(text: string): boolean {
+  return ACTION_REQUIRED_PATTERNS.some(re => re.test(text));
+}
+
+/**
+ * A high-signal email sender (gov / banking) with no action-required or deadline
+ * language in the body — i.e. a routine receipt/notification email. Caller
+ * should treat urgency as capped at a routine-notification level.
+ */
+export function isRoutineEmailNotification(obs: Observation): boolean {
+  if (!isHighSignalEmailSender(obs)) return false;
+  return !hasActionRequiredContent(obs.text);
+}
+
+/** Max urgency allowed for a routine notification from a high-signal domain. */
+const ROUTINE_NOTIFICATION_URGENCY_CAP = 0.2;
+
 // ── Urgency Scoring (zero Claude cost) ──
 
 // Urgency decays over time — a 3-hour-old "emergency" is less urgent than a fresh one.
@@ -105,6 +205,19 @@ export function scoreUrgency(obs: Observation): number {
   const punctCount = (text.match(/[!?]/g) || []).length;
   if (punctCount >= 3) {
     score = Math.max(score, 0.4);
+  }
+
+  // Content-aware email urgency gating: for emails from Dutch gov / banking /
+  // other high-signal domains, require action-required or deadline language in
+  // the body before treating as urgent. Without such content, cap the score at
+  // a routine-notification level so inbox receipts like "document ontvangen"
+  // do not produce false-urgency flags. Mark the observation for downstream use.
+  if (isRoutineEmailNotification(obs)) {
+    if (score > ROUTINE_NOTIFICATION_URGENCY_CAP) {
+      log(`Capped urgency ${score.toFixed(2)} → ${ROUTINE_NOTIFICATION_URGENCY_CAP} for routine email from ${getEmailSenderAddress(obs)}`);
+    }
+    score = Math.min(score, ROUTINE_NOTIFICATION_URGENCY_CAP);
+    obs.routineNotification = true;
   }
 
   // Apply time decay — stale urgent messages lose urgency over time.
