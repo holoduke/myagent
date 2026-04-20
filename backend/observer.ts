@@ -70,6 +70,8 @@ export interface Observation {
   callMeta?: CallMeta;
   slackMeta?: SlackMeta;
   urgency?: number;
+  /** Email from a high-signal domain (gov, banking) but with no action/deadline language in the body. */
+  routineNotification?: boolean;
   /** Trust classification — set at intake, used for prompt sanitization */
   trustLevel?: "owner" | "trusted" | "untrusted";
   /** Detected commitments in outgoing messages (isFromMe=true only) */
