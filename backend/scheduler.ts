@@ -1,5 +1,5 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
-import { existsSync } from "fs";
+import { existsSync, statSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "./logger.js";
 import { isWhitelisted } from "./contact-whitelist.js";
@@ -38,15 +38,32 @@ function isValidScheduledMessage(entry: unknown): entry is ScheduledMessage {
   );
 }
 
-// Write-through in-memory cache (follows history.ts pattern)
+// Write-through in-memory cache (follows history.ts pattern).
+// scheduleCacheMtime tracks the file's mtime at the time we populated the cache,
+// so externally appended entries (e.g. ARIA writing directly to the schedule file
+// in interactive mode) are detected and reloaded on the next access.
 let scheduleCache: ScheduledMessage[] | null = null;
+let scheduleCacheMtime: number | null = null;
+
+function scheduleFileMtime(): number {
+  try {
+    return statSync(SCHEDULE_FILE).mtimeMs;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw err;
+  }
+}
 
 function loadSchedule(): ScheduledMessage[] {
-  if (scheduleCache) return scheduleCache;
+  const diskMtime = scheduleFileMtime();
+  if (scheduleCache && scheduleCacheMtime !== null && diskMtime <= scheduleCacheMtime) {
+    return scheduleCache;
+  }
   const raw = safeReadJSON<unknown>(SCHEDULE_FILE, []);
   if (!Array.isArray(raw)) {
     log("Schedule file is not a JSON array, starting fresh");
     scheduleCache = [];
+    scheduleCacheMtime = diskMtime;
     return scheduleCache;
   }
   const valid: ScheduledMessage[] = [];
@@ -61,6 +78,7 @@ function loadSchedule(): ScheduledMessage[] {
     log(`Filtered out ${raw.length - valid.length} invalid entry/entries from schedule (${valid.length} valid remaining)`);
   }
   scheduleCache = valid;
+  scheduleCacheMtime = diskMtime;
   return scheduleCache;
 }
 
@@ -69,6 +87,8 @@ function saveSchedule(messages: ScheduledMessage[]): void {
     ensureDir(BRAIN_DIR);
     atomicWriteJSON(SCHEDULE_FILE, messages);
     scheduleCache = messages;
+    // Record the post-write mtime so our own writes don't trigger a reload.
+    scheduleCacheMtime = scheduleFileMtime();
   } catch (err) {
     throw new SchedulerError(`Failed to save schedule: ${err}`, {
       cause: err,
