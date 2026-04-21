@@ -22,7 +22,7 @@ const MIN_CHUNK_LENGTH = 50;
 
 export interface OwnerHandlerDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
-  sendReaction: (jid: string, key: proto.IMessageKey, emoji: string) => Promise<void>;
+  sendReaction: (jid: string, key: proto.IMessageKey | null | undefined, emoji: string) => Promise<void>;
   sendTypingIndicator: (jid: string) => Promise<void>;
   stopTypingIndicator: (jid: string) => Promise<void>;
 }

@@ -13,7 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.16",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "dotenv": "^16.4.7",
     "googleapis": "^171.4.0",
     "patchright": "^1.58.2",

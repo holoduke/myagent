@@ -513,10 +513,10 @@ export async function stopTypingIndicator(jid: string): Promise<void> {
 
 export async function sendReaction(
   jid: string,
-  messageKey: proto.IMessageKey,
+  messageKey: proto.IMessageKey | null | undefined,
   emoji: string
 ): Promise<void> {
-  if (!isConnected) return; // Silently skip reactions when disconnected
+  if (!isConnected || !messageKey) return; // Silently skip reactions when disconnected or no key
   await sock.sendMessage(jid, {
     react: { text: emoji, key: messageKey },
   });
