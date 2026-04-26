@@ -987,11 +987,15 @@ export function buildReflectPrompt(ctx: ReflectContext): string {
     : "";
 
   const siStats = ctx.selfImproveStats;
+  const dailyNudgeActive = (ctx.wm.shortTermTracking ?? []).some(t => t.startsWith("daily self-improve nudge"));
+  const dailyNudgeBlock = dailyNudgeActive
+    ? `\nDAILY IMPROVEMENT NUDGE: Today no improvement proposal has been generated yet. The weekly budget has room. Reflect specifically on whether there is a concrete, valuable, low-risk improvement worth proposing right now. If yes, include it in improvementProposals[]. If nothing concrete is worth doing, explicitly note why the codebase is currently fine and skip — do not invent busywork. Quality over quota.\n`
+    : "";
   const selfImproveBlock = siStats?.enabled ? `
 ═══ SELF-IMPROVEMENT STATUS ═══
 Enabled: YES | Budget: ${siStats.completedThisWeek}/${siStats.maxPerWeek} used this week (${siStats.maxPerWeek - siStats.completedThisWeek} remaining)
 Pending in queue: ${siStats.pendingInQueue} | Auto-approve: ${siStats.autoApprove ? "ON" : `OFF (${ctx.ownerName} reviews proposals in dashboard)`}
-
+${dailyNudgeBlock}
 You SHOULD propose at least one improvement per reflect cycle when budget allows.
 Read your own source code (backend/) to find concrete things to improve. Think about:
 - Bugs or edge cases you've hit during recent ticks

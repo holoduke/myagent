@@ -7,6 +7,7 @@ import { getBrainConfig } from "./brain-config.js";
 import { MemoryGraph } from "./memory/graph.js";
 import { buildImprovementPrompt, buildRecoveryPrompt } from "./self-improve-prompt.js";
 import type { ImprovementTask } from "./self-improve-prompt.js";
+import { normalizeIntentTokens, hashIntent } from "./utils/intent-hash.js";
 import { createLogger } from "./logger.js";
 import { BRAIN_DIR } from "./config.js";
 
@@ -32,6 +33,7 @@ interface ImproveResult {
   metaNodeContent: string;
   completedAt: number;
   wasRollback?: boolean;
+  intent?: { summary: string; tokens: string[]; hash: string };
 }
 
 function parseResult(raw: string): ImproveResult | null {
@@ -39,7 +41,7 @@ function parseResult(raw: string): ImproveResult | null {
     const match = raw.match(/\{[\s\S]*\}/);
     if (!match) return null;
     const parsed = JSON.parse(match[0]);
-    return {
+    const result: ImproveResult = {
       success: !!parsed.success,
       description: parsed.description || "",
       branch: parsed.branch || null,
@@ -49,6 +51,14 @@ function parseResult(raw: string): ImproveResult | null {
       completedAt: Date.now(),
       wasRollback: !!parsed.wasRollback,
     };
+    if (parsed.intent && typeof parsed.intent.summary === "string" && parsed.intent.summary.trim()) {
+      const summary: string = parsed.intent.summary;
+      const rawTokens = Array.isArray(parsed.intent.tokens) ? parsed.intent.tokens : summary;
+      const tokens = normalizeIntentTokens(rawTokens);
+      const hash = hashIntent(tokens);
+      result.intent = { summary, tokens, hash };
+    }
+    return result;
   } catch {
     return null;
   }

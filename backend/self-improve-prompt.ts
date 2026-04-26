@@ -74,6 +74,11 @@ ${nodeContext}
    - For frontend files (frontend/): cd /app/frontend && npx nuxi typecheck
    - If both are changed, run BOTH checks.
 5. Commit with a clear message: "ARIA self-improvement: <what changed>"
+   - In the commit body, include two trailers describing the failure mode this fix addresses:
+       Intent-summary: <one-sentence free-text description of the failure mode>
+       Intent-tokens: <comma-separated short keywords>
+   - The intent.summary must describe the failure mode you believed you were fixing, in your own words.
+   - The intent.tokens are 3-8 short keywords (lowercase, single words preferred) that capture the failure mode at a level another worker fixing the same root cause would also pick. Open vocabulary — do not pick from a fixed list. We hash these later to detect overlap with other workers.
 6. Push the branch: git push origin aria/<short-description>
 7. Create a PR: gh pr create --title "ARIA: <description>" --body "<explanation>"
 
@@ -84,8 +89,15 @@ When done, output ONLY a JSON object:
   "branch": "aria/<branch-name>",
   "prUrl": "https://github.com/${GITHUB_REPO || "<owner>/<repo>"}/pull/N",
   "filesModified": ["backend/file.ts"],
-  "metaNodeContent": "Self-improvement: <1-2 sentence summary for memory graph>"
+  "metaNodeContent": "Self-improvement: <1-2 sentence summary for memory graph>",
+  "intent": {
+    "summary": "<one-sentence free-text description of the failure mode this fix addresses, in your own words>",
+    "tokens": ["token1", "token2", "token3"]
+  }
 }
+
+intent.summary must describe the failure mode you believed you were fixing, in your own words.
+intent.tokens are 3-8 short keywords (lowercase, single words preferred) that capture the failure mode at a level another worker fixing the same root cause would also pick. Open vocabulary — do not pick from a fixed list. We hash these later to detect overlap with other workers.
 
 If you cannot complete the task, output:
 {
@@ -132,6 +144,11 @@ ${lastGoodCommit ? `Last known good commit: ${lastGoodCommit}` : "No last known 
    - Frontend: cd /app/frontend && npx nuxi typecheck
    Both must pass cleanly.
 5. Commit the fix on a feature branch, push, and create a PR.
+   - In the commit body, include two trailers describing the failure mode this fix addresses:
+       Intent-summary: <one-sentence free-text description of the failure mode>
+       Intent-tokens: <comma-separated short keywords>
+   - The intent.summary must describe the failure mode you believed you were fixing, in your own words.
+   - The intent.tokens are 3-8 short keywords (lowercase, single words preferred) that capture the failure mode at a level another worker fixing the same root cause would also pick. Open vocabulary — do not pick from a fixed list. We hash these later to detect overlap with other workers.
 6. If you cannot fix it after careful analysis, and a lastGoodCommit exists, rollback:
    git checkout <lastGoodCommit> -- backend/ frontend/
    Then commit that as a rollback.
@@ -144,8 +161,15 @@ When done, output ONLY a JSON object:
   "prUrl": "https://github.com/${GITHUB_REPO || "<owner>/<repo>"}/pull/N",
   "filesModified": ["backend/file.ts"],
   "metaNodeContent": "Crash recovery: <summary>",
-  "wasRollback": false
+  "wasRollback": false,
+  "intent": {
+    "summary": "<one-sentence free-text description of the failure mode this fix addresses, in your own words>",
+    "tokens": ["token1", "token2", "token3"]
+  }
 }
+
+intent.summary must describe the failure mode you believed you were fixing, in your own words.
+intent.tokens are 3-8 short keywords (lowercase, single words preferred) that capture the failure mode at a level another worker fixing the same root cause would also pick. Open vocabulary — do not pick from a fixed list. We hash these later to detect overlap with other workers.
 
 If all attempts fail:
 {

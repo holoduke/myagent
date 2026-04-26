@@ -41,6 +41,7 @@ import {
   pickUpSubAgentResults,
   checkAndSpawnSubAgentWorkers,
 } from "./brain-workers.js";
+import { loadQueue, getWeeklyCompletedCount } from "./self-improve-queue.js";
 
 const log = createLogger("brain");
 
@@ -427,6 +428,35 @@ async function tick(
 
   // ── Intercept task files → route through queue ──
   interceptDirectTask(IMPROVE_TASK_FILE, QUEUED_MARKER_FILE);
+
+  // ── Daily self-improve nudge: force at least one reflect proposal cycle per day ──
+  try {
+    const ownerHourNow = Number(new Date().toLocaleString("en-US", { timeZone: cfg.ownerTimezone, hour: "numeric", hour12: false }));
+    if (
+      cfg.selfImproveEnabled &&
+      cfg.selfImproveMinPerDay > 0 &&
+      state.lastImproveNudgeDate !== today &&
+      ownerHourNow >= cfg.selfImproveDailyHour
+    ) {
+      const queue = loadQueue();
+      const queuePending = queue.items.filter(i => i.status === "pending" || i.status === "approved" || i.status === "running").length;
+      const weeklyDone = getWeeklyCompletedCount();
+      state.lastImproveNudgeDate = today;
+      if (queuePending === 0 && weeklyDone < cfg.selfImproveMaxPerWeek) {
+        log(`Daily improve nudge: forcing reflect (queue=${queuePending}, weekly=${weeklyDone}/${cfg.selfImproveMaxPerWeek})`);
+        state.lastReflectTick = 0;
+        const wm = loadWorkingMemory();
+        wm.shortTermTracking = wm.shortTermTracking || [];
+        wm.shortTermTracking.push("daily self-improve nudge — generate at least one improvement proposal this reflect if anything concrete and worthwhile is in scope");
+        saveWorkingMemory(wm);
+      } else {
+        log(`Daily improve nudge: skipped (queue=${queuePending}, weekly=${weeklyDone}/${cfg.selfImproveMaxPerWeek})`);
+      }
+      saveState(state);
+    }
+  } catch (err) {
+    log(`Daily improve nudge error: ${err}`);
+  }
 
   // ── Check for pending self-improve task ──
   checkAndSpawnImproveWorker(state, saveState, IMPROVE_TASK_FILE, IMPROVE_RESULT_FILE, QUEUED_MARKER_FILE);
