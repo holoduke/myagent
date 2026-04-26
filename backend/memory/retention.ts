@@ -103,6 +103,14 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
     // Importance-based resistance: high-importance nodes decay slower regardless of frequency
     // importance=1.0 → 0.2x decay, importance=0.5 → 0.6x decay, importance=0 → 1.0x (no effect)
     const importanceResistance = node.importance ? (1 - 0.8 * node.importance) : 1;
+    // Confidence-based resistance: high-confidence (owner-sourced) facts decay slower than
+    // low-confidence (inferred) ones. autoAssignConfidence emits 1.0 owner, 0.7 reported,
+    // 0.5 inferred, so we center the multiplier at 0.5 (neutral) with a 0.8 slope.
+    // confidence=1.0 → 0.6x, confidence=0.7 → 0.84x, confidence=0.5 → 1.0x, confidence=0.3 → 1.16x.
+    // Undefined/null confidence → 1.0x (no effect, treated as unknown).
+    const confidenceResistance = (node.confidence !== undefined && node.confidence !== null)
+      ? (1.4 - 0.8 * node.confidence)
+      : 1;
     // Useless retrieval penalty: nodes repeatedly included in context but never referenced by Claude decay faster
     // Exempt core/important tier nodes and high-importance nodes (>= 0.5) — hub nodes get activated
     // by spreading activation rather than direct reference, so their uselessRetrievalCount climbs
@@ -111,7 +119,7 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
     const uselessPenalty = !exemptFromUselessPenalty && (node.uselessRetrievalCount ?? 0) > 3
       ? 1 + Math.min(1, ((node.uselessRetrievalCount ?? 0) - 3) * 0.25)
       : 1;
-    let effectiveLambda = lambda * resistance * tierMultiplier * importanceResistance * uselessPenalty;
+    let effectiveLambda = lambda * resistance * tierMultiplier * importanceResistance * confidenceResistance * uselessPenalty;
 
     // Phase 5a: Temporal fact validity — accelerate decay for expired facts
     if (node.validUntil && node.validUntil < now) {
