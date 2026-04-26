@@ -175,6 +175,7 @@ export interface BrainState {
   lastSuccessfulTick: number;
   pendingSelfMod: boolean;
   selfModSpawnedAt?: number;
+  lastImproveNudgeDate?: string;
 
   // backups
   lastBackupTick: number;

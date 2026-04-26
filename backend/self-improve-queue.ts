@@ -19,6 +19,7 @@ export interface ImproveResult {
   prUrl?: string;
   branch?: string;
   wasRollback?: boolean;
+  intent?: { summary: string; tokens: string[]; hash: string };
 }
 
 export interface QueueItem {

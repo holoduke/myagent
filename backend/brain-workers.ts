@@ -11,6 +11,7 @@ import type { BrainState } from "./memory/types.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import {
   loadQueue,
+  loadHistory,
   enqueue,
   approveItem,
   dequeueApproved,
@@ -18,6 +19,7 @@ import {
   failItem,
   getWeeklyCompletedCount,
 } from "./self-improve-queue.js";
+import { findIntentCollisions } from "./utils/intent-hash.js";
 import {
   getDueSubAgents,
   loadSubAgentState,
@@ -98,6 +100,7 @@ export function pickUpImproveResult(
         prUrl: result.prUrl || undefined,
         branch: result.branch || undefined,
         wasRollback: result.wasRollback || undefined,
+        intent: result.intent || undefined,
       };
       if (result.success) {
         completeItem(queueItemId, queueResult);
@@ -125,6 +128,38 @@ export function pickUpImproveResult(
       });
       graph.save();
       log(`Created meta node ${id} from improve result`);
+    }
+
+    // Intent-collision detection: capture loose, classify late.
+    // Cluster on intent.hash to spot when two workers shipped fixes for the same root cause.
+    if (result.success && result.intent?.hash) {
+      try {
+        const history = loadHistory();
+        const matches = findIntentCollisions(history.entries, result.intent.hash, 30)
+          .filter(m => m.id !== queueItemId);
+        if (matches.length > 0) {
+          const summaries = matches
+            .map(m => (m.task?.description ?? "").slice(0, 60))
+            .filter(s => s.length > 0)
+            .join("; ");
+          const collisionId = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+          graph.addNode({
+            id: collisionId,
+            type: "meta",
+            content: `Intent collision detected: '${result.intent.summary}' (hash ${result.intent.hash}) overlaps with ${matches.length} prior improvement(s) in last 30 days: ${summaries}. Two workers may have fixed the same root cause from different ends — review diffs to determine duplicate / complementary / conflicting.`,
+            tags: ["self-improvement", "intent-collision"],
+            strength: 0.9,
+            pinned: true,
+            createdAt: Date.now(),
+            lastAccessedAt: Date.now(),
+            accessCount: 1,
+          });
+          graph.save();
+          log(`Intent collision: ${collisionId} (${matches.length} prior match(es) on hash ${result.intent.hash})`);
+        }
+      } catch (err) {
+        log(`Intent collision check failed: ${err}`);
+      }
     }
 
     state.pendingSelfMod = false;
