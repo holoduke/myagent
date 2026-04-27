@@ -17,7 +17,7 @@ import { createHash } from "crypto";
 import { EventEmitter } from "events";
 import { createLogger } from "../logger.js";
 import { transcribeAudio } from "../utils/transcribe.js";
-import { describeImage } from "../utils/vision.js";
+import { describeImage, isVisionRefusal } from "../utils/vision.js";
 
 // Emits 'logout' when WhatsApp session is logged out.
 // Listeners can perform cleanup before the process exits.
@@ -324,18 +324,26 @@ export async function startWhatsApp(
 
       // ── Multimodal: image understanding ──
       if (!resolvedText.trim() && m?.imageMessage) {
+        mediaType = "image";
+        let description: string | null = null;
         try {
           const buffer = await downloadMediaMessage(msg, "buffer", {}) as Buffer;
           const mimetype = m.imageMessage.mimetype || "image/jpeg";
           const caption = m.imageMessage.caption || undefined;
-          const description = await describeImage(buffer, mimetype, caption);
-          if (description) {
-            resolvedText = `[image] ${description}`;
-            mediaType = "image";
-            log.info(`Described image: ${description.slice(0, 80)}`);
-          }
+          description = await describeImage(buffer, mimetype, caption);
         } catch (err) {
           log(`Failed to process image message: ${err}`);
+        }
+        // Defense in depth: re-check the description for refusal-style text in
+        // case it slipped past describeImage's own guard.
+        if (description && !isVisionRefusal(description)) {
+          resolvedText = `[image] ${description}`;
+          log.info(`Described image: ${description.slice(0, 80)}`);
+        } else {
+          // Caption failed (vision unavailable, refusal, error). Keep a neutral
+          // marker so downstream reasoning sees an image arrived without
+          // ingesting fabricated/refusal content as if the sender wrote it.
+          resolvedText = "[image — caption failed]";
         }
       }
 

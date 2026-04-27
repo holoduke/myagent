@@ -16,6 +16,34 @@ const log = createLogger("vision");
 const TEMP_DIR = "/tmp/aria-vision";
 const MAX_IMAGE_SIZE_MB = 10;
 
+/**
+ * Detect refusal/error preambles emitted by the vision LLM when it cannot
+ * actually access the temp image file (e.g., Read tool not granted, sandbox
+ * denied, or the model declines for any reason). Treating such output as a
+ * caption pollutes the observation stream and looks like prompt-injection.
+ */
+export function isVisionRefusal(text: string): boolean {
+  if (!text) return true;
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return true;
+  // Hard signal: the temp path leaked from our prompt back into the answer.
+  if (trimmed.includes("/tmp/aria-vision")) return true;
+  // Hard signal: explicit ask for permission/access.
+  if (/\b(grant|give|provide)\s+(me\s+)?(access|permission|read access)\b/i.test(trimmed)) return true;
+  if (/\bplease\s+(grant|enable|allow)\b/i.test(trimmed)) return true;
+  // Refusal preambles at the start of the response.
+  const refusalPrefixes = [
+    /^i\s+don'?t\s+have\s+(the\s+)?(permission|access|ability|capability)/i,
+    /^i\s+(can'?t|cannot|am\s+unable\s+to|won'?t\s+be\s+able\s+to)\s+.{0,40}\b(access|read|view|see|open|look\s+at|process)/i,
+    /^i'?m\s+(unable|sorry|not\s+able)/i,
+    /^sorry,?\s+i\s+(can'?t|cannot|don'?t)/i,
+    /^i\s+apologize/i,
+    /^as\s+an\s+ai\b/i,
+    /^unfortunately,?\s+i\b/i,
+  ];
+  return refusalPrefixes.some((rx) => rx.test(trimmed));
+}
+
 // Runner cache — keyed by model so config changes take effect
 let runner: LlmRunner | null = null;
 let runnerModel: string | undefined;
@@ -83,6 +111,10 @@ export async function describeImage(
     }
 
     const description = result.trim();
+    if (isVisionRefusal(description)) {
+      log(`Vision returned refusal-style text (dropping): ${description.slice(0, 120)}`);
+      return null;
+    }
     log(`Described image (${(buffer.length / 1024).toFixed(0)}KB ${ext}) → ${description.length} chars`);
     return description;
   } catch (err) {
