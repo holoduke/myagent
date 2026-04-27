@@ -20,6 +20,7 @@ import { getBrainConfig } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 import type { Observation } from "./observer.js";
 import { verify } from "./action-verifier.js";
+import { resolveCanonicalJid } from "./contact-whitelist.js";
 import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("reply-agent");
@@ -299,7 +300,9 @@ export async function dispatchReply(
   decision: ReplyDecision,
   directiveId: string,
 ): Promise<void> {
-  const chatJid = obs.chatJid || obs.senderJid;
+  // Resolve @lid aliases to the contact's canonical phone JID so the verifier's
+  // strict @s.whatsapp.net/@g.us check accepts whitelisted Baileys v7 LID forms.
+  const chatJid = resolveCanonicalJid(obs.chatJid || obs.senderJid);
   const replyText = decision.reply;
 
   // Guard: no reply text

@@ -2,7 +2,7 @@ import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js"
 import { existsSync, statSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "./logger.js";
-import { isWhitelisted } from "./contact-whitelist.js";
+import { isWhitelisted, resolveCanonicalJid } from "./contact-whitelist.js";
 import { SchedulerError } from "./brain-errors.js";
 import { BRAIN_DIR } from "./config.js";
 
@@ -105,9 +105,12 @@ export function scheduleMessage(
   source: string = "chat",
 ): string {
   const id = `sched_${randomUUID()}`;
+  // Resolve @lid aliases to canonical phone JIDs at enqueue time so dedup,
+  // whitelist checks and the verifier's JID-format check all see the same form.
+  const canonicalJid = resolveCanonicalJid(targetJid);
   const entry: ScheduledMessage = {
     id,
-    targetJid,
+    targetJid: canonicalJid,
     message,
     scheduledAt: Date.now(),
     deliverAt,
@@ -205,6 +208,14 @@ export function getDueMessages(): ScheduledMessage[] {
 
   const due = schedule.filter(m => m.deliverAt <= now && !inFlightIds.has(m.id));
   if (due.length === 0) return [];
+
+  // Defensive normalization: resolve any @lid aliases on already-queued entries
+  // (e.g. messages enqueued before the canonicalization fix landed) so the
+  // verifier's strict JID-format check doesn't block them at dispatch.
+  for (const m of due) {
+    const canonical = resolveCanonicalJid(m.targetJid);
+    if (canonical !== m.targetJid) m.targetJid = canonical;
+  }
 
   // Mark ALL due messages as in-flight immediately to prevent race conditions.
   // This must happen before any other processing (whitelist, etc.) to ensure
