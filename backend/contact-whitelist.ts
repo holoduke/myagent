@@ -77,6 +77,23 @@ export function isWhitelisted(jid: string): boolean {
   return loadWhitelist().some(c => matchesContact(c, jid));
 }
 
+/**
+ * Resolve a JID (possibly an @lid alias or LID-prefixed form) to the contact's
+ * canonical primary JID. Used to translate Baileys v7 LID identities (e.g.
+ * "220903052992671@lid") back to the @s.whatsapp.net phone JID before sending,
+ * so action-verifier's strict JID format check accepts them.
+ *
+ * If the JID does not match any whitelisted contact, returns it unchanged so
+ * downstream validation can still reject unknown @lid forms.
+ */
+export function resolveCanonicalJid(jid: string): string {
+  const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
+  if (jid === ownerJid) return jid;
+  if (stripLidPrefix(jid) === ownerJid) return ownerJid;
+  const contact = loadWhitelist().find(c => matchesContact(c, jid));
+  return contact ? contact.jid : jid;
+}
+
 export function addToWhitelist(jid: string, name: string): void {
   const contacts = loadWhitelist();
   if (contacts.some(c => c.jid === jid)) return;
