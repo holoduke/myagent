@@ -15,8 +15,23 @@ import { dispatchReply } from "./reply-agent.js";
 import { runMessageHandlers } from "./message-handlers.js";
 import { BRAIN_DIR } from "./config.js";
 import { updateFrequency } from "./frequency-tracker.js";
+import { isVisionRefusal } from "./utils/vision.js";
 
 const log = createLogger("observer");
+
+/**
+ * If an image-prefixed observation carries a vision-LLM refusal as its
+ * "caption", replace it with a neutral marker. Refusal text masquerading as
+ * caption pollutes the observation stream and resembles prompt-injection.
+ */
+function sanitizeImageCaption(text: string): string {
+  if (!text.startsWith("[image]")) return text;
+  const caption = text.slice("[image]".length).trim();
+  if (caption.length > 0 && isVisionRefusal(caption)) {
+    return "[image — caption failed]";
+  }
+  return text;
+}
 
 
 const OBS_FILE = `${BRAIN_DIR}/observations.jsonl`;
@@ -173,6 +188,12 @@ function getObservationKey(obs: Observation): string {
 }
 
 export function recordObservation(obs: Observation): void {
+  // Defense in depth: strip vision-LLM refusal text masquerading as a caption
+  // before it lands in the observations file or downstream pipelines.
+  if (obs.text) {
+    obs.text = sanitizeImageCaption(obs.text);
+  }
+
   const key = getObservationKey(obs);
   if (recentObservationKeys.has(key)) return; // deduplicated
 
