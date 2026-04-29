@@ -421,6 +421,17 @@ export function spacedRepetitionRefresh(graph: MemoryGraph): number {
   return refreshed;
 }
 
+// ── Rejected-Edge Pruning ──
+
+/**
+ * Prune stale or dangling rejected-edge entries.
+ * Delegates to the graph (which owns the storage); kept here so it slots into
+ * the consolidation pipeline alongside the other decay/prune steps.
+ */
+export function pruneRejectedEdges(graph: MemoryGraph): number {
+  return graph.pruneRejectedEdges();
+}
+
 // ── Auto-Confidence Assignment ──
 
 /**

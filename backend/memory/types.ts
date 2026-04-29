@@ -79,6 +79,27 @@ export interface MemoryEdge {
   lastReinforcedAt: number;
 }
 
+// ── Rejected Edges ──
+// Lightweight tombstones for proposed-but-refused candidate edges.
+// Stored without semantic content or embedding so spreading activation can
+// surface prior refusals and avoid re-deriving the same nos.
+
+export interface RejectedEdge {
+  from: string;
+  to: string;
+  type?: EdgeType;             // optional — null/undefined means "any type"
+  reason: string;              // one-line, free-form justification
+  rejectedAt: number;          // unix ms — first rejection
+  lastSeenAt: number;          // unix ms — last time this candidate resurfaced
+  seenCount: number;           // how many times the same candidate has been considered
+}
+
+/** Max stored rejected edges before LRU eviction */
+export const MAX_REJECTED_EDGES = 1000;
+
+/** TTL for rejected-edge entries before pruning (90 days). Reinforcement (lastSeenAt) extends life. */
+export const REJECTED_EDGE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
 // ── Working Memory ──
 
 export interface WorkingGoalRef {
@@ -196,7 +217,8 @@ export type MemoryOperation =
   | { op: "update_edge"; from: string; to: string; weight?: number; type?: EdgeType }
   | { op: "merge_nodes"; ids: string[]; into: { content: string; tags: string[] } }
   | { op: "remove_node"; id: string }
-  | { op: "remove_edge"; from: string; to: string; type?: EdgeType };
+  | { op: "remove_edge"; from: string; to: string; type?: EdgeType }
+  | { op: "reject_edge"; from: string; to: string; type?: EdgeType; reason: string };
 
 // ── Goal Operations ──
 
@@ -372,7 +394,9 @@ export type WALOperationType =
   | "update_edge"
   | "merge_nodes"
   | "archive"
-  | "restore";
+  | "restore"
+  | "reject_edge"
+  | "prune_rejected_edges";
 
 export interface WALEntry {
   ts: number;                    // unix ms

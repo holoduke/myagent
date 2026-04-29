@@ -11,6 +11,7 @@ import {
   autoInferSalience,
   spacedRepetitionRefresh,
   autoAssignConfidence,
+  pruneRejectedEdges,
 } from "./retention.js";
 import { flushEmbeddings } from "./embeddings.js";
 import {
@@ -207,6 +208,7 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): Consol
     const edgeResult = applyEdgeDecay(graph);
     const orphansPruned = pruneOrphans(graph);
     const emergencyPruned = emergencyPrune(graph, 500, tierCache);
+    pruneRejectedEdges(graph);
 
     // Periodic archive rescan — check if any archived memories match current context
     const archiveRestored = wm ? rescanArchive(graph, wm) : 0;
