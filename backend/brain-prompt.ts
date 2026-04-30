@@ -1,7 +1,7 @@
 import type { Observation } from "./observer.js";
 import type { MemoryNode, WorkingMemory } from "./memory/types.js";
 import type { MemoryGraph } from "./memory/graph.js";
-import { serializeNodesForPrompt } from "./memory/activation.js";
+import { serializeNodesForPrompt, collectRelevantRejectedEdges, formatRejectedEdgesForPrompt } from "./memory/activation.js";
 import { ariaPersonality } from "./aria-identity.js";
 import type { CharacterOverride } from "./aria-identity.js";
 import { getBrainConfig, getCharacterPreset, getOwnerLocalTime } from "./brain-config.js";
@@ -363,6 +363,7 @@ Operations (use "n_" + 8 random hex for IDs):
   update_edge: {op,from,to,weight?,type?}
   merge_nodes: {op,ids[],into:{content,tags}}
   remove_node/remove_edge: {op,id} or {op,from,to}
+  reject_edge: {op,from,to,type?,reason} — record a candidate edge you considered but refused. Stores only (from,to,ts,reason) — no content, no embedding. Surfaces back via spreading activation so you don't re-derive the same no.
 
 Pin important nodes (key people, core facts) — pinned nodes never decay.
 Set confidence on belief/fact nodes: 1.0=verified, 0.7=reliable, 0.5=moderate, 0.3=low.
@@ -660,6 +661,11 @@ export function buildThinkPrompt(ctx: ThinkContext): string {
     ? `\n═══ RECENTLY SENT (chat session / other) ═══\n\nThese messages and emails were already sent recently. Do NOT send duplicate messages or emails to the same contacts/recipients about the same topics.\n\n${ctx.recentChatDeliveries.map(d => `  [${formatTime(d.timestamp)}] → ${d.jid}: "${d.messageSnippet}"`).join("\n")}\n`
     : "";
 
+  const rejectedEdges = collectRelevantRejectedEdges(ctx.graph, ctx.contextNodes);
+  const rejectedBlock = rejectedEdges.length > 0
+    ? `\n═══ PRIOR REJECTIONS ═══\n\nThese candidate edges were proposed before and refused. Do NOT re-propose them unless the reason no longer applies — strengthen the existing rejection (reject_edge again with the same from/to) instead of rederiving.\n\n${formatRejectedEdgesForPrompt(rejectedEdges, ctx.graph)}\n`
+    : "";
+
   return `${brainTickPersonality(ctx.ownerName, ctx.githubRepo, "think")}
 
 ═══ CURRENT STATE ═══
@@ -675,7 +681,7 @@ ${formatWorkingMemory(ctx.wm)}
 ${formatConsciousnessSection()}${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}${formatEnhancedContextSections(ctx.graph)}${formatCognitiveLoadSection(ctx.wm, ctx.observations)}${formatDigestTemplate(ctx.wm, ctx.graph)}
 ═══ ACTIVATED MEMORIES ═══
 ${serializeNodesForPrompt(ctx.contextNodes, ctx.graph)}
-
+${rejectedBlock}
 ═══ NEW OBSERVATIONS ═══
 ${formatObservations(ctx.observations)}
 ${formatIntentSummary(ctx.observations)}${OPERATION_INSTRUCTIONS}
@@ -777,6 +783,7 @@ export interface ConsolidateContext {
   deltaReport?: import("./memory/decay.js").DeltaReport | null;
   lowFidelityReconstructions?: import("./memory/decay.js").FidelityResult[];
   gistClusters?: MemoryNode[][];
+  rejectedEdgeCount?: number;
 }
 
 export function buildConsolidatePrompt(ctx: ConsolidateContext): string {
@@ -799,7 +806,7 @@ Note: removed nodes are archived to long-term cold storage, not permanently dele
 ${formatWorkingMemory(ctx.wm)}
 
 ═══ GRAPH STATS ═══
-Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Ghosts: ${ctx.stats.ghostCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
+Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Ghosts: ${ctx.stats.ghostCount} | Rejected edges: ${ctx.rejectedEdgeCount ?? 0} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
 By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(", ")}
 
 ═══ WEAK NODES (candidates for archiving) ═══
@@ -810,6 +817,13 @@ ${ctx.orphanNodes.length > 0 ? formatNodeList(ctx.orphanNodes) : "(none)"}
 
 ═══ POTENTIAL DUPLICATES ═══
 ${ctx.duplicateCandidates.length > 0 ? formatDuplicates(ctx.duplicateCandidates) : "(none)"}
+${(() => {
+  const weakOrphan = [...ctx.weakNodes, ...ctx.orphanNodes];
+  const rejected = collectRelevantRejectedEdges(ctx.graph, weakOrphan, 8);
+  return rejected.length > 0
+    ? `\n═══ PRIOR REJECTIONS (touching weak/orphan nodes) ═══\n${formatRejectedEdgesForPrompt(rejected, ctx.graph)}\n`
+    : "";
+})()}
 ${ctx.gistClusters && ctx.gistClusters.length > 0 ? `
 ═══ GIST EXTRACTION CANDIDATES ═══
 These clusters of old, weakening nodes share themes and could be summarized into semantic "gist" nodes.

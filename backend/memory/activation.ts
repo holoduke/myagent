@@ -1,5 +1,5 @@
 import type { MemoryGraph } from "./graph.js";
-import type { MemoryNode, WorkingMemory } from "./types.js";
+import type { MemoryNode, RejectedEdge, WorkingMemory } from "./types.js";
 import type { Observation } from "../observer.js";
 import { createLogger } from "../logger.js";
 import { getBrainConfig } from "../brain-config.js";
@@ -194,6 +194,25 @@ export function spreadingActivation(
     if (!node?.emotionalValence) continue;
     const emotionalBoost = Math.abs(node.emotionalValence) * 0.15;
     activations.set(id, activation * (1 + emotionalBoost));
+  }
+
+  // Rejected-edge surfacing: when an activated node has a previously rejected
+  // candidate edge, weakly activate the other endpoint so the brain sees the
+  // prior "no" alongside the candidate it's about to re-derive.
+  const REJECTED_SPREAD = 0.08;
+  const seededIds = Array.from(activations.keys());
+  for (const id of seededIds) {
+    const incident = graph.getRejectedEdgesFor(id);
+    if (incident.length === 0) continue;
+    const seedActivation = activations.get(id) ?? 0;
+    for (const r of incident) {
+      const otherId = r.from === id ? r.to : r.from;
+      if (!graph.getNode(otherId)) continue; // skip archived/ghost endpoints
+      const bump = seedActivation * REJECTED_SPREAD;
+      if (bump < 0.01) continue;
+      const existing = activations.get(otherId) ?? 0;
+      activations.set(otherId, Math.max(existing, bump));
+    }
   }
 
   // Collect and sort by activation
@@ -510,6 +529,60 @@ export function selectContextForReflect(graph: MemoryGraph): MemoryNode[] {
   const result = [...pinned, ...strongest, ...metaAndPlans];
   log(`Reflect context: ${result.length} nodes (${pinned.length} pinned, ${strongest.length} strongest, ${metaAndPlans.length} meta/plan)`);
   return result.slice(0, 40);
+}
+
+// ── Rejected-Edge Surfacing ──
+
+/**
+ * Collect rejected edges that touch any of the supplied nodes.
+ * Used so spreading activation can surface "prior nos" alongside the active
+ * graph and prevent the brain from re-deriving the same refusal.
+ *
+ * Returns at most maxEntries, freshest (highest lastSeenAt) first.
+ */
+export function collectRelevantRejectedEdges(
+  graph: MemoryGraph,
+  nodes: MemoryNode[],
+  maxEntries = 12,
+): RejectedEdge[] {
+  if (nodes.length === 0) return [];
+  const ids = new Set(nodes.map(n => n.id));
+  const seen = new Set<string>();
+  const matches: RejectedEdge[] = [];
+  for (const entry of graph.allRejectedEdges()) {
+    if (!ids.has(entry.from) && !ids.has(entry.to)) continue;
+    const key = `${entry.from}|${entry.to}|${entry.type ?? "*"}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    matches.push(entry);
+    if (matches.length >= maxEntries) break;
+  }
+  return matches;
+}
+
+/**
+ * Format rejected edges as a compact prompt block. Empty string when none —
+ * caller can drop the section entirely.
+ */
+export function formatRejectedEdgesForPrompt(
+  rejected: RejectedEdge[],
+  graph: MemoryGraph,
+): string {
+  if (rejected.length === 0) return "";
+  const label = (id: string): string => {
+    const node = graph.getNode(id);
+    if (node) return node.content.slice(0, 30);
+    const archived = graph.getArchived(id);
+    if (archived) return `${archived.content.slice(0, 30)} (archived)`;
+    return id;
+  };
+  const lines = rejected.map(r => {
+    const t = r.type ?? "any";
+    const reason = r.reason || "(no reason recorded)";
+    const seen = r.seenCount > 1 ? ` ×${r.seenCount}` : "";
+    return `  [${r.from}→${r.to}] (${t}) "${label(r.from)}" → "${label(r.to)}"${seen}: ${reason}`;
+  });
+  return lines.join("\n");
 }
 
 // ── Serialization ──

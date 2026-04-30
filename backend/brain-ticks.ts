@@ -630,6 +630,7 @@ export async function consolidateTick(
     deltaReport: decayResult.deltaReport,
     lowFidelityReconstructions: decayResult.fidelityResults.filter(r => r.lowFidelity),
     gistClusters,
+    rejectedEdgeCount: graph.rejectedEdgeCount,
   });
 
   const consolidatePromptChars = prompt.length;

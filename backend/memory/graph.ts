@@ -1,8 +1,8 @@
 import { appendFileSync, statSync, renameSync, readdirSync, unlinkSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { randomBytes } from "crypto";
-import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode, ArchivedEdge, GhostNode, WALEntry, WALOperationType } from "./types.js";
-import { MAX_GHOST_NODES, WAL_MAX_BYTES } from "./types.js";
+import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode, ArchivedEdge, GhostNode, WALEntry, WALOperationType, RejectedEdge, EdgeType } from "./types.js";
+import { MAX_GHOST_NODES, WAL_MAX_BYTES, MAX_REJECTED_EDGES, REJECTED_EDGE_TTL_MS } from "./types.js";
 import { createLogger } from "../logger.js";
 import type { Observation } from "../observer.js";
 import { BRAIN_DIR } from "../config.js";
@@ -16,6 +16,7 @@ const NODES_FILE = `${GRAPH_DIR}/nodes.json`;
 const EDGES_FILE = `${GRAPH_DIR}/edges.json`;
 const ARCHIVE_FILE = `${GRAPH_DIR}/archive.json`;
 const GHOST_FILE = `${GRAPH_DIR}/ghost-graph.json`;
+const REJECTED_EDGES_FILE = `${GRAPH_DIR}/rejected-edges.json`;
 const WAL_FILE = `${GRAPH_DIR}/wal.jsonl`;
 
 const MAX_ARCHIVE_NODES = 2000;
@@ -40,6 +41,10 @@ export class MemoryGraph {
 
   // Ghost graph — topology-only remnants of fully evicted nodes
   private ghosts = new Map<string, GhostNode>();
+
+  // Rejected edges — proposed-but-refused candidate associations (no embedding/content)
+  // Key: `${from}|${to}|${type ?? "*"}` for fast lookup.
+  private rejectedEdges = new Map<string, RejectedEdge>();
 
   // Pending observations buffer (for observe ticks)
   private pending: Observation[] = [];
@@ -66,9 +71,14 @@ export class MemoryGraph {
       this.ghosts.set(id, node);
     }
 
+    const rejectedRaw = safeReadJSON<Record<string, RejectedEdge>>(REJECTED_EDGES_FILE, {});
+    for (const [key, entry] of Object.entries(rejectedRaw)) {
+      this.rejectedEdges.set(key, entry);
+    }
+
     this.rebuildIndexes();
     this.validateGraph();
-    log(`Loaded graph: ${this.nodes.size} nodes, ${this.edges.length} edges, ${this.archive.size} archived, ${this.ghosts.size} ghosts`);
+    log(`Loaded graph: ${this.nodes.size} nodes, ${this.edges.length} edges, ${this.archive.size} archived, ${this.ghosts.size} ghosts, ${this.rejectedEdges.size} rejected edges`);
   }
 
   save(): void {
@@ -114,6 +124,17 @@ export class MemoryGraph {
     } catch (err) {
       log(`Failed to save ghost graph: ${err}`);
       throw err;
+    }
+
+    try {
+      // Save rejected edges
+      const rejectedObj: Record<string, RejectedEdge> = {};
+      for (const [key, entry] of this.rejectedEdges) {
+        rejectedObj[key] = entry;
+      }
+      atomicWriteJSON(REJECTED_EDGES_FILE, rejectedObj, 0);
+    } catch (err) {
+      log(`Failed to save rejected edges (non-fatal): ${err}`);
     }
   }
 
@@ -401,6 +422,10 @@ export class MemoryGraph {
     this.edgesFromIdx.get(edge.from)!.push(edge);
     if (!this.edgesToIdx.has(edge.to)) this.edgesToIdx.set(edge.to, []);
     this.edgesToIdx.get(edge.to)!.push(edge);
+    // If this edge had previously been rejected, clear the rejection — the
+    // brain has changed its mind, so we don't want stale "no" entries.
+    this.clearRejectedEdge(edge.from, edge.to, edge.type);
+    this.clearRejectedEdge(edge.from, edge.to);
     this.walLog("add_edge", { edgeFrom: edge.from, edgeTo: edge.to, meta: { type: edge.type } });
   }
 
@@ -443,6 +468,106 @@ export class MemoryGraph {
 
   edgesFor(id: string): MemoryEdge[] {
     return [...this.edgesFrom(id), ...this.edgesTo(id)];
+  }
+
+  // ── Rejected Edges ──
+
+  private rejectedKey(from: string, to: string, type?: EdgeType): string {
+    return `${from}|${to}|${type ?? "*"}`;
+  }
+
+  /**
+   * Record a rejected candidate edge. If the same candidate already exists,
+   * its lastSeenAt and seenCount are bumped (cheap reinforcement) and the
+   * reason is updated to the latest justification.
+   */
+  addRejectedEdge(from: string, to: string, reason: string, type?: EdgeType): void {
+    if (from === to) return;
+    const key = this.rejectedKey(from, to, type);
+    const now = Date.now();
+    const existing = this.rejectedEdges.get(key);
+    const trimmedReason = reason.slice(0, 200);
+    if (existing) {
+      existing.lastSeenAt = now;
+      existing.seenCount++;
+      existing.reason = trimmedReason || existing.reason;
+    } else {
+      this.rejectedEdges.set(key, {
+        from,
+        to,
+        type,
+        reason: trimmedReason,
+        rejectedAt: now,
+        lastSeenAt: now,
+        seenCount: 1,
+      });
+      // LRU cap: when over limit, evict oldest by lastSeenAt
+      if (this.rejectedEdges.size > MAX_REJECTED_EDGES) {
+        const sorted = Array.from(this.rejectedEdges.entries())
+          .sort((a, b) => a[1].lastSeenAt - b[1].lastSeenAt);
+        const overflow = this.rejectedEdges.size - MAX_REJECTED_EDGES;
+        for (let i = 0; i < overflow; i++) {
+          this.rejectedEdges.delete(sorted[i][0]);
+        }
+      }
+    }
+    this.walLog("reject_edge", { edgeFrom: from, edgeTo: to, meta: { type, seenCount: this.rejectedEdges.get(key)?.seenCount } });
+  }
+
+  /** Check whether a candidate edge has been rejected (any type matches when type is null/undefined). */
+  hasRejectedEdge(from: string, to: string, type?: EdgeType): boolean {
+    if (this.rejectedEdges.has(this.rejectedKey(from, to, type))) return true;
+    // Also match the wildcard form when a typed query comes in
+    if (type !== undefined && this.rejectedEdges.has(this.rejectedKey(from, to))) return true;
+    return false;
+  }
+
+  /** Return all rejected edges that touch a given node id (either endpoint). */
+  getRejectedEdgesFor(id: string): RejectedEdge[] {
+    const result: RejectedEdge[] = [];
+    for (const entry of this.rejectedEdges.values()) {
+      if (entry.from === id || entry.to === id) result.push(entry);
+    }
+    return result;
+  }
+
+  /** All rejected edges, freshest first. */
+  allRejectedEdges(): RejectedEdge[] {
+    return Array.from(this.rejectedEdges.values()).sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+  }
+
+  /** Drop a rejected entry — e.g. when the brain has changed its mind and re-added the edge. */
+  clearRejectedEdge(from: string, to: string, type?: EdgeType): boolean {
+    const key = this.rejectedKey(from, to, type);
+    return this.rejectedEdges.delete(key);
+  }
+
+  /**
+   * Prune rejected-edge entries that are stale (older than ttlMs since last seen)
+   * or whose endpoints no longer exist anywhere in the graph (active or archived).
+   * Returns count pruned.
+   */
+  pruneRejectedEdges(ttlMs = REJECTED_EDGE_TTL_MS): number {
+    const now = Date.now();
+    let pruned = 0;
+    for (const [key, entry] of this.rejectedEdges) {
+      const stale = now - entry.lastSeenAt > ttlMs;
+      const fromGone = !this.hasTopology(entry.from);
+      const toGone = !this.hasTopology(entry.to);
+      if (stale || fromGone || toGone) {
+        this.rejectedEdges.delete(key);
+        pruned++;
+      }
+    }
+    if (pruned > 0) {
+      this.walLog("prune_rejected_edges", { meta: { count: pruned } });
+      log(`Rejected-edge pruning: removed ${pruned} stale or dangling entries`);
+    }
+    return pruned;
+  }
+
+  get rejectedEdgeCount(): number {
+    return this.rejectedEdges.size;
   }
 
   // ── Hierarchical Traversal ──
@@ -1111,6 +1236,15 @@ export class MemoryGraph {
             applied++;
             break;
           }
+          case "reject_edge": {
+            // Both endpoints must exist somewhere (active, archived, or ghost) — otherwise the
+            // rejection is meaningless. Skip self-loops and missing endpoints.
+            if (op.from === op.to) { skipped++; break; }
+            if (!this.hasTopology(op.from) || !this.hasTopology(op.to)) { skipped++; break; }
+            this.addRejectedEdge(op.from, op.to, op.reason ?? "", op.type);
+            applied++;
+            break;
+          }
           default:
             skipped++;
         }
@@ -1188,7 +1322,7 @@ export class MemoryGraph {
 
   // ── Stats ──
 
-  getStats(): { nodeCount: number; edgeCount: number; archivedCount: number; ghostCount: number; byType: Record<string, number>; avgStrength: number } {
+  getStats(): { nodeCount: number; edgeCount: number; archivedCount: number; ghostCount: number; rejectedEdgeCount: number; byType: Record<string, number>; avgStrength: number } {
     const byType: Record<string, number> = {};
     let totalStrength = 0;
 
@@ -1202,6 +1336,7 @@ export class MemoryGraph {
       edgeCount: this.edges.length,
       archivedCount: this.archive.size,
       ghostCount: this.ghosts.size,
+      rejectedEdgeCount: this.rejectedEdges.size,
       byType,
       avgStrength: this.nodes.size > 0 ? totalStrength / this.nodes.size : 0,
     };

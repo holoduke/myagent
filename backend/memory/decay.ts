@@ -18,6 +18,7 @@ export {
   inferEmotionalValence,
   spacedRepetitionRefresh,
   autoAssignConfidence,
+  pruneRejectedEdges,
   SALIENCE_SIGNALS,
 } from "./retention.js";
 
