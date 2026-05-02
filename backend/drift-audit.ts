@@ -7,8 +7,9 @@
  * /data/brain/drift-reports/.
  */
 
-import { readFileSync, existsSync, readdirSync, unlinkSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "fs";
 import { execSync } from "child_process";
+import { randomBytes } from "node:crypto";
 import { createLogger } from "./logger.js";
 import { askClaude } from "./claude.js";
 import { getBrainConfig } from "./brain-config.js";
@@ -147,16 +148,35 @@ function diffFiles(baseline: Record<string, string>): { changed: string[]; diffs
     changed.push(file);
     parts.push(`── ${file} (${sign}${delta} lines, ${oldLines.length}→${newLines.length}) ──`);
 
-    // Include an abbreviated git diff for this specific file if available
+    // Real unified diff between in-memory baseline content and current content
+    const suffix = `${Date.now()}-${randomBytes(4).toString("hex")}`;
+    const oldTmp = `/tmp/drift-old-${suffix}.txt`;
+    const newTmp = `/tmp/drift-new-${suffix}.txt`;
     try {
-      // Write old content to a temp location for diffing
-      const diffOutput = execSync(
-        `git diff --stat HEAD~20..HEAD -- ${file} 2>/dev/null | tail -5`,
-        { cwd: APP_DIR, timeout: 10_000, encoding: "utf-8" },
-      ).trim();
-      if (diffOutput) parts.push(diffOutput);
+      writeFileSync(oldTmp, oldContent!);
+      writeFileSync(newTmp, newContent!);
+      let diffOutput = "";
+      try {
+        diffOutput = execSync(
+          `diff -u ${oldTmp} ${newTmp}`,
+          { timeout: 10_000, encoding: "utf-8", maxBuffer: 4 * 1024 * 1024 },
+        );
+      } catch (err: unknown) {
+        // diff returns 1 when files differ — that's expected, capture stdout
+        const e = err as { status?: number; stdout?: string | Buffer };
+        if (e && e.status === 1 && e.stdout != null) {
+          diffOutput = typeof e.stdout === "string" ? e.stdout : e.stdout.toString("utf-8");
+        }
+      }
+      if (diffOutput) {
+        const truncated = diffOutput.split("\n").slice(0, 200).join("\n");
+        parts.push(truncated);
+      }
     } catch {
       // fallback: just note it changed
+    } finally {
+      try { unlinkSync(oldTmp); } catch { /* ignore */ }
+      try { unlinkSync(newTmp); } catch { /* ignore */ }
     }
   }
 
@@ -199,6 +219,27 @@ export async function runDriftAudit(): Promise<DriftReport | null> {
   // Check if audit is due
   if (now - state.lastAuditAt < AUDIT_INTERVAL) {
     log(`Drift audit not due yet (last: ${new Date(state.lastAuditAt).toISOString()}, next: ${new Date(state.lastAuditAt + AUDIT_INTERVAL).toISOString()})`);
+    return null;
+  }
+
+  // Guard: skip when commit history is too shallow to be meaningful
+  let commitCount: number;
+  try {
+    const out = execSync("git rev-list --count HEAD", {
+      cwd: APP_DIR,
+      timeout: 10_000,
+      encoding: "utf-8",
+    }).trim();
+    commitCount = parseInt(out, 10);
+    if (!Number.isFinite(commitCount)) throw new Error(`unexpected output: ${out}`);
+  } catch (err) {
+    log(`Drift audit skipped: failed to count commits (${err})`);
+    return null;
+  }
+  if (commitCount < 2) {
+    log(`Drift audit skipped: only ${commitCount} commits in history (need >=2 for meaningful comparison)`);
+    state.lastAuditAt = now;
+    saveState(state);
     return null;
   }
 
