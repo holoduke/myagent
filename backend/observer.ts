@@ -21,16 +21,45 @@ const log = createLogger("observer");
 
 /**
  * If an image-prefixed observation carries a vision-LLM refusal as its
- * "caption", replace it with a neutral marker. Refusal text masquerading as
- * caption pollutes the observation stream and resembles prompt-injection.
+ * "caption", replace it with a clean image marker. Refusal text masquerading
+ * as caption pollutes the observation stream and resembles prompt-injection.
+ *
+ * The bare "[image]" marker is structured: downstream prompts (e.g.
+ * conversation-thread serialization) recognise it and skip it instead of
+ * surfacing a misleading topic.
  */
 function sanitizeImageCaption(text: string): string {
+  // Strip any legacy "[image — caption failed]" stubs that may still live in
+  // observations.jsonl or be replayed from older code paths.
+  if (/^\[image\s*[—\-]\s*caption\s*failed\]\s*$/i.test(text.trim())) {
+    return "[image]";
+  }
   if (!text.startsWith("[image]")) return text;
   const caption = text.slice("[image]".length).trim();
   if (caption.length > 0 && isVisionRefusal(caption)) {
-    return "[image — caption failed]";
+    return "[image]";
   }
   return text;
+}
+
+/**
+ * Defensive runtime assertion: no observation text should match /caption failed/i.
+ * Such text was the legacy stub for vision-LLM failures and pollutes the
+ * active-thread surface (n_cba1a7f0). If we ever see one slip through, strip
+ * it back to a clean image marker and log so we can trace the writer.
+ *
+ * The one legitimate exception is intentional injection-detection logging,
+ * which writes elsewhere and never lands in obs.text.
+ */
+function assertNoCaptionFailedStub(obs: Observation): void {
+  if (!obs.text || !/caption\s*failed/i.test(obs.text)) return;
+  log(`assertion: stripping legacy 'caption failed' stub from observation (sender=${obs.sender}, source=${obs.source || "whatsapp"}, text="${obs.text.slice(0, 80)}")`);
+  obs.text = obs.text.replace(/\[image\s*[—\-]\s*caption\s*failed\]/gi, "[image]").trim();
+  if (/caption\s*failed/i.test(obs.text)) {
+    // Stub didn't match the bracketed form — replace any remaining occurrence wholesale.
+    obs.text = obs.text.replace(/caption\s*failed/gi, "").trim();
+  }
+  if (!obs.text) obs.text = "[image]";
 }
 
 
@@ -192,6 +221,7 @@ export function recordObservation(obs: Observation): void {
   // before it lands in the observations file or downstream pipelines.
   if (obs.text) {
     obs.text = sanitizeImageCaption(obs.text);
+    assertNoCaptionFailedStub(obs);
   }
 
   const key = getObservationKey(obs);

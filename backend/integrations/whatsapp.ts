@@ -340,10 +340,11 @@ export async function startWhatsApp(
           resolvedText = `[image] ${description}`;
           log.info(`Described image: ${description.slice(0, 80)}`);
         } else {
-          // Caption failed (vision unavailable, refusal, error). Keep a neutral
-          // marker so downstream reasoning sees an image arrived without
-          // ingesting fabricated/refusal content as if the sender wrote it.
-          resolvedText = "[image — caption failed]";
+          // Caption failed (vision unavailable, refusal, error). Use a clean
+          // image marker — no error preamble — so downstream sees that an
+          // image arrived without polluting active-thread topics with text
+          // that resembles prompt-injection ("caption failed" / refusal text).
+          resolvedText = "[image]";
         }
       }
 

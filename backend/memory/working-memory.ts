@@ -181,9 +181,27 @@ export function populateTemporalContext(wm: WorkingMemory): void {
 
 // ── Conversation Thread Tracking ──
 
+/**
+ * True if `text` is a bare media marker (e.g. "[image]") with no caption —
+ * not useful as a thread topic. Captioned images are "[image] <description>"
+ * and remain valid topics.
+ */
+function isBareMediaMarker(text: string): boolean {
+  const t = text.trim();
+  return t === "[image]" || t === "[voice]" || t === "[document]";
+}
+
 export function updateConversationThreads(wm: WorkingMemory, observations: Observation[]): void {
   const now = Date.now();
   const STALE_THRESHOLD = 48 * 60 * 60 * 1000; // 48 hours
+
+  // Clean any persisted "caption failed" stub topics from prior runs so the
+  // active-thread surface stops surfacing them on every reflect/think tick.
+  for (const thread of wm.conversationThreads) {
+    if (thread.topic && /caption\s*failed/i.test(thread.topic)) {
+      thread.topic = "(image)";
+    }
+  }
 
   for (const obs of observations) {
     if (!obs.sender) continue;
@@ -192,8 +210,13 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
     // incoming and outgoing messages map to the same thread.
     const key = obs.isGroup ? `group:${obs.groupName || obs.senderJid}` : `dm:${obs.chatJid || obs.senderJid}`;
     let thread = wm.conversationThreads.find(t => t.id === key);
+    const bareMedia = isBareMediaMarker(obs.text);
 
     if (!thread) {
+      // Skip thread creation for bare-media-only observations: an uncaptioned
+      // image from a known contact shouldn't populate the active-thread surface
+      // since the topic would just be "[image]" with no real conversation content.
+      if (bareMedia) continue;
       thread = {
         id: key,
         participants: [obs.sender],
@@ -208,6 +231,7 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
     thread.lastMessageAt = obs.timestamp;
     thread.messageCount++;
     thread.status = "active";
+    // Don't overwrite an informative topic with a bare media marker.
 
     if (!thread.participants.includes(obs.sender)) {
       thread.participants.push(obs.sender);
