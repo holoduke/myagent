@@ -10,6 +10,7 @@ const { mockAppendFileSync, mockStatSync, mockRenameSync } = vi.hoisted(() => ({
 
 vi.mock("../backend/utils/file-store.js", () => ({
   safeReadJSON: (_path: string, defaultValue: unknown) => defaultValue,
+  strictReadJSON: () => null,
   atomicWriteJSON: vi.fn(),
   atomicWriteFile: () => {},
   ensureDir: () => {},

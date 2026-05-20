@@ -1,5 +1,5 @@
-import { appendFileSync, statSync, renameSync, readdirSync, unlinkSync } from "fs";
-import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
+import { appendFileSync, statSync, renameSync, readdirSync, unlinkSync, existsSync } from "fs";
+import { safeReadJSON, strictReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { randomBytes } from "crypto";
 import type { MemoryNode, MemoryEdge, MemoryOperation, NodeType, ArchivedNode, ArchivedEdge, GhostNode, WALEntry, WALOperationType, RejectedEdge, EdgeType } from "./types.js";
 import { MAX_GHOST_NODES, WAL_MAX_BYTES, MAX_REJECTED_EDGES, REJECTED_EDGE_TTL_MS } from "./types.js";
@@ -51,16 +51,44 @@ export class MemoryGraph {
 
   // ── Persistence ──
 
+  /**
+   * Load the graph from disk.
+   *
+   * Nodes and edges are loaded strictly: if the underlying file exists but
+   * is corrupted (truncated, invalid JSON), this throws rather than silently
+   * reinitializing to an empty graph. Empty memory is an alarming, easy-to-miss
+   * outcome — refusing to boot forces the operator to investigate and recover
+   * from `/data/brain/backups/` if needed.
+   *
+   * Archive and ghost graph use lenient reads — they're derivable / recoverable
+   * and a corrupted archive shouldn't take down the agent.
+   */
   load(): void {
     ensureDir(GRAPH_DIR);
 
-    const nodesRaw = safeReadJSON<Record<string, MemoryNode>>(NODES_FILE, {});
-    for (const [id, node] of Object.entries(nodesRaw)) {
-      this.nodes.set(id, node);
+    let nodesRaw: Record<string, MemoryNode> | null;
+    try {
+      nodesRaw = strictReadJSON<Record<string, MemoryNode>>(NODES_FILE);
+    } catch (err) {
+      log(`!! REFUSING TO LOAD: nodes file corrupted at ${NODES_FILE}. Restore from /data/brain/backups/ before restart.`);
+      throw err;
+    }
+    if (nodesRaw) {
+      for (const [id, node] of Object.entries(nodesRaw)) {
+        this.nodes.set(id, node);
+      }
     }
 
-    this.edges = safeReadJSON<MemoryEdge[]>(EDGES_FILE, []);
+    if (existsSync(EDGES_FILE)) {
+      try {
+        this.edges = strictReadJSON<MemoryEdge[]>(EDGES_FILE) ?? [];
+      } catch (err) {
+        log(`!! REFUSING TO LOAD: edges file corrupted at ${EDGES_FILE}. Restore from /data/brain/backups/ before restart.`);
+        throw err;
+      }
+    }
 
+    // Archive and ghost graph are recoverable — safe to fall back on parse error.
     const archiveRaw = safeReadJSON<Record<string, ArchivedNode>>(ARCHIVE_FILE, {});
     for (const [id, node] of Object.entries(archiveRaw)) {
       this.archive.set(id, node);

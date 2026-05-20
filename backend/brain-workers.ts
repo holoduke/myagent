@@ -36,6 +36,7 @@ import {
 import type { SubAgentResult } from "./sub-agents.js";
 import { getBrainConfig } from "./brain-config.js";
 import { randomUUID } from "crypto";
+import { scrubWorkerEnv, findDenylistViolations } from "./utils/worker-sandbox.js";
 
 const log = createLogger("brain-workers");
 
@@ -53,7 +54,7 @@ function spawnSelfImproveWorker(): void {
       detached: true,
       stdio: ["ignore", logFd, logFd],
       cwd: "/app",
-      env: { ...process.env },
+      env: scrubWorkerEnv(process.env),
     });
     child.unref();
     log(`Self-improve worker spawned (pid: ${child.pid})`);
@@ -93,16 +94,28 @@ export function pickUpImproveResult(
       if (running) queueItemId = running.id;
     }
 
+    // Post-hoc sandbox audit: if the worker modified denylisted paths, force-fail
+    // the queue item and loudly record the violation regardless of what the worker
+    // claimed. The PR will still exist on GitHub; a human must close it.
+    const filesModified: string[] = Array.isArray(result.filesModified) ? result.filesModified : [];
+    const violations = findDenylistViolations(filesModified);
+    const sandboxFailed = violations.length > 0;
+    if (sandboxFailed) {
+      log(`SANDBOX VIOLATION: worker modified denylisted files: ${violations.join(", ")}`);
+    }
+
     if (queueItemId) {
       const queueResult = {
-        success: !!result.success,
-        description: result.description || "",
+        success: !sandboxFailed && !!result.success,
+        description: sandboxFailed
+          ? `SANDBOX VIOLATION — worker touched forbidden files: ${violations.join(", ")}. Original: ${result.description || ""}`
+          : (result.description || ""),
         prUrl: result.prUrl || undefined,
         branch: result.branch || undefined,
         wasRollback: result.wasRollback || undefined,
         intent: result.intent || undefined,
       };
-      if (result.success) {
+      if (queueResult.success) {
         completeItem(queueItemId, queueResult);
       } else {
         failItem(queueItemId, queueResult);
@@ -113,15 +126,24 @@ export function pickUpImproveResult(
     try { if (existsSync(queuedMarkerFile)) unlinkSync(queuedMarkerFile); } catch (err) { log(`Failed to clean up queued marker file: ${err}`); }
 
     // Create meta node from result
-    if (result.metaNodeContent) {
+    if (result.metaNodeContent || sandboxFailed) {
       const id = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+      const violationNote = sandboxFailed
+        ? `\n!!! SANDBOX VIOLATION: worker modified denylisted files: ${violations.join(", ")}. PR open but flagged.`
+        : "";
+      const baseContent = result.metaNodeContent || "Self-improvement worker reported no summary";
       graph.addNode({
         id,
         type: "meta",
-        content: result.metaNodeContent + (result.prUrl ? `\nPR: ${result.prUrl}` : ""),
-        tags: ["self-improvement", result.success ? "success" : "failed", ...(result.wasRollback ? ["rollback"] : [])],
-        strength: 0.9,
-        pinned: false,
+        content: baseContent + violationNote + (result.prUrl ? `\nPR: ${result.prUrl}` : ""),
+        tags: [
+          "self-improvement",
+          (sandboxFailed || !result.success) ? "failed" : "success",
+          ...(result.wasRollback ? ["rollback"] : []),
+          ...(sandboxFailed ? ["sandbox-violation"] : []),
+        ],
+        strength: sandboxFailed ? 1.0 : 0.9,
+        pinned: sandboxFailed,
         createdAt: Date.now(),
         lastAccessedAt: Date.now(),
         accessCount: 1,
@@ -327,7 +349,7 @@ function spawnSubAgentWorker(agentId: string): void {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     cwd: "/app",
-    env: { ...process.env },
+    env: scrubWorkerEnv(process.env),
   });
   if (child.pid) {
     markRunning(agentId, child.pid);

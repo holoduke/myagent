@@ -217,13 +217,23 @@ export function applyEdgeDecay(graph: MemoryGraph): { decayed: number; pruned: n
   return { decayed, pruned };
 }
 
+/** Minimum importance to be shielded from orphan-pruning regardless of edge state. */
+export const ORPHAN_PRUNE_IMPORTANCE_FLOOR = 0.7;
+
 /**
  * Prune orphan nodes (no edges) that have existed beyond grace period.
+ *
+ * High-importance nodes (importance >= ORPHAN_PRUNE_IMPORTANCE_FLOOR) are
+ * exempt: edge decay can isolate a structurally important memory through
+ * neighborhood loss alone, and silently archiving it is amnesia. Their
+ * decay-based pruning still applies in `applyDecay` — importance only
+ * shields them from the *orphan* path.
  */
 export function pruneOrphans(graph: MemoryGraph): number {
   const now = Date.now();
   const graceMs = ORPHAN_GRACE_HOURS * 3600000;
   let pruned = 0;
+  let importantSpared = 0;
 
   for (const node of graph.allNodes()) {
     if (node.pinned) continue;
@@ -232,13 +242,19 @@ export function pruneOrphans(graph: MemoryGraph): number {
     // Skip concept nodes with children — they're not truly orphaned
     if (node.type === "concept" && graph.getChildren(node.id).length > 0) continue;
     if (now - node.createdAt < graceMs) continue;
+    // High-importance nodes survive orphaning — their edges may have decayed,
+    // but the content itself is too valuable to silently lose.
+    if ((node.importance ?? 0) >= ORPHAN_PRUNE_IMPORTANCE_FLOOR) {
+      importantSpared++;
+      continue;
+    }
 
     graph.archiveNode(node.id, "orphan");
     pruned++;
   }
 
-  if (pruned > 0) {
-    log(`Orphan pruning: ${pruned} orphan nodes archived`);
+  if (pruned > 0 || importantSpared > 0) {
+    log(`Orphan pruning: ${pruned} archived, ${importantSpared} high-importance spared`);
   }
   return pruned;
 }

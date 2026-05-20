@@ -42,6 +42,7 @@ import {
   checkAndSpawnSubAgentWorkers,
 } from "./brain-workers.js";
 import { loadQueue, getWeeklyCompletedCount } from "./self-improve-queue.js";
+import { startWatchdog, stopWatchdog } from "./brain-watchdog.js";
 
 const log = createLogger("brain");
 
@@ -334,6 +335,11 @@ export function startBrainLoop(
       log(`Initial tick error: ${err}`);
     });
   }, 10000);
+
+  startWatchdog({
+    getLastSuccessfulTick: () => loadState().lastSuccessfulTick,
+    isBrainEnabled: () => getBrainConfig().enabled,
+  });
 }
 
 export function stopBrainLoop(): void {
@@ -352,6 +358,7 @@ export function stopBrainLoop(): void {
     clearInterval(schedulerPollInterval);
     schedulerPollInterval = null;
   }
+  stopWatchdog();
   log("Brain loop stopped");
 }
 
