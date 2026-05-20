@@ -181,6 +181,46 @@ export function populateTemporalContext(wm: WorkingMemory): void {
 
 // ── Conversation Thread Tracking ──
 
+// Newsletter / automation sender patterns. If a participant string matches one
+// of these, the thread is treated as one-way noise — never promoted to "active"
+// in the prompt, and never written as a fresh thread. Defense in depth: applied
+// at both write time (here) and render time (brain-prompt.ts).
+const NEWSLETTER_SUBSTRINGS = [
+  "noreply",
+  "no-reply",
+  "notifications.",
+  "newsletter",
+  "savedsearches",
+  "mailings.",
+  "updates@",
+  "bounce",
+];
+
+const NEWSLETTER_DOMAINS = [
+  "autoscout24",
+  "schoolkassa",
+  "rdw",
+  "anwb.nl/notifications",
+];
+
+export function isNewsletterParticipant(participant: string | undefined | null): boolean {
+  if (!participant) return false;
+  const p = participant.toLowerCase();
+  for (const sub of NEWSLETTER_SUBSTRINGS) {
+    if (p.includes(sub)) return true;
+  }
+  for (const dom of NEWSLETTER_DOMAINS) {
+    if (p.includes(dom)) return true;
+  }
+  return false;
+}
+
+function threadHasNewsletterParticipant(participants: string[] | string | undefined): boolean {
+  if (!participants) return false;
+  const list = Array.isArray(participants) ? participants : [participants];
+  return list.some(isNewsletterParticipant);
+}
+
 export function updateConversationThreads(wm: WorkingMemory, observations: Observation[]): void {
   const now = Date.now();
   const STALE_THRESHOLD = 48 * 60 * 60 * 1000; // 48 hours
@@ -194,6 +234,10 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
     let thread = wm.conversationThreads.find(t => t.id === key);
 
     if (!thread) {
+      // Reject newsletter/automation senders at write time — they're never real conversations.
+      if (isNewsletterParticipant(obs.sender) || isNewsletterParticipant(obs.chatName) || isNewsletterParticipant(obs.chatJid)) {
+        continue;
+      }
       thread = {
         id: key,
         participants: [obs.sender],
@@ -213,6 +257,10 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
       thread.participants.push(obs.sender);
     }
   }
+
+  // Sweep any pre-existing newsletter threads that slipped in during prior ticks
+  // (before this guard was added, or via an alternative write path).
+  wm.conversationThreads = wm.conversationThreads.filter(t => !threadHasNewsletterParticipant(t.participants));
 
   // Thread lifecycle: active → stale (48h) → closed (7d) → removed (14d)
   const CLOSED_THRESHOLD = 7 * 24 * 60 * 60 * 1000;  // 7 days since last message

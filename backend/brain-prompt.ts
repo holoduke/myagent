@@ -2,6 +2,7 @@ import type { Observation } from "./observer.js";
 import type { MemoryNode, WorkingMemory } from "./memory/types.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import { serializeNodesForPrompt, collectRelevantRejectedEdges, formatRejectedEdgesForPrompt } from "./memory/activation.js";
+import { isNewsletterParticipant } from "./memory/working-memory.js";
 import { ariaPersonality } from "./aria-identity.js";
 import type { CharacterOverride } from "./aria-identity.js";
 import { getBrainConfig, getCharacterPreset, getOwnerLocalTime } from "./brain-config.js";
@@ -316,9 +317,17 @@ function formatWorkingMemory(wm: WorkingMemory): string {
     parts.push(`Follow-ups:\n${fuLines.join("\n")}`);
   }
 
-  // Active conversation threads
+  // Active conversation threads — filter newsletter/automation participants so
+  // promotional streams (AutoScout24 saved searches, no-reply notifications, etc.)
+  // don't crowd out real conversations in the prompt.
   if (wm.conversationThreads && wm.conversationThreads.length > 0) {
-    const activeThreads = wm.conversationThreads.filter(t => t.status === "active").slice(0, 5);
+    const activeThreads = wm.conversationThreads
+      .filter(t => t.status === "active")
+      .filter(t => {
+        const list = Array.isArray(t.participants) ? t.participants : (t.participants ? [t.participants] : []);
+        return !list.some(p => isNewsletterParticipant(p));
+      })
+      .slice(0, 5);
     if (activeThreads.length > 0) {
       const threadLines = activeThreads.map(t => {
         const who = Array.isArray(t.participants) ? t.participants.join(", ") : (t.participants || "unknown");
