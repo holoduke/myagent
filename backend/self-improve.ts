@@ -10,6 +10,7 @@ import type { ImprovementTask } from "./self-improve-prompt.js";
 import { normalizeIntentTokens, hashIntent } from "./utils/intent-hash.js";
 import { createLogger } from "./logger.js";
 import { BRAIN_DIR } from "./config.js";
+import { isValidCommitSha } from "./utils/worker-sandbox.js";
 
 const log = createLogger("self-improve");
 
@@ -248,9 +249,25 @@ async function runRecover(): Promise<void> {
   }
 
   // All attempts failed — rollback if possible
+  if (lastGoodCommit && !isValidCommitSha(lastGoodCommit)) {
+    log(`Refusing rollback: last-good-commit value is not a valid SHA: ${JSON.stringify(lastGoodCommit)}`);
+    writeResult({
+      success: false,
+      description: "Recovery refused: last-good-commit file contains a non-SHA value",
+      branch: null,
+      prUrl: null,
+      filesModified: [],
+      metaNodeContent: "Crash recovery aborted: last-good-commit file was corrupted or tampered with",
+      completedAt: Date.now(),
+    });
+    log("Recovery mode complete");
+    return;
+  }
+
   if (lastGoodCommit) {
     log(`All recovery attempts failed, rolling back to ${lastGoodCommit}`);
     try {
+      // SHA format validated above via isValidCommitSha — safe to interpolate.
       execSync(`git checkout ${lastGoodCommit} -- backend/ frontend/`, { cwd: "/app", timeout: 30_000, stdio: "pipe" });
       writeResult({
         success: true,
