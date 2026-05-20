@@ -57,10 +57,16 @@ function timeAgo(ts: number): string {
   return `${days}d ago`;
 }
 
-// Promo / routine notification sender patterns. Used to drop noise participants
-// from the active-threads surface — many of these accumulate under a single
-// gmail:<account> thread key and crowd out real conversations. Raw observations
-// remain logged; only the prompt-side aggregation is filtered.
+// Filter senders from the active-threads surface so routine notifications don't
+// crowd out real conversations. Raw observations stay logged; only the prompt-side
+// aggregation is filtered.
+// IMPORTANT_NOREPLY_DOMAINS: allowlist — domains where no-reply is the only channel for genuinely important mail (government, banks, employer HR). Checked first; overrides both lists below.
+// PROMO_LOCAL_PATTERNS: local-part regexes matching routine/automated senders.
+// PROMO_DOMAIN_KEYWORDS: domain substrings for known promo/marketplace senders.
+const IMPORTANT_NOREPLY_DOMAINS: Set<string> = new Set([
+  "mijn.overheid.nl",
+]);
+
 const PROMO_LOCAL_PATTERNS: RegExp[] = [
   /no-?reply@/i,
   /do-?not-?reply@/i,
@@ -76,7 +82,6 @@ const PROMO_DOMAIN_KEYWORDS: string[] = [
   "autoscout24",
   "glassdoor",
   "ferrari",
-  "mijn.overheid",
   "marktplaats",
   "quora",
 ];
@@ -85,8 +90,11 @@ function isPromoSender(sender: string): boolean {
   if (!sender) return false;
   const match = /<([^>]+)>/.exec(sender);
   const addr = (match ? match[1] : sender).trim().toLowerCase();
-  if (PROMO_LOCAL_PATTERNS.some(re => re.test(addr))) return true;
   const domain = addr.includes("@") ? addr.split("@")[1] || "" : addr;
+  for (const allowed of IMPORTANT_NOREPLY_DOMAINS) {
+    if (domain === allowed || domain.endsWith("." + allowed)) return false;
+  }
+  if (PROMO_LOCAL_PATTERNS.some(re => re.test(addr))) return true;
   if (PROMO_DOMAIN_KEYWORDS.some(kw => domain.includes(kw))) return true;
   return false;
 }
