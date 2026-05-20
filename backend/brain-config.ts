@@ -33,6 +33,7 @@ export interface BrainConfig {
   maxThinkContextNodes: number;          // base budget for think context node selection
   selfCritiqueEnabled: boolean;          // enable pre-send quality gate for proactive messages
   selfCritiqueThreshold: number;         // minimum score (1-10) to allow sending; default 6
+  staleMsgThresholdMs: number;           // max age (ms) for queued outgoing WhatsApp messages; older are discarded on reconnect
   /** Per-action model selection. Claude: "sonnet", "haiku", "opus". Grok: "grok", "grok-mini". */
   models: {
     think: string;          // brain think ticks
@@ -203,6 +204,7 @@ function envDefaults(): BrainConfig {
     maxThinkContextNodes: 35,
     selfCritiqueEnabled: process.env.SELF_CRITIQUE_ENABLED !== "false",
     selfCritiqueThreshold: Number(process.env.SELF_CRITIQUE_THRESHOLD ?? 6),
+    staleMsgThresholdMs: Number(process.env.STALE_MSG_THRESHOLD_MS ?? 5 * 60 * 1000),
     models: {
       think: "sonnet",
       consolidate: "haiku",
