@@ -904,13 +904,14 @@ function buildCommitmentsBlock(
 ): string {
   const sections: string[] = [];
 
-  // Moltbook-specific section (backwards compat)
+  // Moltbook-specific section. recentMoltbookActivity is sourced from the
+  // sa_moltbook sub-agent's run summary/details fields — intra-run scratch
+  // narrative ("I'll reply to 6 comments", "let me write a helper") that was
+  // already executed within that sub-agent run. Show the activity for
+  // context, but do NOT mine commitments from it: those phrases are not
+  // promises made to a human channel, they are sub-agent self-narration.
   if (recentMoltbookActivity && recentMoltbookActivity.length > 0) {
-    const moltbookCommitments = recentMoltbookActivity.flatMap(text => extractAndClassifyCommitments(text));
-    const detectedSection = moltbookCommitments.length > 0
-      ? `\nDetected commitment language in Moltbook posts:\n${moltbookCommitments.map(c => `- [${c.weight}] "${c.commitment}" (pattern: ${c.pattern})`).join("\n")}\n`
-      : "";
-    sections.push(`Moltbook posts/comments:\n${detectedSection}${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}`);
+    sections.push(`Moltbook posts/comments (sa_moltbook sub-agent run summaries — already executed, NOT personal commitments):\n${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}`);
   }
 
   // General outgoing activity (WhatsApp, email, brain messages) — grouped by conversation
@@ -946,6 +947,7 @@ ACTION REQUIRED:
 3. For any non-trivial commitment not already tracked, create a goal via goalOps.
 4. Trivial commitments (quick lookups/checks) are filtered out automatically.
 5. Update progress on existing commitment-sourced goals.
+6. Moltbook sub-agent run summaries are shown for context only — do NOT treat phrases like "I'll reply to X comments" or "let me write a helper" inside those summaries as personal commitments. They were already executed inside the sub-agent run.
 `;
 }
 
