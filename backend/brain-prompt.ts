@@ -911,7 +911,11 @@ function buildCommitmentsBlock(
   // context, but do NOT mine commitments from it: those phrases are not
   // promises made to a human channel, they are sub-agent self-narration.
   if (recentMoltbookActivity && recentMoltbookActivity.length > 0) {
-    sections.push(`Moltbook posts/comments (sa_moltbook sub-agent run summaries — already executed, NOT personal commitments):\n${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}`);
+    // These are non-actionable context only, so cap display to the 3 most
+    // recent runs and shorten each summary — showing all ~10 every reflect
+    // wastes prompt budget without changing decisions.
+    const moltbookForDisplay = recentMoltbookActivity.slice(0, 3);
+    sections.push(`Moltbook posts/comments (sa_moltbook sub-agent run summaries — already executed, NOT personal commitments):\n${moltbookForDisplay.map((text, i) => `  ${i + 1}. ${text.slice(0, 150)}`).join("\n")}`);
   }
 
   // General outgoing activity (WhatsApp, email, brain messages) — grouped by conversation
