@@ -194,6 +194,17 @@ const NEWSLETTER_SUBSTRINGS = [
   "mailings.",
   "updates@",
   "bounce",
+  // Promotional/automation mailbox prefixes. Participant strings look like
+  // "Display Name <prefix@domain>", so substring match on "prefix@" is enough.
+  "promotion@",
+  "promotions@",
+  "marketing@",
+  "news@",
+  "newsletter@",
+  "deals@",
+  "offers@",
+  "info@",
+  "mailing@",
 ];
 
 const NEWSLETTER_DOMAINS = [
@@ -201,6 +212,31 @@ const NEWSLETTER_DOMAINS = [
   "schoolkassa",
   "rdw",
   "anwb.nl/notifications",
+  // Mass-promotional retail domains — sender from these is always marketing.
+  "aliexpress.com",
+  "temu.com",
+  "shein.com",
+  "wish.com",
+  "banggood.com",
+];
+
+// Clickbait subject/topic patterns. Email observations are stored as
+// "[EMAIL] Subject: <subject>\n\n<body>" so the thread topic (first 60 chars)
+// captures the subject. If the topic matches one of these marketing tropes,
+// the thread is treated as noise even when the sender slips past the address
+// filter (e.g. a mixed-use domain that also sends real mail).
+const CLICKBAIT_TOPIC_PATTERNS: RegExp[] = [
+  /wacht\s+op\s+u\b/i,
+  /\bklik\s+hier\b/i,
+  /\b\d{1,3}\s*%\s*(korting|off|discount)\b/i,
+  /\blaatste\s+kans\b/i,
+  /\blast\s+chance\b/i,
+  /\blimited\s+time\b/i,
+  /\bbeperkte?\s+aanbieding\b/i,
+  /\bspecial\s+offer\b/i,
+  /\bact\s+now\b/i,
+  /\bonly\s+today\b/i,
+  /\balleen\s+vandaag\b/i,
 ];
 
 export function isNewsletterParticipant(participant: string | undefined | null): boolean {
@@ -213,6 +249,11 @@ export function isNewsletterParticipant(participant: string | undefined | null):
     if (p.includes(dom)) return true;
   }
   return false;
+}
+
+export function isClickbaitTopic(topic: string | undefined | null): boolean {
+  if (!topic) return false;
+  return CLICKBAIT_TOPIC_PATTERNS.some(re => re.test(topic));
 }
 
 function threadHasNewsletterParticipant(participants: string[] | string | undefined): boolean {
@@ -238,6 +279,10 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
       if (isNewsletterParticipant(obs.sender) || isNewsletterParticipant(obs.chatName) || isNewsletterParticipant(obs.chatJid)) {
         continue;
       }
+      // Also reject if the topic (first 60 chars of text) looks like marketing clickbait.
+      if (isClickbaitTopic(obs.text.slice(0, 60))) {
+        continue;
+      }
       thread = {
         id: key,
         participants: [obs.sender],
@@ -258,9 +303,13 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
     }
   }
 
-  // Sweep any pre-existing newsletter threads that slipped in during prior ticks
-  // (before this guard was added, or via an alternative write path).
-  wm.conversationThreads = wm.conversationThreads.filter(t => !threadHasNewsletterParticipant(t.participants));
+  // Sweep any pre-existing newsletter / clickbait threads that slipped in
+  // during prior ticks (before these guards were added, or via an alternative
+  // write path). Fixes already-stuck entries like the AliExpress
+  // "Uw voertuig wacht op u" promo blast.
+  wm.conversationThreads = wm.conversationThreads.filter(
+    t => !threadHasNewsletterParticipant(t.participants) && !isClickbaitTopic(t.topic),
+  );
 
   // Thread lifecycle: active → stale (48h) → closed (7d) → removed (14d)
   const CLOSED_THRESHOLD = 7 * 24 * 60 * 60 * 1000;  // 7 days since last message

@@ -214,6 +214,57 @@ const PROMOTIONAL_SENDER_PATTERNS: RegExp[] = [
   /calendar-notification@google\.com/i,
 ];
 
+// Strong promotional mailbox prefixes — local-part of the email address that
+// is almost never used for real correspondence. Matched against the local part
+// only (before "@") so we don't accidentally hit a domain that contains the
+// substring.
+const STRONG_PROMOTIONAL_LOCALPARTS: RegExp[] = [
+  /^promotion[s]?$/i,
+  /^marketing$/i,
+  /^newsletter[s]?$/i,
+  /^news$/i,
+  /^deals$/i,
+  /^offers$/i,
+  /^mailing[s]?$/i,
+];
+
+// Weak promotional local parts — used by some legitimate businesses for real
+// contact, so we only treat as promotional when paired with a clickbait subject.
+const WEAK_PROMOTIONAL_LOCALPARTS: RegExp[] = [
+  /^info$/i,
+  /^hello$/i,
+  /^hi$/i,
+];
+
+// Domains that send essentially nothing but bulk marketing. Sender from these
+// is always treated as promotional regardless of local part.
+const PROMOTIONAL_DOMAINS = [
+  "aliexpress.com",
+  "temu.com",
+  "shein.com",
+  "wish.com",
+  "banggood.com",
+];
+
+// Clickbait subject patterns. Vague urgency / scarcity / "your X is waiting"
+// copy that doesn't match how Gillis's actual correspondents write subject
+// lines. Used in combination with weak promotional prefixes to catch promo
+// blasts from mixed-use mailboxes like promotion@aliexpress.com sending
+// "Uw voertuig wacht op u".
+const CLICKBAIT_SUBJECT_PATTERNS: RegExp[] = [
+  /wacht\s+op\s+u\b/i,
+  /\bklik\s+hier\b/i,
+  /\b\d{1,3}\s*%\s*(korting|off|discount)\b/i,
+  /\blaatste\s+kans\b/i,
+  /\blast\s+chance\b/i,
+  /\blimited\s+time\b/i,
+  /\bbeperkte?\s+aanbieding\b/i,
+  /\bspecial\s+offer\b/i,
+  /\bact\s+now\b/i,
+  /\bonly\s+today\b/i,
+  /\balleen\s+vandaag\b/i,
+];
+
 /**
  * Extract the bare email address from a From header value.
  * "Display Name <user@example.com>" → "user@example.com"
@@ -223,9 +274,37 @@ function extractEmailAddress(from: string): string {
   return match ? match[1] : from.trim();
 }
 
-function isPromotionalSender(from: string): boolean {
-  const addr = extractEmailAddress(from);
-  return PROMOTIONAL_SENDER_PATTERNS.some(re => re.test(addr));
+function splitAddress(addr: string): { local: string; domain: string } {
+  const at = addr.lastIndexOf("@");
+  if (at < 0) return { local: addr, domain: "" };
+  return { local: addr.slice(0, at), domain: addr.slice(at + 1) };
+}
+
+function isClickbaitSubject(subject: string): boolean {
+  if (!subject) return false;
+  return CLICKBAIT_SUBJECT_PATTERNS.some(re => re.test(subject));
+}
+
+function isPromotionalSender(from: string, subject = ""): boolean {
+  const addr = extractEmailAddress(from).toLowerCase();
+  if (PROMOTIONAL_SENDER_PATTERNS.some(re => re.test(addr))) return true;
+
+  const { local, domain } = splitAddress(addr);
+
+  // Known mass-promotional domains — always drop.
+  if (PROMOTIONAL_DOMAINS.some(d => domain === d || domain.endsWith("." + d))) return true;
+
+  // Strong promotional prefixes — always drop.
+  if (STRONG_PROMOTIONAL_LOCALPARTS.some(re => re.test(local))) return true;
+
+  // Weak prefixes (info@, hello@, hi@) — only drop when subject is clickbait.
+  // Real correspondence from info@<localbusiness> stays intact; promo blasts
+  // from info@<bulksender> get filtered.
+  if (WEAK_PROMOTIONAL_LOCALPARTS.some(re => re.test(local)) && isClickbaitSubject(subject)) {
+    return true;
+  }
+
+  return false;
 }
 
 async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise<void> {
@@ -285,15 +364,17 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
 
       const headers = msg.payload?.headers;
       const from = getHeader(headers, "From");
+      const subject = getHeader(headers, "Subject");
 
-      // Drop known promotional senders before they consume brain context
-      if (isPromotionalSender(from)) {
-        log(`Skipped promotional email from ${from}`);
+      // Drop known promotional senders before they consume brain context.
+      // Subject is passed in so weak prefixes (info@, hello@) only trip the
+      // filter when paired with clickbait copy.
+      if (isPromotionalSender(from, subject)) {
+        log(`Skipped promotional email from ${from} (subject: "${subject}")`);
         return;
       }
 
       const to = getHeader(headers, "To");
-      const subject = getHeader(headers, "Subject");
       const body = msg.payload ? extractBody(msg.payload) : "";
       const snippet = msg.snippet || "";
 

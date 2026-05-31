@@ -2,7 +2,7 @@ import type { Observation } from "./observer.js";
 import type { MemoryNode, WorkingMemory } from "./memory/types.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import { serializeNodesForPrompt, collectRelevantRejectedEdges, formatRejectedEdgesForPrompt } from "./memory/activation.js";
-import { isNewsletterParticipant } from "./memory/working-memory.js";
+import { isNewsletterParticipant, isClickbaitTopic } from "./memory/working-memory.js";
 import { ariaPersonality } from "./aria-identity.js";
 import type { CharacterOverride } from "./aria-identity.js";
 import { getBrainConfig, getCharacterPreset, getOwnerLocalTime } from "./brain-config.js";
@@ -325,7 +325,7 @@ function formatWorkingMemory(wm: WorkingMemory): string {
       .filter(t => t.status === "active")
       .filter(t => {
         const list = Array.isArray(t.participants) ? t.participants : (t.participants ? [t.participants] : []);
-        return !list.some(p => isNewsletterParticipant(p));
+        return !list.some(p => isNewsletterParticipant(p)) && !isClickbaitTopic(t.topic);
       })
       .slice(0, 5);
     if (activeThreads.length > 0) {
