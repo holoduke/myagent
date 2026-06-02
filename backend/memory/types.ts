@@ -147,10 +147,33 @@ export interface TemporalSummaries {
   weekly: Record<string, string>;
 }
 
+/**
+ * A short-term tracking entry. Plain strings are backward-compatible for
+ * casual notes ("watching Lucas's schoolreisje"). When the brain marks an
+ * item resolved/afgerond, it should emit the structured form with an
+ * evidenceObsId pointing at the message that proved completion.
+ *
+ * Without evidence-linking, the brain can hallucinate completion from
+ * unrelated acknowledgments (see 2026-06-02 incident: an "Oke!" from Ilse
+ * about camping-kleden was mis-attributed as acknowledgment of an
+ * agenda-request ARIA never actually answered).
+ */
+export type ShortTermTrackingItem =
+  | string
+  | {
+      text: string;
+      /** Observation/message ID that triggered this status (especially for resolved items). */
+      evidenceObsId?: string;
+      /** Sender of the evidence message (for human-readable display). */
+      evidenceSender?: string;
+      /** Timestamp of the evidence message (unix ms, for display + audit). */
+      evidenceTs?: number;
+    };
+
 export interface WorkingMemory {
   currentContext: string;
   mood: string;
-  shortTermTracking: string[];
+  shortTermTracking: ShortTermTrackingItem[];
   activatedNodeIds: string[];
   lastUpdated: number;
   activeGoals: WorkingGoalRef[];
@@ -276,7 +299,7 @@ export interface BrainResponse {
   workingMemory?: {
     currentContext?: string;
     mood?: string;
-    shortTermTracking?: string[];
+    shortTermTracking?: ShortTermTrackingItem[];
     pendingFollowUps?: PendingFollowUp[];
     conversationThreads?: ConversationThread[];
   };

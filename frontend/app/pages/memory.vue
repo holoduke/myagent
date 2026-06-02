@@ -26,7 +26,7 @@
         <div v-if="wm.shortTermTracking?.length" class="wm-tracking">
           <span class="wm-label">Tracking</span>
           <div class="wm-tags">
-            <span v-for="(item, i) in wm.shortTermTracking" :key="i" class="tag">{{ item }}</span>
+            <span v-for="(item, i) in wm.shortTermTracking" :key="i" class="tag">{{ trackingItemText(item) }}</span>
           </div>
         </div>
         <div v-if="wm.activatedNodeIds?.length" class="wm-activated">
@@ -192,6 +192,7 @@
 
 <script setup lang="ts">
 import type { AriaStatus, GraphNode, ConceptTreeNode, RetentionTier } from '~/types/aria'
+import { trackingItemText } from '~/types/aria'
 
 const { api } = useApi()
 const { showToast } = useToast()

@@ -1,5 +1,5 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
-import type { WorkingMemory, PendingFollowUp, ConversationThread, TemporalContext, TemporalSummaries } from "./types.js";
+import type { WorkingMemory, PendingFollowUp, ConversationThread, TemporalContext, TemporalSummaries, ShortTermTrackingItem } from "./types.js";
 import type { Observation } from "../observer.js";
 import { getBrainConfig, getOwnerLocalTime, getOwnerLocalDate } from "../brain-config.js";
 import { extractKeywordsFromText } from "./activation.js";
@@ -49,12 +49,27 @@ export function saveWorkingMemory(wm: WorkingMemory): void {
   }
 }
 
+/**
+ * Render a tracking item as the single string used in prompts/UI.
+ * Structured items get an inline evidence suffix so the brain (and a
+ * human reviewing logs) can audit WHICH message proved a status change.
+ */
+export function trackingItemText(item: ShortTermTrackingItem): string {
+  if (typeof item === "string") return item;
+  if (!item.evidenceObsId && !item.evidenceSender && !item.evidenceTs) return item.text;
+  const parts: string[] = [];
+  if (item.evidenceObsId) parts.push(`msg ${item.evidenceObsId}`);
+  if (item.evidenceSender) parts.push(`from ${item.evidenceSender}`);
+  if (item.evidenceTs) parts.push(`at ${new Date(item.evidenceTs).toISOString()}`);
+  return `${item.text} (evidence: ${parts.join(" ")})`;
+}
+
 export function updateWorkingMemory(
   wm: WorkingMemory,
   updates: {
     currentContext?: string;
     mood?: string;
-    shortTermTracking?: string[];
+    shortTermTracking?: ShortTermTrackingItem[];
     activatedNodeIds?: string[];
     pendingFollowUps?: PendingFollowUp[];
     conversationThreads?: ConversationThread[];

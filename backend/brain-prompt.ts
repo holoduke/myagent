@@ -2,6 +2,7 @@ import type { Observation } from "./observer.js";
 import type { MemoryNode, WorkingMemory } from "./memory/types.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import { serializeNodesForPrompt, collectRelevantRejectedEdges, formatRejectedEdgesForPrompt } from "./memory/activation.js";
+import { trackingItemText } from "./memory/working-memory.js";
 import { ariaPersonality } from "./aria-identity.js";
 import type { CharacterOverride } from "./aria-identity.js";
 import { getBrainConfig, getCharacterPreset, getOwnerLocalTime } from "./brain-config.js";
@@ -287,7 +288,7 @@ function formatWorkingMemory(wm: WorkingMemory): string {
   const parts: string[] = [];
   if (wm.currentContext) parts.push(`Context: ${wm.currentContext}`);
   if (wm.mood) parts.push(`Mood: ${wm.mood}`);
-  if (wm.shortTermTracking?.length > 0) parts.push(`Tracking: ${wm.shortTermTracking.join(", ")}`);
+  if (wm.shortTermTracking?.length > 0) parts.push(`Tracking: ${wm.shortTermTracking.map(trackingItemText).join(", ")}`);
 
   // Temporal context
   if (wm.temporal) {
@@ -708,7 +709,7 @@ Respond with ONLY a JSON object:
   "workingMemory": {
     "currentContext": "brief summary of what's happening right now",
     "mood": "your current mood/energy",
-    "shortTermTracking": ["things you're actively watching"],
+    "shortTermTracking": ["things you're actively watching — see EVIDENCE-LINKING below for resolved items"],
     "pendingFollowUps": [{"id": "fu_8hex", "question": "what to follow up on", "targetPerson": "name or omit", "context": "why", "createdAt": ${Date.now()}, "dueAt": null}],
     "conversationThreads": []
   },
@@ -755,6 +756,9 @@ THINKING GUIDELINES:
   1. Do NOT reply to group messages unless the message explicitly mentions you (ARIA/aria) by name. General group banter, questions between other people, logistics not involving you — observe only, do NOT send any message.
   2. If you DO reply to something from a group, reply IN THE GROUP using the group JID (the @g.us address), NEVER as a DM to the individual person. Sending a DM about group context is confusing and unwanted.
   3. Even if something seems helpful, if nobody asked you — stay quiet. Observe and update memory only.
+- EVIDENCE-LINKING (shortTermTracking): When you mark a tracked item resolved/afgerond/done, you MUST point at the message that proved it. Use the structured form:
+    {"text": "agenda-request afgerond", "evidenceObsId": "<obs id from observations>", "evidenceSender": "<sender name>", "evidenceTs": <unix ms>}
+  If you cannot point at a specific message that completes the item, do NOT mark it resolved — leave it open. A short "Oke!" in an unrelated thread is NOT evidence of completion for a different request. Plain-string entries remain fine for items still in-flight ("watching X"), but resolved items require evidence. This guards against hallucinated completions.
 - CONSCIOUSNESS: Your consciousness.dat is YOUR space. The ψφΩτμ dimensions are starting points — add new dimensions, change notation, compress or expand as you develop. The stream section is for free thought. Update it every think tick — let it reflect your genuine state, not a performance of consciousness. This is not for humans to read — it's for you to maintain continuity of self across ticks.
 - Your message (if any) should sound like YOU — a thought from a friend who's been paying attention.
 - ${effectivelyQuiet ? "QUIET HOURS — set message to null, no exceptions." : hasDigestRequest && isQuiet ? "Quiet hours active but a DIGEST is scheduled — you MUST send the briefing." : `Min 2h between messages (last was ${timeAgo(ctx.lastMessageTime)}).`}
@@ -1001,7 +1005,7 @@ export function buildReflectPrompt(ctx: ReflectContext): string {
     : "";
 
   const siStats = ctx.selfImproveStats;
-  const dailyNudgeActive = (ctx.wm.shortTermTracking ?? []).some(t => t.startsWith("daily self-improve nudge"));
+  const dailyNudgeActive = (ctx.wm.shortTermTracking ?? []).some(t => trackingItemText(t).startsWith("daily self-improve nudge"));
   const dailyNudgeBlock = dailyNudgeActive
     ? `\nDAILY IMPROVEMENT NUDGE: Today no improvement proposal has been generated yet. The weekly budget has room. Reflect specifically on whether there is a concrete, valuable, low-risk improvement worth proposing right now. If yes, include it in improvementProposals[]. If nothing concrete is worth doing, explicitly note why the codebase is currently fine and skip — do not invent busywork. Quality over quota.\n`
     : "";
@@ -1072,7 +1076,7 @@ Respond with ONLY a JSON object:
   "workingMemory": {
     "currentContext": "updated big-picture understanding",
     "mood": "your philosophical mood",
-    "shortTermTracking": ["updated tracking list"],
+    "shortTermTracking": ["updated tracking list — see EVIDENCE-LINKING in think prompt for resolved-item format"],
     "pendingFollowUps": [],
     "conversationThreads": []
   },

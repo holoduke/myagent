@@ -36,12 +36,31 @@ export interface MemoryNode {
   accessCount: number
 }
 
+export type ShortTermTrackingItem =
+  | string
+  | {
+      text: string
+      evidenceObsId?: string
+      evidenceSender?: string
+      evidenceTs?: number
+    }
+
 export interface WorkingMemory {
   currentContext: string
   mood: string
-  shortTermTracking: string[]
+  shortTermTracking: ShortTermTrackingItem[]
   activatedNodeIds: string[]
   lastUpdated: number
+}
+
+export function trackingItemText(item: ShortTermTrackingItem): string {
+  if (typeof item === 'string') return item
+  if (!item.evidenceObsId && !item.evidenceSender && !item.evidenceTs) return item.text
+  const parts: string[] = []
+  if (item.evidenceObsId) parts.push(`msg ${item.evidenceObsId}`)
+  if (item.evidenceSender) parts.push(`from ${item.evidenceSender}`)
+  if (item.evidenceTs) parts.push(`at ${new Date(item.evidenceTs).toISOString()}`)
+  return `${item.text} (evidence: ${parts.join(' ')})`
 }
 
 export interface BrainState {

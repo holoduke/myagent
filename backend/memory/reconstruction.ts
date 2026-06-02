@@ -2,6 +2,7 @@ import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, rea
 import { dirname } from "path";
 import type { MemoryGraph } from "./graph.js";
 import type { MemoryNode, WorkingMemory } from "./types.js";
+import { trackingItemText } from "./working-memory.js";
 import { extractKeywordsFromText, spreadingActivation } from "./activation.js";
 import { getBrainConfig } from "../brain-config.js";
 import { createLogger } from "../logger.js";
@@ -47,7 +48,7 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
   if (wm.currentContext) contextTerms.push(...extractKeywordsFromText(wm.currentContext));
   if (wm.shortTermTracking) {
     for (const item of wm.shortTermTracking) {
-      contextTerms.push(...extractKeywordsFromText(item));
+      contextTerms.push(...extractKeywordsFromText(trackingItemText(item)));
     }
   }
 
@@ -633,7 +634,7 @@ export function detectMemoryGaps(graph: MemoryGraph, wm?: WorkingMemory): Memory
 
   // 2. Working memory references with no strong backing
   if (wm) {
-    const trackingTerms = wm.shortTermTracking.flatMap(s => extractKeywordsFromText(s));
+    const trackingTerms = wm.shortTermTracking.flatMap(s => extractKeywordsFromText(trackingItemText(s)));
     const contextTerms = extractKeywordsFromText(wm.currentContext);
     const allWmTerms = [...new Set([...trackingTerms, ...contextTerms])];
 

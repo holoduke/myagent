@@ -3,6 +3,7 @@ import { ariaPersonality } from "./aria-identity.js";
 import type { CharacterOverride } from "./aria-identity.js";
 import { getBrainConfig, getCharacterPreset } from "./brain-config.js";
 import type { MemoryNode, WorkingMemory } from "./memory/types.js";
+import { trackingItemText } from "./memory/working-memory.js";
 import { BRAIN_DIR } from "./config.js";
 
 
@@ -23,7 +24,7 @@ function loadMemoryContext(): string {
       const wmParts: string[] = [];
       if (wm.currentContext) wmParts.push(`Current context: ${wm.currentContext}`);
       if (wm.mood) wmParts.push(`Mood: ${wm.mood}`);
-      if (wm.shortTermTracking?.length > 0) wmParts.push(`Tracking: ${wm.shortTermTracking.join(", ")}`);
+      if (wm.shortTermTracking?.length > 0) wmParts.push(`Tracking: ${wm.shortTermTracking.map(trackingItemText).join(", ")}`);
       if (wmParts.length > 0) {
         parts.push(`Working memory:\n${wmParts.join("\n")}`);
       }
@@ -94,7 +95,7 @@ export function getMessageMemoryContext(): string {
     const parts: string[] = [];
     if (wm.currentContext) parts.push(`Context: ${wm.currentContext}`);
     if (wm.mood) parts.push(`Mood: ${wm.mood}`);
-    if (wm.shortTermTracking?.length > 0) parts.push(`Tracking: ${wm.shortTermTracking.join(", ")}`);
+    if (wm.shortTermTracking?.length > 0) parts.push(`Tracking: ${wm.shortTermTracking.map(trackingItemText).join(", ")}`);
     if (wm.activeGoals?.length > 0) {
       parts.push(`Goals: ${wm.activeGoals.map((g: { title: string }) => g.title).join(", ")}`);
     }

@@ -75,7 +75,7 @@
             </div>
             <div v-if="wm.shortTermTracking && wm.shortTermTracking.length" class="wm-field">
               <div class="wm-label">Tracking</div>
-              <div class="wm-val">{{ wm.shortTermTracking.join(', ') }}</div>
+              <div class="wm-val">{{ wm.shortTermTracking.map(trackingItemText).join(', ') }}</div>
             </div>
             <UiKvRow label="Last Updated" :value="timeAgo(wm.lastUpdated)" />
           </template>
@@ -102,6 +102,7 @@
 
 <script setup lang="ts">
 import type { DashboardData } from '~/types/aria'
+import { trackingItemText } from '~/types/aria'
 
 const { api } = useApi()
 const { timeAgo } = useTimeAgo()
