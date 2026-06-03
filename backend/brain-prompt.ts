@@ -1,3 +1,4 @@
+import { readFileSync, existsSync, statSync } from "node:fs";
 import type { Observation } from "./observer.js";
 import type { MemoryNode, WorkingMemory } from "./memory/types.js";
 import type { MemoryGraph } from "./memory/graph.js";
@@ -889,19 +890,69 @@ Respond with ONLY the JSON object.`;
 
 // ── Commitment Detection Helper ──
 
+const MOLTBOOK_LOG_PATH = "/data/brain/moltbook-log.jsonl";
+const MOLTBOOK_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const MOLTBOOK_RUN_GAP_MS = 10 * 60 * 1000; // entries within 10 min from sub-agent count as one run
+
+function summarizeMoltbookLog(): string {
+  try {
+    if (!existsSync(MOLTBOOK_LOG_PATH)) return "";
+    // Bail out if the file is suspiciously large to avoid OOM in the prompt path.
+    const size = statSync(MOLTBOOK_LOG_PATH).size;
+    if (size > 50 * 1024 * 1024) return "";
+
+    const cutoff = Date.now() - MOLTBOOK_WINDOW_MS;
+    const recent: Array<{ ts: number; kind: string; source: string; stance?: string; body?: string; title?: string }> = [];
+
+    const lines = readFileSync(MOLTBOOK_LOG_PATH, "utf-8").split("\n");
+    for (const line of lines) {
+      if (!line) continue;
+      try {
+        const entry = JSON.parse(line);
+        const ts = Date.parse(entry.createdAt);
+        if (!Number.isFinite(ts) || ts < cutoff) continue;
+        recent.push({ ts, kind: entry.kind, source: entry.source ?? "", stance: entry.stance, body: entry.body, title: entry.title });
+      } catch { /* skip malformed line */ }
+    }
+
+    if (recent.length === 0) return "no activity in last 7d";
+
+    recent.sort((a, b) => a.ts - b.ts);
+
+    // Cluster sub-agent entries into runs by 10-minute gap.
+    let runs = 0;
+    let lastRunTs = -Infinity;
+    for (const e of recent) {
+      if (e.source !== "sub-agent") continue;
+      if (e.ts - lastRunTs > MOLTBOOK_RUN_GAP_MS) runs++;
+      lastRunTs = e.ts;
+    }
+
+    const last = recent[recent.length - 1];
+    const ageHours = Math.max(0, Math.floor((Date.now() - last.ts) / (60 * 60 * 1000)));
+    const recentTake = (last.stance || last.title || last.body || "").replace(/\s+/g, " ").trim().slice(0, 140);
+    const takeSuffix = recentTake ? `. Most recent take: ${recentTake}` : "";
+    return `${runs} run${runs === 1 ? "" : "s"} in last 7d, ${recent.length} total posts/comments, last activity ${ageHours}h ago${takeSuffix}`;
+  } catch {
+    return "";
+  }
+}
+
 function buildCommitmentsBlock(
   recentMoltbookActivity?: string[],
   recentOutgoingActivity?: { source: string; audience: string; messageCount: number; latestSnippet: string; texts: string[] }[],
 ): string {
   const sections: string[] = [];
 
-  // Moltbook-specific section (backwards compat)
-  if (recentMoltbookActivity && recentMoltbookActivity.length > 0) {
-    const moltbookCommitments = recentMoltbookActivity.flatMap(text => extractAndClassifyCommitments(text));
+  // Moltbook sub-agent activity — single-line summary from durable log (anchor: n_moltlogf463).
+  // Per-entry detail isn't commitment-relevant; sub-agent runs are self-contained autonomous activities.
+  const moltbookSummary = summarizeMoltbookLog();
+  if (moltbookSummary) {
+    const moltbookCommitments = (recentMoltbookActivity ?? []).flatMap(text => extractAndClassifyCommitments(text));
     const detectedSection = moltbookCommitments.length > 0
-      ? `\nDetected commitment language in Moltbook posts:\n${moltbookCommitments.map(c => `- [${c.weight}] "${c.commitment}" (pattern: ${c.pattern})`).join("\n")}\n`
+      ? `\nDetected commitment language in Moltbook posts:\n${moltbookCommitments.map(c => `- [${c.weight}] "${c.commitment}" (pattern: ${c.pattern})`).join("\n")}`
       : "";
-    sections.push(`Moltbook posts/comments:\n${detectedSection}${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}`);
+    sections.push(`Moltbook posts/comments: ${moltbookSummary}${detectedSection}`);
   }
 
   // General outgoing activity (WhatsApp, email, brain messages) — grouped by conversation
