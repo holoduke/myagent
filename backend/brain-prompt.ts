@@ -1,4 +1,5 @@
 import type { Observation } from "./observer.js";
+import { isPromoOrAutomatedSender } from "./observer.js";
 import type { MemoryNode, WorkingMemory } from "./memory/types.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import { serializeNodesForPrompt, collectRelevantRejectedEdges, formatRejectedEdgesForPrompt } from "./memory/activation.js";
@@ -318,10 +319,23 @@ function formatWorkingMemory(wm: WorkingMemory): string {
 
   // Active conversation threads
   if (wm.conversationThreads && wm.conversationThreads.length > 0) {
-    const activeThreads = wm.conversationThreads.filter(t => t.status === "active").slice(0, 5);
+    // Defense-in-depth: even if a promo/automated email slipped past intake,
+    // drop threads whose only participant looks promotional before rendering.
+    // (See updateConversationThreads + isPromoOrAutomatedSender.)
+    const activeThreads = wm.conversationThreads
+      .filter(t => t.status === "active")
+      .filter(t => {
+        if (!t.id.startsWith("email:")) return true;
+        const ps = Array.isArray(t.participants) ? t.participants : [];
+        if (ps.length === 0) return true;
+        return !ps.every(p => isPromoOrAutomatedSender(p));
+      })
+      .slice(0, 5);
     if (activeThreads.length > 0) {
       const threadLines = activeThreads.map(t => {
-        const who = Array.isArray(t.participants) ? t.participants.join(", ") : (t.participants || "unknown");
+        const ps = Array.isArray(t.participants) ? t.participants : [t.participants || "unknown"];
+        // Cap participant list so a noisy thread can't blow past a single line.
+        const who = ps.length > 3 ? `${ps.slice(0, 3).join(", ")} +${ps.length - 3}` : ps.join(", ");
         return `  - ${who}: "${t.topic}" (${t.messageCount || 0} msgs, last ${timeAgo(t.lastMessageAt)})`;
       });
       parts.push(`Active threads:\n${threadLines.join("\n")}`);

@@ -37,6 +37,63 @@ function sanitizeImageCaption(text: string): string {
 const OBS_FILE = `${BRAIN_DIR}/observations.jsonl`;
 const RETENTION_DAYS = Number(process.env.BRAIN_OBSERVATION_DAYS ?? 7);
 
+/** "Display Name <user@example.com>" → "user@example.com" (lowercased). */
+export function extractEmailAddress(from: string): string {
+  const match = /<([^>]+)>/.exec(from);
+  return (match ? match[1] : from.trim()).toLowerCase();
+}
+
+// Local-part prefixes that strongly indicate automated/promotional mail. Matched
+// against the local part of the extracted email address (case-insensitive).
+const AUTOMATED_LOCAL_PREFIXES = [
+  "no-reply", "noreply", "no_reply",
+  "do-not-reply", "donotreply",
+  "notification", "notifications",
+  "alert", "alerts", "jobalerts",
+  "newsletter", "news", "info",
+  "marketing", "promo", "promotions",
+  "billing", "receipts", "invoice", "invoices",
+  "support", "help", "service", "services",
+  "automated", "auto-confirm", "auto",
+  "mailer", "mailbot", "bounce", "bounces",
+];
+
+// Domain substrings whose entire mail flow is promotional/automated for our purposes.
+const PROMO_DOMAIN_SUBSTRINGS = [
+  "aliexpress.com",
+  "linkedin.com",
+  "quora.com",
+  "autoscout24",
+  "marktplaats.nl",
+  "paypal.",
+  "schoolkassa",
+  "123accu",
+  "google.com/webmasters",
+  "search-console",
+  "googlemail.com/webmasters",
+];
+
+/**
+ * Returns true when the From header looks like promotional or automated mail
+ * that should NOT be surfaced as an "active thread" in brain context.
+ *
+ * Heuristic: local part prefix (no-reply@, alerts@, …) OR known promo domain.
+ * Conservative on purpose — real people occasionally have prefixes like
+ * "info@" so the domain list stays narrow and the prefix list focuses on
+ * unambiguously machine-origin names.
+ */
+export function isPromoOrAutomatedSender(from: string): boolean {
+  if (!from) return false;
+  const addr = extractEmailAddress(from);
+  const [local, domain] = addr.split("@");
+  if (!local || !domain) return false;
+  if (AUTOMATED_LOCAL_PREFIXES.some(p => local === p || local.startsWith(p + "-") || local.startsWith(p + ".") || local.startsWith(p + "_"))) {
+    return true;
+  }
+  if (PROMO_DOMAIN_SUBSTRINGS.some(d => domain.includes(d))) return true;
+  return false;
+}
+
 // Guard against concurrent append + prune on the observations file.
 // When pruneObservations() is active, appends are buffered and flushed after prune completes.
 let pruneInProgress = false;

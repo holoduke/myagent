@@ -1,6 +1,7 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import type { WorkingMemory, PendingFollowUp, ConversationThread, TemporalContext, TemporalSummaries } from "./types.js";
 import type { Observation } from "../observer.js";
+import { extractEmailAddress, isPromoOrAutomatedSender } from "../observer.js";
 import { getBrainConfig, getOwnerLocalTime, getOwnerLocalDate } from "../brain-config.js";
 import { extractKeywordsFromText } from "./activation.js";
 import { createLogger } from "../logger.js";
@@ -188,15 +189,32 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
   for (const obs of observations) {
     if (!obs.sender) continue;
 
-    // For DMs, key by the chat counterpart (chatJid), not the sender — so both
-    // incoming and outgoing messages map to the same thread.
-    const key = obs.isGroup ? `group:${obs.groupName || obs.senderJid}` : `dm:${obs.chatJid || obs.senderJid}`;
+    let key: string;
+    let participantLabel = obs.sender;
+
+    if (obs.source === "gmail" && obs.emailMeta) {
+      // All emails share senderJid=gmail:<accountId>, which previously collapsed
+      // every promo/notification mail into one giant "thread". Key per-sender
+      // address instead so genuine correspondents each get their own thread.
+      const fromHeader = obs.emailMeta.from || obs.sender;
+      if (isPromoOrAutomatedSender(fromHeader)) continue; // skip pure-promo senders entirely
+      const addr = extractEmailAddress(fromHeader);
+      key = `email:${obs.emailMeta.accountId}:${addr}`;
+      participantLabel = fromHeader;
+    } else if (obs.isGroup) {
+      key = `group:${obs.groupName || obs.senderJid}`;
+    } else {
+      // For DMs, key by the chat counterpart (chatJid), not the sender — so both
+      // incoming and outgoing messages map to the same thread.
+      key = `dm:${obs.chatJid || obs.senderJid}`;
+    }
+
     let thread = wm.conversationThreads.find(t => t.id === key);
 
     if (!thread) {
       thread = {
         id: key,
-        participants: [obs.sender],
+        participants: [participantLabel],
         topic: obs.text.slice(0, 60),
         lastMessageAt: obs.timestamp,
         messageCount: 0,
@@ -209,8 +227,8 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
     thread.messageCount++;
     thread.status = "active";
 
-    if (!thread.participants.includes(obs.sender)) {
-      thread.participants.push(obs.sender);
+    if (!thread.participants.includes(participantLabel)) {
+      thread.participants.push(participantLabel);
     }
   }
 
@@ -218,9 +236,13 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
   const CLOSED_THRESHOLD = 7 * 24 * 60 * 60 * 1000;  // 7 days since last message
   const REMOVE_THRESHOLD = 14 * 24 * 60 * 60 * 1000;  // 14 days since last message
 
-  // Remove closed threads older than 14 days
+  // Remove closed threads older than 14 days; also evict legacy bundled email
+  // threads keyed by gmail account (pre per-sender split) — they collected
+  // dozens of unrelated promo senders and will be rebuilt per-sender from
+  // future observations.
   wm.conversationThreads = wm.conversationThreads.filter(thread => {
     if (thread.status === "closed" && (now - thread.lastMessageAt) > REMOVE_THRESHOLD) return false;
+    if (thread.id.startsWith("dm:gmail:")) return false;
     return true;
   });
 
