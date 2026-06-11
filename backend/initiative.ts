@@ -1,11 +1,92 @@
+import { existsSync, openSync, fstatSync, readSync, closeSync } from "fs";
 import type { MemoryGraph } from "./memory/graph.js";
 import type { WorkingMemory, BrainState } from "./memory/types.js";
 import { GoalTracker } from "./goals.js";
 import { getBrainConfig, getOwnerLocalDate, getOwnerLocalDay } from "./brain-config.js";
 import { createLogger } from "./logger.js";
-import { detectAnomalies } from "./frequency-tracker.js";
+import { detectAnomalies, type FrequencyAnomaly } from "./frequency-tracker.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("initiative");
+
+const OBSERVATIONS_FILE = `${BRAIN_DIR}/observations.jsonl`;
+
+// Owner-quiet anomalies are incoherent (the owner is the observer; activity
+// is by definition observed every tick). Strip them out wherever they appear.
+function stripLidPrefix(jid: string): string {
+  const match = jid.match(/^\d+:(\d+@s\.whatsapp\.net)$/);
+  return match ? match[1] : jid;
+}
+
+function isOwnerJid(jid: string): boolean {
+  const ownerPhone = process.env.OWNER_PHONE;
+  if (!ownerPhone) return false;
+  const ownerJid = `${ownerPhone}@s.whatsapp.net`;
+  if (jid === ownerJid) return true;
+  if (stripLidPrefix(jid) === ownerJid) return true;
+  // Also catch bare phone-only or @lid forms that carry the owner phone digits.
+  return jid.startsWith(`${ownerPhone}@`) || jid.startsWith(`${ownerPhone}:`);
+}
+
+/**
+ * Read the last chunk of the observations log (up to ~1MB) and return parsed
+ * recent entries newer than `cutoffMs`. Used to validate frequency-silence
+ * anomalies against group-chat activity that the per-JID baseline may miss
+ * (e.g. when a contact's group participant JID differs from their DM JID).
+ */
+function readRecentObservationSenders(cutoffMs: number): Array<{ senderJid: string; sender: string; timestamp: number }> {
+  if (!existsSync(OBSERVATIONS_FILE)) return [];
+  let fd: number;
+  try {
+    fd = openSync(OBSERVATIONS_FILE, "r");
+  } catch {
+    return [];
+  }
+  try {
+    const stat = fstatSync(fd);
+    const fileSize = stat.size;
+    if (fileSize === 0) return [];
+    const chunkSize = Math.min(fileSize, 1024 * 1024);
+    const buffer = Buffer.alloc(chunkSize);
+    readSync(fd, buffer, 0, chunkSize, fileSize - chunkSize);
+    const text = buffer.toString("utf-8");
+    const lines = text.split("\n").filter(Boolean);
+    if (chunkSize < fileSize && lines.length > 0) lines.shift();
+    const result: Array<{ senderJid: string; sender: string; timestamp: number }> = [];
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line) as { timestamp?: number; sender?: string; senderJid?: string; isFromMe?: boolean };
+        if (!entry.timestamp || entry.timestamp < cutoffMs) continue;
+        if (entry.isFromMe) continue;
+        if (!entry.senderJid) continue;
+        result.push({ senderJid: entry.senderJid, sender: entry.sender || "", timestamp: entry.timestamp });
+      } catch { /* skip malformed */ }
+    }
+    return result;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Check whether a contact has been active anywhere (group or DM) within
+ * `windowDays`. Match on senderJid (with LID normalization) AND display name
+ * to cover cases where group participant JIDs differ from DM JIDs.
+ */
+function contactActiveAcrossAllChats(anomaly: FrequencyAnomaly, windowDays: number): boolean {
+  const cutoff = Date.now() - windowDays * 86400000;
+  const recent = readRecentObservationSenders(cutoff);
+  if (recent.length === 0) return false;
+  const targetJid = anomaly.contactJid;
+  const targetJidNormalized = stripLidPrefix(targetJid);
+  const targetName = (anomaly.contactName || "").toLowerCase().trim();
+  for (const r of recent) {
+    if (r.senderJid === targetJid) return true;
+    if (stripLidPrefix(r.senderJid) === targetJidNormalized) return true;
+    if (targetName && r.sender && r.sender.toLowerCase().trim() === targetName) return true;
+  }
+  return false;
+}
 
 // ── Types ──
 
@@ -104,9 +185,29 @@ export function detectInitiativeSignals(
   }
 
   // 5. Frequency anomaly — unusual silence or spikes from known contacts (Phase 5b)
+  // Owner-quiet signals are incoherent (we observe ourselves every tick) and are
+  // dropped here. For non-owner silence we require ≥3× normal gap (tighter than
+  // the baseline 2× check) and verify the contact has no recent activity in any
+  // group chat — group participant JIDs can differ from DM JIDs, so per-JID
+  // baselines can flag people who are actually highly active in shared groups.
+  const SILENCE_GAP_MULTIPLIER = 3;
   try {
     const anomalies = detectAnomalies();
     for (const anomaly of anomalies) {
+      if (isOwnerJid(anomaly.contactJid)) {
+        log(`Suppressed owner-quiet anomaly for ${anomaly.contactName} (jid=${anomaly.contactJid})`);
+        continue;
+      }
+      if (anomaly.type === "silence") {
+        const normalGapDays = anomaly.baselineMean > 0 ? 1 / anomaly.baselineMean : Infinity;
+        if (anomaly.daysSinceLastMessage < normalGapDays * SILENCE_GAP_MULTIPLIER) {
+          continue; // too close to baseline gap to be a reliable signal
+        }
+        if (contactActiveAcrossAllChats(anomaly, anomaly.daysSinceLastMessage)) {
+          log(`Suppressed silence anomaly for ${anomaly.contactName} — found recent activity in another chat`);
+          continue;
+        }
+      }
       signals.push({
         type: "frequency_anomaly",
         priority: anomaly.type === "silence" ? 0.5 : 0.4,
