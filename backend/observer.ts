@@ -48,11 +48,14 @@ export function extractEmailAddress(from: string): string {
 const AUTOMATED_LOCAL_PREFIXES = [
   "no-reply", "noreply", "no_reply",
   "do-not-reply", "donotreply",
-  "notification", "notifications",
+  "notification", "notifications", "updates",
   "alert", "alerts", "jobalerts",
   "newsletter", "news", "info",
-  "marketing", "promo", "promotions",
+  "marketing", "promo", "promotions", "awards",
   "billing", "receipts", "invoice", "invoices",
+  "transaction", "transactions",
+  "order", "orders", "shipping", "delivery",
+  "reservation", "reservations",
   "support", "help", "service", "services",
   "automated", "auto-confirm", "auto",
   "mailer", "mailbot", "bounce", "bounces",
@@ -71,6 +74,10 @@ const PROMO_DOMAIN_SUBSTRINGS = [
   "google.com/webmasters",
   "search-console",
   "googlemail.com/webmasters",
+  "tripadvisor.com",
+  "sitly.nl",
+  "adobe.com",
+  "temporal.io",
 ];
 
 /**
