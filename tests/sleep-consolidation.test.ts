@@ -6,6 +6,7 @@ vi.mock("../backend/logger.js", () => ({
 
 vi.mock("../backend/memory/embeddings.js", () => ({
   embedNode: vi.fn().mockResolvedValue(null),
+  getNodeEmbedding: vi.fn().mockReturnValue(null),
 }));
 
 import { detectConflicts, resolveConflicts, promoteEpisodicToSemantic, runSleepConsolidation } from "../backend/sleep-consolidation.js";

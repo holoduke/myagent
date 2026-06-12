@@ -348,7 +348,7 @@ export class MemoryGraph {
 
   addNode(node: MemoryNode): void {
     this.nodes.set(node.id, node);
-    this.walLog("add_node", { nodeId: node.id, meta: { type: node.type } });
+    this.walLog("add_node", { nodeId: node.id, meta: { type: node.type, tags: node.tags } });
 
     if (!this.byType.has(node.type)) this.byType.set(node.type, new Set());
     this.byType.get(node.type)!.add(node.id);
@@ -454,7 +454,7 @@ export class MemoryGraph {
     // brain has changed its mind, so we don't want stale "no" entries.
     this.clearRejectedEdge(edge.from, edge.to, edge.type);
     this.clearRejectedEdge(edge.from, edge.to);
-    this.walLog("add_edge", { edgeFrom: edge.from, edgeTo: edge.to, meta: { type: edge.type } });
+    this.walLog("add_edge", { edgeFrom: edge.from, edgeTo: edge.to, meta: { type: edge.type, weight: edge.weight } });
   }
 
   removeEdge(from: string, to: string, type?: string): void {
@@ -1183,7 +1183,7 @@ export class MemoryGraph {
                 log(`Temporal chain: linked ${newNode.id} → ${recentEvents[0].node.id}`);
               }
             }
-            this.walLog("add_node", { nodeId: op.id, meta: { type: op.type, tags: op.tags } });
+            // WAL entry already emitted by addNode() above — no duplicate here.
             // Phase 2: Fire-and-forget embedding generation
             embedNode(op.id, op.content).catch(() => { /* non-blocking */ });
             applied++;
@@ -1199,7 +1199,7 @@ export class MemoryGraph {
               createdAt: now,
               lastReinforcedAt: now,
             });
-            this.walLog("add_edge", { edgeFrom: op.from, edgeTo: op.to, meta: { type: op.type, weight: op.weight } });
+            // WAL entry already emitted by addEdge() above — no duplicate here.
             applied++;
             break;
           }
@@ -1229,7 +1229,7 @@ export class MemoryGraph {
               const node = this.nodes.get(op.id);
               if (node) node.importance = Math.max(0, Math.min(1, op.importance));
             }
-            this.walLog("update_node", { nodeId: op.id, meta: { hasContent: op.content !== null && op.content !== undefined, hasTags: op.tags !== null && op.tags !== undefined } });
+            // WAL entry already emitted by updateNode() above — no duplicate here.
             applied++;
             break;
           }
@@ -1253,14 +1253,12 @@ export class MemoryGraph {
           }
           case "remove_node": {
             if (!this.nodes.has(op.id)) { skipped++; break; }
-            this.walLog("remove_node", { nodeId: op.id, meta: { type: this.nodes.get(op.id)!.type } });
-            this.removeNode(op.id);
+            this.removeNode(op.id); // emits its own WAL entry
             applied++;
             break;
           }
           case "remove_edge": {
-            this.walLog("remove_edge", { edgeFrom: op.from, edgeTo: op.to, meta: { type: op.type } });
-            this.removeEdge(op.from, op.to, op.type);
+            this.removeEdge(op.from, op.to, op.type); // emits its own WAL entry
             applied++;
             break;
           }

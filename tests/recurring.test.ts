@@ -27,6 +27,7 @@ vi.mock("../backend/brain-config.js", () => ({
     hour: now.getUTCHours(),
     dayOfWeek: now.getUTCDay(),
   }),
+  getOwnerLocalDate: (_tz: string, now: Date = new Date()) => now.toISOString().slice(0, 10),
 }));
 
 import { isDue, isValidTask, validatePattern } from "../backend/recurring.js";
@@ -68,20 +69,22 @@ describe("isDue", () => {
     expect(isDue(task, now)).toBe(false);
   });
 
-  it("returns false within minimum run interval (50 minutes)", () => {
+  it("returns false when already ran during the same hour+day window", () => {
+    // Same-window dedup: ran at 08:05, checking again at 08:30 — same clock hour, skip.
     const now = new Date("2024-01-15T08:30:00Z");
     const task = makeTask({
       pattern: { hours: [8] },
-      lastRunAt: now.getTime() - 40 * 60 * 1000, // 40 minutes ago
+      lastRunAt: new Date("2024-01-15T08:05:00Z").getTime(),
     });
     expect(isDue(task, now)).toBe(false);
   });
 
-  it("returns true after minimum run interval passed", () => {
+  it("returns true when the last run was in a different (earlier) hour", () => {
+    // Last run was in hour 7; now we're in matching hour 8 — different window, due again.
     const now = new Date("2024-01-15T08:00:00Z");
     const task = makeTask({
       pattern: { hours: [8] },
-      lastRunAt: now.getTime() - 60 * 60 * 1000, // 60 minutes ago
+      lastRunAt: new Date("2024-01-15T07:00:00Z").getTime(),
     });
     expect(isDue(task, now)).toBe(true);
   });
