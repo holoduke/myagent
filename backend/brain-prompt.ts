@@ -17,7 +17,6 @@ import { getBeliefSummary } from "./belief-tracker.js";
 import { getToMSummary } from "./mental-model.js";
 import { getAutonomySummary } from "./autonomy.js";
 import { getHealthSummary } from "./health-monitor.js";
-import { getCalibrationSummary } from "./metacognitive.js";
 import { getAffectiveModulationSummary } from "./affective-modulator.js";
 import { getTemporalPatternSummary } from "./temporal-patterns.js";
 import { getCognitiveLoadSummary } from "./cognitive-load.js";
@@ -559,15 +558,13 @@ function formatEnhancedContextSections(graph: MemoryGraph): string {
     sections.push(`\n═══ CONTACT MENTAL MODELS ═══\n\n${tom}\n`);
   }
 
-  // Autonomy + Health + Calibration (compact line)
+  // Autonomy + Health (compact line)
   const autonomy = getAutonomySummary();
   const health = getHealthSummary();
-  const calibration = getCalibrationSummary();
 
   const systemLines: string[] = [];
   if (autonomy) systemLines.push(autonomy);
   if (health) systemLines.push(health);
-  if (calibration) systemLines.push(calibration);
 
   if (systemLines.length > 0) {
     sections.push(`\n═══ SYSTEM STATUS ═══\n\n${systemLines.join("\n")}\n`);

@@ -302,12 +302,6 @@ Detects cause-effect relationships between events using temporal proximity, shar
 
 `causal-tracker.ts` — Causal link detection, edge creation, consequence chain traversal.
 
-### Metacognitive Self-Assessment (MUSE)
-
-Adds confidence scoring to brain decisions before acting. Computes confidence from information completeness, recency, memory relevance, and graph health. Tracks calibration over time — are ARIA's confidence scores actually predictive?
-
-`metacognitive.ts` — 4-factor confidence assessment, calibration tracking.
-
 ### Sleep Consolidation (SleepGate)
 
 Enhanced consolidation during quiet hours: detects contradicting facts, deduplicates near-identical nodes, promotes frequently-accessed episodic memories to semantic memory, and merges overlapping emotion signals.
@@ -498,7 +492,6 @@ backend/
 ├── emotion-tracker.ts           # DialogueLLM emotion detection
 ├── belief-tracker.ts            # Hindsight belief evolution
 ├── causal-tracker.ts            # REMI causal reasoning
-├── metacognitive.ts             # MUSE confidence calibration
 ├── sleep-consolidation.ts       # SleepGate overnight consolidation
 ├── response-critique.ts         # Pre-send quality gate
 ├── frequency-tracker.ts         # Contact frequency anomaly detection

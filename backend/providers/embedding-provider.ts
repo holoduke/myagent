@@ -1,6 +1,6 @@
 /**
- * Embedding provider using OpenAI text-embedding-3-small.
- * 1536 dimensions, $0.02/1M tokens.
+ * Embedding provider. Defaults to OpenAI text-embedding-3-small (1536d, ~$0.02/1M tokens),
+ * configurable via EMBEDDING_MODEL / EMBEDDING_API_URL env vars for newer/alternative models.
  * Batches up to 100 texts, rate limited to 3 concurrent requests.
  */
 
@@ -8,8 +8,13 @@ import { createLogger } from "../logger.js";
 
 const log = createLogger("embeddings");
 
-const EMBEDDING_API_URL = "https://api.openai.com/v1/embeddings";
-const EMBEDDING_MODEL = "text-embedding-3-small";
+const EMBEDDING_API_URL = process.env.EMBEDDING_API_URL || "https://api.openai.com/v1/embeddings";
+// Default: OpenAI text-embedding-3-small (1536d, cheap). Override via EMBEDDING_MODEL to adopt a
+// newer model (e.g. text-embedding-3-large, voyage-3.1, gemini-embedding) without code changes.
+// Note: changing models invalidates the vector space — old stored embeddings of a different
+// dimension are handled gracefully by cosineSimilarity (returns 0 on dimension mismatch) and get
+// re-embedded lazily as nodes are touched.
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
 const MAX_BATCH_SIZE = 100;
 const MAX_CONCURRENT = 3;
 
