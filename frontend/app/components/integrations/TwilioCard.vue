@@ -37,7 +37,8 @@
               <option value="claude-haiku-4-5-20251001">Haiku 4.5 (fastest)</option>
               <option value="claude-sonnet-4-20250514">Sonnet 4 (balanced)</option>
               <option value="claude-opus-4-20250514">Opus 4</option>
-              <option value="claude-opus-4-7">Opus 4.7 (smartest)</option>
+              <option value="claude-opus-4-7">Opus 4.7</option>
+              <option value="claude-fable-5">Fable 5 (latest)</option>
             </select>
           </div>
         </template>
@@ -116,7 +117,8 @@
             <option value="claude-haiku-4-5-20251001">Haiku 4.5 (fastest)</option>
             <option value="claude-sonnet-4-20250514">Sonnet 4 (balanced)</option>
             <option value="claude-opus-4-20250514">Opus 4</option>
-            <option value="claude-opus-4-7">Opus 4.7 (smartest)</option>
+            <option value="claude-opus-4-7">Opus 4.7</option>
+            <option value="claude-fable-5">Fable 5 (latest)</option>
           </select>
         </div>
         <div class="tw-col">
