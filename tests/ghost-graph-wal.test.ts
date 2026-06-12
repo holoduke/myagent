@@ -279,12 +279,14 @@ describe("Write-Ahead Log (WAL)", () => {
     }]);
 
     const entries = getWalEntries();
-    const addEntry = entries.find(e => e.op === "add_node");
-    expect(addEntry).toBeDefined();
-    expect(addEntry!.nodeId).toBe("n_wal_test");
-    expect((addEntry!.meta as any).type).toBe("fact");
-    expect((addEntry!.meta as any).tags).toEqual(["wal", "test"]);
-    expect(addEntry!.ts).toBeGreaterThan(0);
+    const addEntries = entries.filter(e => e.op === "add_node" && e.nodeId === "n_wal_test");
+    // Regression guard: applyOperations must NOT double-log (addNode already logs).
+    expect(addEntries.length).toBe(1);
+    const addEntry = addEntries[0];
+    expect(addEntry.nodeId).toBe("n_wal_test");
+    expect((addEntry.meta as any).type).toBe("fact");
+    expect((addEntry.meta as any).tags).toEqual(["wal", "test"]);
+    expect(addEntry.ts).toBeGreaterThan(0);
   });
 
   it("logs WAL entry for add_edge", () => {
@@ -355,8 +357,8 @@ describe("Write-Ahead Log (WAL)", () => {
     const updEntry = entries.find(e => e.op === "update_node");
     expect(updEntry).toBeDefined();
     expect(updEntry!.nodeId).toBe("n_upd");
-    expect((updEntry!.meta as any).hasContent).toBe(true);
-    expect((updEntry!.meta as any).hasTags).toBe(true);
+    expect((updEntry!.meta as any).fields).toContain("content");
+    expect((updEntry!.meta as any).fields).toContain("tags");
   });
 
   it("logs WAL entry for remove_node", () => {

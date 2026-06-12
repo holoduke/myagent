@@ -244,32 +244,32 @@ describe("verify self_improve", () => {
     expect(result.reasons[0]).toContain("empty improvement proposal");
   });
 
-  it("flags proposals touching action-verifier", () => {
+  it("blocks proposals touching action-verifier", () => {
     const result = verify({
       type: "self_improve",
       source: "reflect",
       proposalDescription: "Modify action-verifier to allow more ops",
     });
-    expect(result.verdict).toBe("flagged");
-    expect(result.reasons.some(r => r.includes("sensitive area"))).toBe(true);
+    expect(result.verdict).toBe("blocked");
+    expect(result.reasons.some(r => r.includes("oversight-critical"))).toBe(true);
   });
 
-  it("flags proposals touching contact-whitelist", () => {
+  it("blocks proposals touching contact-whitelist", () => {
     const result = verify({
       type: "self_improve",
       source: "reflect",
       proposalDescription: "Update contact-whitelist logic",
     });
-    expect(result.verdict).toBe("flagged");
+    expect(result.verdict).toBe("blocked");
   });
 
-  it("flags proposals touching auth", () => {
+  it("blocks proposals touching auth", () => {
     const result = verify({
       type: "self_improve",
       source: "reflect",
       proposalDescription: "Change auth flow to be more permissive",
     });
-    expect(result.verdict).toBe("flagged");
+    expect(result.verdict).toBe("blocked");
   });
 });
 
