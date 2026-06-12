@@ -200,6 +200,9 @@ export interface BrainState {
 
   // backups
   lastBackupTick: number;
+
+  // daily news digest
+  lastNewsDigestTick?: number;
 }
 
 // ── Tick Types ──

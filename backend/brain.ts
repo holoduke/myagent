@@ -28,6 +28,7 @@ import { getBrainConfig, getOwnerLocalDate, getOwnerLocalTime } from "./brain-co
 
 import { BRAIN_DIR, OWNER_NAME, GITHUB_REPO } from "./config.js";
 import { createBackup, shouldRunBackup, BACKUP_INTERVAL } from "./memory/backup.js";
+import { shouldRunNewsDigest, runNewsDigest } from "./news-digest.js";
 import { shouldRunReplay, replayAndCompare } from "./memory/retrieval-replay.js";
 import { loadConsciousness } from "./consciousness.js";
 
@@ -92,6 +93,7 @@ function defaultState(): BrainState {
     lastSuccessfulTick: 0,
     pendingSelfMod: false,
     lastBackupTick: 0,
+    lastNewsDigestTick: 0,
   };
 }
 
@@ -772,6 +774,18 @@ async function tick(
       }
     } catch (err) {
       log(`Retrieval replay failed (non-fatal): ${err}`);
+    }
+  }
+
+  // ── Daily news digest (once/day after configured local hour, silent) ──
+  if (shouldRunNewsDigest(freshState.lastNewsDigestTick ?? 0, cfg.ownerTimezone)) {
+    // Mark before running so a slow fetch can't trigger a second concurrent run.
+    freshState.lastNewsDigestTick = Date.now();
+    try {
+      const digest = await runNewsDigest(graph);
+      if (digest.stored) log(`Daily news digest stored (${digest.itemCount} items reviewed)`);
+    } catch (err) {
+      log(`News digest failed (non-fatal): ${err}`);
     }
   }
 
