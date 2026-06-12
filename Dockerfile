@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install AI CLI tools globally
-RUN npm install -g @anthropic-ai/claude-code @openai/codex @vibe-kit/grok-cli
+RUN npm install -g @anthropic-ai/claude-code@2.1.175 @openai/codex @vibe-kit/grok-cli
 
 # Create app directory
 WORKDIR /app
