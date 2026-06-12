@@ -394,9 +394,22 @@ All integrations can be enabled or disabled via toggle switches on the Integrati
 | **Google Calendar** | Polls upcoming events every 5 min using Gmail OAuth credentials. |
 | **Home Assistant** | Monitors entity state changes via direct API or Nabu Casa cloud. |
 | **RSS Feeds** | Polls RSS/Atom feeds every 15 min. New items become observations. |
+| **News** | Daily filtered news digest (Hacker News primary + Reddit + Dutch + tech). Ambient awareness only — see below. |
 | **OwnTracks** | Receives location updates for spatial awareness. |
 | **SSH** | Auto-generated keypair, manage remote server targets. |
 | **Scheduled** | Queue messages for future delivery. |
+
+## Daily News Digest
+
+Once per day (after `NEWS_DIGEST_HOUR`, owner-local, default 07:00) ARIA fetches the day's headlines from a curated source set — **Hacker News as the primary source**, plus Reddit (worldnews/technology/programming), Dutch news (NOS, NU.nl), and tech (The Verge, Tweakers). A single cheap LLM pass filters and summarizes them against what ARIA already knows about the owner (active goals, strongest interest/concept nodes), and the result is stored as **one ephemeral `insight` node** (tagged `news`/`transient`, fast-decaying).
+
+This is deliberately **ambient awareness, not a notification feed**:
+
+- News is fetched on demand once a day — no per-headline polling, no observation-stream noise.
+- The digest **never reinforces person nodes** and **never triggers a proactive message** — it only enriches ARIA's context so she's aware when *you* bring something up.
+- The latest digest surfaces in the brain prompt under a `TODAY'S NEWS` section.
+
+Feeds live at `/data/news/feeds.json` (seeded with defaults on first run) and the integration can be toggled off like any other. Source code: `backend/integrations/news.ts` (sources + fetch) and `backend/news-digest.ts` (gate + summarize + store).
 
 ## Self-Improvement
 

@@ -558,6 +558,15 @@ function formatEnhancedContextSections(graph: MemoryGraph): string {
     sections.push(`\n═══ CONTACT MENTAL MODELS ═══\n\n${tom}\n`);
   }
 
+  // Today's news digest — most recent news node from the last ~36h, full content.
+  // Ambient awareness only: do not proactively message the owner about news.
+  const latestNews = graph.findByTag("news")
+    .filter(n => Date.now() - n.createdAt < 36 * 60 * 60 * 1000)
+    .sort((a, b) => b.createdAt - a.createdAt)[0];
+  if (latestNews) {
+    sections.push(`\n═══ TODAY'S NEWS (ambient awareness — do not proactively message about this) ═══\n\n${latestNews.content}\n`);
+  }
+
   // Autonomy + Health (compact line)
   const autonomy = getAutonomySummary();
   const health = getHealthSummary();
