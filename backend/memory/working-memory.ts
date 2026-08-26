@@ -37,7 +37,26 @@ function defaultWorkingMemory(): WorkingMemory {
 }
 
 export function loadWorkingMemory(): WorkingMemory {
-  return { ...defaultWorkingMemory(), ...safeReadJSON<Partial<WorkingMemory>>(WM_FILE, {}) };
+  const wm = { ...defaultWorkingMemory(), ...safeReadJSON<Partial<WorkingMemory>>(WM_FILE, {}) };
+  wm.shortTermTracking = dedupeTracking(wm.shortTermTracking);
+  return wm;
+}
+
+/**
+ * Remove duplicate tracking items (normalized: trimmed, case-insensitive).
+ * Keeps the last occurrence so an item's position reflects its most recent add.
+ * Guards against the same nudge being appended every tick and bloating prompts.
+ */
+function dedupeTracking(items: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (let i = items.length - 1; i >= 0; i--) {
+    const key = items[i].trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.unshift(items[i]);
+  }
+  return out;
 }
 
 export function saveWorkingMemory(wm: WorkingMemory): void {
@@ -62,7 +81,7 @@ export function updateWorkingMemory(
 ): WorkingMemory {
   if (updates.currentContext !== undefined) wm.currentContext = updates.currentContext;
   if (updates.mood !== undefined) wm.mood = updates.mood;
-  if (updates.shortTermTracking !== undefined) wm.shortTermTracking = updates.shortTermTracking;
+  if (updates.shortTermTracking !== undefined) wm.shortTermTracking = dedupeTracking(updates.shortTermTracking);
   if (updates.activatedNodeIds !== undefined) wm.activatedNodeIds = updates.activatedNodeIds;
   if (updates.pendingFollowUps !== undefined) wm.pendingFollowUps = updates.pendingFollowUps;
   if (updates.conversationThreads !== undefined) wm.conversationThreads = updates.conversationThreads;
@@ -72,7 +91,7 @@ export function updateWorkingMemory(
 
 // ── Auto-Cleanup ──
 
-const MAX_TRACKING_ITEMS = 25;
+const MAX_TRACKING_ITEMS = 10;
 const MAX_FOLLOWUP_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export function cleanupWorkingMemory(wm: WorkingMemory): { trackingTrimmed: number; followUpsPruned: number } {
@@ -80,11 +99,13 @@ export function cleanupWorkingMemory(wm: WorkingMemory): { trackingTrimmed: numb
   let followUpsPruned = 0;
   const now = Date.now();
 
-  // Cap shortTermTracking to most recent items
+  // Dedupe, then cap shortTermTracking to most recent items
+  const beforeTracking = wm.shortTermTracking.length;
+  wm.shortTermTracking = dedupeTracking(wm.shortTermTracking);
   if (wm.shortTermTracking.length > MAX_TRACKING_ITEMS) {
-    trackingTrimmed = wm.shortTermTracking.length - MAX_TRACKING_ITEMS;
     wm.shortTermTracking = wm.shortTermTracking.slice(-MAX_TRACKING_ITEMS);
   }
+  trackingTrimmed = beforeTracking - wm.shortTermTracking.length;
 
   // Remove expired follow-ups (older than 30 days with no dueAt, or past dueAt by 7 days)
   if (wm.pendingFollowUps && wm.pendingFollowUps.length > 0) {
