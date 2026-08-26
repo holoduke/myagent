@@ -43,6 +43,7 @@ export interface BrainConfig {
     driftAudit: string;     // weekly code drift analysis
     selfImprove: string;    // code improvement worker
     vision: string;         // image description
+    newsDigest: string;     // daily news digest (cheap by design)
   };
 }
 
@@ -212,6 +213,7 @@ function envDefaults(): BrainConfig {
       driftAudit: "sonnet",
       selfImprove: "sonnet",
       vision: "haiku",
+      newsDigest: "haiku",
     },
   };
 }

@@ -24,7 +24,20 @@ const log = createLogger("news-digest");
 
 const LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const MAX_ITEMS_TO_LLM = 60;
-const DIGEST_HOUR = Number(process.env.NEWS_DIGEST_HOUR ?? 7); // owner-local hour, earliest run time
+const DEFAULT_DIGEST_HOUR = 7;
+
+/** Parse NEWS_DIGEST_HOUR into a valid 0-23 hour, falling back to the default on blank/invalid input. */
+export function parseDigestHour(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_DIGEST_HOUR;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > 23) {
+    log(`Invalid NEWS_DIGEST_HOUR "${raw}" — falling back to ${DEFAULT_DIGEST_HOUR}`);
+    return DEFAULT_DIGEST_HOUR;
+  }
+  return n;
+}
+
+const DIGEST_HOUR = parseDigestHour(process.env.NEWS_DIGEST_HOUR); // owner-local hour, earliest run time
 
 /**
  * Gate: run once per owner-local day, at or after DIGEST_HOUR. Returns true when
@@ -47,7 +60,8 @@ function buildInterestContext(graph: MemoryGraph): string {
 
   const goals = graph.findByType("goal").filter(n => n.strength > 0.3).slice(0, 6);
   if (goals.length > 0) {
-    parts.push("Active goals: " + goals.map(g => g.content.slice(0, 80)).join("; "));
+    // First line only — goal content embeds [GOAL_DATA] JSON after the title.
+    parts.push("Active goals: " + goals.map(g => g.content.split("\n")[0].slice(0, 80)).join("; "));
   }
 
   // Strongest concept + preference nodes hint at what the owner cares about.
@@ -120,7 +134,7 @@ export async function runNewsDigest(graph: MemoryGraph, now: Date = new Date()):
   const runner = new LlmRunner({
     name: "news-digest",
     timeout: 60_000,
-    model: getBrainConfig().models?.driftAudit ?? "haiku",
+    model: getBrainConfig().models?.newsDigest ?? "haiku",
   });
 
   let summary: string | null;
@@ -142,9 +156,12 @@ export async function runNewsDigest(graph: MemoryGraph, now: Date = new Date()):
     id,
     type: "insight",
     content: `[NEWS DIGEST ${dateStr}]\n${summary.trim()}`,
-    // "news"/"transient" → ephemeral retention tier (decays ~2x fast); not pinned.
+    // "transient" → ephemeral retention tier (decays ~2x fast); not pinned.
     tags: ["news", "digest", "transient"],
     strength: 0.5,
+    // Explicit low importance so auto-salience never scores headline vocabulary
+    // ("death", "emergency", ...) and defeats the fast decay.
+    importance: 0.2,
     pinned: false,
     createdAt: now.getTime(),
     lastAccessedAt: now.getTime(),

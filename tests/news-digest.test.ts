@@ -7,9 +7,32 @@ vi.mock("../backend/brain-config.js", () => ({
   getOwnerLocalDate: (_tz: string, now: Date = new Date()) => now.toISOString().slice(0, 10),
 }));
 
-import { shouldRunNewsDigest } from "../backend/news-digest.js";
+import { shouldRunNewsDigest, parseDigestHour } from "../backend/news-digest.js";
 
 const TZ = "UTC";
+
+describe("parseDigestHour", () => {
+  it("returns the default for undefined and blank input", () => {
+    expect(parseDigestHour(undefined)).toBe(7);
+    expect(parseDigestHour("")).toBe(7);
+    expect(parseDigestHour("   ")).toBe(7);
+  });
+
+  it("parses valid hours 0-23", () => {
+    expect(parseDigestHour("0")).toBe(0);
+    expect(parseDigestHour("7")).toBe(7);
+    expect(parseDigestHour("23")).toBe(23);
+  });
+
+  it("falls back to the default for non-numeric, fractional, and out-of-range input", () => {
+    expect(parseDigestHour("7am")).toBe(7);
+    expect(parseDigestHour("abc")).toBe(7);
+    expect(parseDigestHour("7.5")).toBe(7);
+    expect(parseDigestHour("-1")).toBe(7);
+    expect(parseDigestHour("24")).toBe(7);
+    expect(parseDigestHour("25")).toBe(7);
+  });
+});
 
 describe("shouldRunNewsDigest", () => {
   it("does not run before the configured hour (default 07:00)", () => {

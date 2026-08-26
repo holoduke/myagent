@@ -369,6 +369,9 @@ let tickLock = false;
 let thinkRunning = false;
 let consolidateRunning = false;
 let reflectRunning = false;
+let newsDigestRunning = false;
+let lastNewsDigestAttempt = 0;
+const NEWS_DIGEST_RETRY_MS = 30 * 60 * 1000; // failed/skipped runs retry at most every 30 min
 
 // ── Hourly Stats Tracking ──
 interface TickStats {
@@ -778,15 +781,27 @@ async function tick(
   }
 
   // ── Daily news digest (once/day after configured local hour, silent) ──
-  if (shouldRunNewsDigest(freshState.lastNewsDigestTick ?? 0, cfg.ownerTimezone)) {
-    // Mark before running so a slow fetch can't trigger a second concurrent run.
-    freshState.lastNewsDigestTick = Date.now();
-    try {
-      const digest = await runNewsDigest(graph);
-      if (digest.stored) log(`Daily news digest stored (${digest.itemCount} items reviewed)`);
-    } catch (err) {
-      log(`News digest failed (non-fatal): ${err}`);
-    }
+  if (
+    shouldRunNewsDigest(freshState.lastNewsDigestTick ?? 0, cfg.ownerTimezone) &&
+    !newsDigestRunning &&
+    Date.now() - lastNewsDigestAttempt >= NEWS_DIGEST_RETRY_MS
+  ) {
+    newsDigestRunning = true;
+    lastNewsDigestAttempt = Date.now();
+    // Fire-and-forget: the digest is context-only, so nothing in this tick needs
+    // its result and awaiting it would hold the tick lock for up to ~75s.
+    // The day's slot is only consumed on success — failed runs retry after
+    // NEWS_DIGEST_RETRY_MS instead of going dark until tomorrow.
+    runNewsDigest(graph)
+      .then((digest) => {
+        if (!digest.stored) return;
+        const state = loadState();
+        state.lastNewsDigestTick = Date.now();
+        saveState(state);
+        log(`Daily news digest stored (${digest.itemCount} items reviewed)`);
+      })
+      .catch((err) => log(`News digest failed (non-fatal): ${err}`))
+      .finally(() => { newsDigestRunning = false; });
   }
 
   saveState(freshState);

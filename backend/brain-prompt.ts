@@ -494,8 +494,11 @@ export function formatDigestTemplate(wm: WorkingMemory, graph: MemoryGraph): str
     ).join("\n")}`);
   }
 
-  // Insights section — recent insights and patterns
+  // Insights section — recent insights and patterns. News digests are insights
+  // too but already get their own TODAY'S NEWS section; keep them out of the
+  // 3-slot list so they don't crowd out real insights.
   const recentInsights = graph.findByType("insight")
+    .filter(n => !n.tags.includes("news"))
     .filter(n => Date.now() - n.createdAt < 7 * 24 * 60 * 60 * 1000) // last 7 days
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 3);
@@ -558,13 +561,17 @@ function formatEnhancedContextSections(graph: MemoryGraph): string {
     sections.push(`\n═══ CONTACT MENTAL MODELS ═══\n\n${tom}\n`);
   }
 
-  // Today's news digest — most recent news node from the last ~36h, full content.
-  // Ambient awareness only: do not proactively message the owner about news.
+  // Today's news digest — most recent digest node from the last ~36h.
+  // Filter to actual digest nodes (tag + id prefix guard) so any other node
+  // that happens to acquire a "news" tag can't hijack this section, and cap
+  // the injected length. Ambient awareness only: do not proactively message
+  // the owner about news.
   const latestNews = graph.findByTag("news")
+    .filter(n => n.tags.includes("digest") || n.id.startsWith("n_news_"))
     .filter(n => Date.now() - n.createdAt < 36 * 60 * 60 * 1000)
     .sort((a, b) => b.createdAt - a.createdAt)[0];
   if (latestNews) {
-    sections.push(`\n═══ TODAY'S NEWS (ambient awareness — do not proactively message about this) ═══\n\n${latestNews.content}\n`);
+    sections.push(`\n═══ TODAY'S NEWS (ambient awareness — do not proactively message about this) ═══\n\n${latestNews.content.slice(0, 2000)}\n`);
   }
 
   // Autonomy + Health (compact line)

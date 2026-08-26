@@ -79,6 +79,15 @@
         <IntegrationsRSSCard :rss="rssData" @reload="load" @error="(msg: string) => showToast(msg, 'error')" />
       </UiModal>
 
+      <UiModal :open="activeModal === 'news'" title="News Digest" @close="activeModal = null">
+        <p class="add-hint">
+          Once per day (default 07:00 local) ARIA fetches headlines from the configured news feeds,
+          filters them against your interests with a cheap LLM pass, and stores a single short briefing
+          as ephemeral memory. It never sends proactive messages. Use the toggle on the tile to enable
+          or disable it; feeds live in <code>/data/news/feeds.json</code>.
+        </p>
+      </UiModal>
+
       <UiModal :open="activeModal === 'owntracks'" title="OwnTracks" @close="activeModal = null">
         <IntegrationsOwnTracksCard :owntracks="otData" />
       </UiModal>
@@ -227,6 +236,16 @@ const integrations = computed<IntegrationDef[]>(() => [
     statusClass: rssData.value.feeds.length ? 'online' : 'offline',
     statusText: `${rssData.value.feeds.filter(f => f.enabled).length} active`,
     stat: `${rssData.value.feeds.length} feeds`,
+  },
+  {
+    key: 'news',
+    name: 'News Digest',
+    description: 'Daily filtered news briefing for ambient awareness',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2"><path d="M4 22h16a2 2 0 002-2V4a2 2 0 00-2-2H8a2 2 0 00-2 2v16a2 2 0 01-4 0V11a2 2 0 012-2h2"/><line x1="10" y1="7" x2="18" y2="7"/><line x1="10" y1="11" x2="18" y2="11"/><line x1="10" y1="15" x2="18" y2="15"/></svg>',
+    isActive: () => isEnabled('news'),
+    statusClass: isEnabled('news') ? 'online' : 'offline',
+    statusText: isEnabled('news') ? 'Daily' : 'Disabled',
+    stat: 'once per day',
   },
   {
     key: 'owntracks',
