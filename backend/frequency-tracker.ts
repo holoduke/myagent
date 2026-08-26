@@ -7,6 +7,7 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { BRAIN_DIR } from "./config.js";
 import { createLogger } from "./logger.js";
+import { downtimeOverlapMs, lastMajorDowntimeEnd } from "./downtime-tracker.js";
 
 const log = createLogger("frequency");
 
@@ -14,6 +15,8 @@ const BASELINES_FILE = `${BRAIN_DIR}/frequency-baselines.json`;
 const BASELINE_DAYS = 30;
 const ANOMALY_THRESHOLD_STDDEV = 2; // >2 standard deviations = anomaly
 const MIN_BASELINE_DAYS = 7; // Need at least 7 days of data before detecting anomalies
+const STALE_BASELINE_GAP_MS = 72 * 60 * 60 * 1000; // downtime >72h invalidates pre-gap baseline data
+const DOWNTIME_ARTIFACT_FRACTION = 0.5; // silence window ≥50% downtime = likely artifact
 
 // ── Types ──
 
@@ -26,6 +29,8 @@ export interface FrequencyAnomaly {
   baselineStdDev: number;
   daysSinceLastMessage: number;
   description: string;
+  /** True when the silence window mostly overlaps system downtime — the system was deaf, the contact wasn't necessarily quiet. */
+  likelyArtifact?: boolean;
 }
 
 interface ContactBaseline {
@@ -108,9 +113,18 @@ export function detectAnomalies(): FrequencyAnomaly[] {
   const now = Date.now();
   const anomalies: FrequencyAnomaly[] = [];
 
+  // Baselines that span a long system-downtime gap are stale: the zero-count
+  // days during the gap reflect ARIA being deaf, not contacts being quiet.
+  // Only trust daily counts recorded after the most recent >72h gap.
+  const staleCutoff = lastMajorDowntimeEnd(STALE_BASELINE_GAP_MS);
+  const staleCutoffDate = staleCutoff > 0 ? new Date(staleCutoff).toISOString().slice(0, 10) : "";
+
   for (const [jid, baseline] of Object.entries(store)) {
-    const dates = Object.keys(baseline.dailyCounts).sort();
-    if (dates.length < MIN_BASELINE_DAYS) continue; // Not enough history
+    let dates = Object.keys(baseline.dailyCounts).sort();
+    if (staleCutoffDate) {
+      dates = dates.filter(d => d >= staleCutoffDate);
+    }
+    if (dates.length < MIN_BASELINE_DAYS) continue; // Not enough (fresh) history
 
     // Calculate mean and stddev of daily counts
     const counts = dates.map(d => baseline.dailyCounts[d]);
@@ -127,6 +141,12 @@ export function detectAnomalies(): FrequencyAnomaly[] {
     // Detect silence: no messages for > mean + 2*stdDev days of expected activity
     const expectedDaysOfSilence = mean > 0 ? 1 / mean : Infinity; // avg days between messages
     if (daysSinceLast > expectedDaysOfSilence * ANOMALY_THRESHOLD_STDDEV && daysSinceLast > 3) {
+      // If the system itself was offline for most of the silence window, this
+      // is deafness, not silence — annotate so consumers cap it at LOW priority.
+      const silenceMs = now - baseline.lastMessageAt;
+      const downMs = downtimeOverlapMs(baseline.lastMessageAt, now);
+      const likelyArtifact = silenceMs > 0 && downMs / silenceMs >= DOWNTIME_ARTIFACT_FRACTION;
+      const downDays = Math.round(downMs / 86400000);
       anomalies.push({
         contactJid: jid,
         contactName: baseline.name,
@@ -135,7 +155,8 @@ export function detectAnomalies(): FrequencyAnomaly[] {
         baselineMean: mean,
         baselineStdDev: stdDev,
         daysSinceLastMessage: Math.floor(daysSinceLast),
-        description: `${baseline.name} has been unusually quiet — no messages in ${Math.floor(daysSinceLast)} days (normally ~${mean.toFixed(1)} msgs/day)`,
+        likelyArtifact,
+        description: `${baseline.name} has been unusually quiet — no messages in ${Math.floor(daysSinceLast)} days (normally ~${mean.toFixed(1)} msgs/day)${likelyArtifact ? ` (system was offline for ${downDays}d of this period — likely artifact)` : ""}`,
       });
     }
 

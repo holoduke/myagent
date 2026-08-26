@@ -20,6 +20,7 @@ import { loadWorkingMemory, saveWorkingMemory, populateTemporalContext, updateCo
 import { scoreObservations, getPendingUrgency, clearPendingUrgency, setUrgencyInterruptHandler } from "./urgency.js";
 import { getDueRecurringTasks, markExecuted } from "./recurring.js";
 import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
+import { recordObserveHeartbeat } from "./downtime-tracker.js";
 import { withTimeout } from "./utils/async.js";
 import { ensureSSHKey } from "./integrations/ssh.js";
 import { verify } from "./action-verifier.js";
@@ -497,6 +498,12 @@ async function tick(
 
   const newObs = getObservationsSince(state.lastObservationTime);
   hourlyStats.observations += newObs.length;
+
+  // Heartbeat: record that the observation pipeline is alive. Gaps in this
+  // history are system downtime — silence detectors consult it so they don't
+  // mistake ARIA being deaf for contacts being quiet. Seeded from
+  // lastObserveTick so an outage predating the heartbeat file is still visible.
+  recordObserveHeartbeat(now, state.lastObserveTick || state.lastObservationTime);
 
   if (newObs.length > 0) {
     scoreObservations(newObs);
