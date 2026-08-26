@@ -875,7 +875,7 @@ const handleBrainConfigUpdate = apiHandler(async (_req, _res, data: Record<strin
     // Validate models sub-object: only known keys with known values
     if ("models" in data && data.models !== null && typeof data.models === "object" && !Array.isArray(data.models)) {
       const VALID_MODELS = new Set(["haiku", "sonnet", "opus", "opus-4-7", "fable", "fable-5", "grok", "grok-mini"]);
-      const VALID_MODEL_KEYS = new Set(["think", "consolidate", "reflect", "selfCritique", "messageEval", "driftAudit", "selfImprove", "vision"]);
+      const VALID_MODEL_KEYS = new Set(["think", "consolidate", "reflect", "selfCritique", "messageEval", "driftAudit", "selfImprove", "vision", "newsDigest"]);
       const incoming = data.models as Record<string, unknown>;
       const validated: Record<string, string> = {};
       for (const k of VALID_MODEL_KEYS) {

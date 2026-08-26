@@ -66,6 +66,28 @@ export function classifyRetentionTier(node: MemoryNode, graph: MemoryGraph): Ret
 }
 
 /**
+ * Tag/content-only ephemeral check. Edge-based promotion can never yield
+ * "ephemeral", so skipping it is safe — and this stays usable in hot loops
+ * without touching graph edges. Respects tier priority: a node matching a
+ * higher tier (e.g. "family" + "transient") is not ephemeral.
+ */
+export function isEphemeralTier(node: MemoryNode): boolean {
+  const tagsLower = new Set(node.tags.map(t => t.toLowerCase().replace(/^#/, "")));
+  for (const tier of TIER_PRIORITY) {
+    for (const signal of TIER_TAG_SIGNALS[tier]) {
+      if (tagsLower.has(signal.toLowerCase())) return tier === "ephemeral";
+    }
+  }
+  const contentLower = node.content.toLowerCase();
+  for (const tier of TIER_PRIORITY) {
+    for (const signal of TIER_CONTENT_SIGNALS[tier]) {
+      if (contentLower.includes(signal.toLowerCase())) return tier === "ephemeral";
+    }
+  }
+  return false;
+}
+
+/**
  * Apply exponential decay to all unpinned nodes.
  * strength = strength * e^(-lambda * hours)
  * Nodes with high accessCount decay slower (logarithmic resistance).
@@ -366,6 +388,11 @@ export function autoInferSalience(graph: MemoryGraph, threshold = 0.25): number 
     // Skip pinned nodes — they don't need decay protection
     if (node.pinned) continue;
 
+    // Skip ephemeral-tier nodes (news digests, promos, transients) — inferring
+    // importance from their content (headline words like "death"/"emergency")
+    // would slow their decay and defeat the tier's purpose.
+    if (isEphemeralTier(node)) continue;
+
     // Importance inference
     if (node.importance === null || node.importance === undefined || node.importance === 0) {
       const salience = inferContentSalience(node.content);
@@ -419,6 +446,8 @@ export function spacedRepetitionRefresh(graph: MemoryGraph): number {
     const importance = node.importance ?? 0;
     if (importance < 0.6) continue;
     if (node.strength >= 0.4) continue;
+    // Ephemeral-tier nodes are meant to fade — never refresh them.
+    if (isEphemeralTier(node)) continue;
 
     // Boost strength toward importance level, capped at importance * 0.8
     const ceiling = importance * 0.8;

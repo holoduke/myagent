@@ -19,7 +19,11 @@ const log = createLogger("news");
 const NEWS_DIR = "/data/news";
 const FEEDS_FILE = `${NEWS_DIR}/feeds.json`;
 
-const parser = new Parser({ timeout: 15_000 });
+// Descriptive User-Agent — Reddit (and others) throttle/block generic library UAs.
+const parser = new Parser({
+  timeout: 15_000,
+  headers: { "User-Agent": "aria-news-digest/1.0 (personal assistant; contact: owner)" },
+});
 
 export interface NewsFeed {
   id: string;
