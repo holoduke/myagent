@@ -670,12 +670,12 @@ onMounted(load)
 .rq-filter:hover { border-color: var(--border-glow); color: var(--text-dim); }
 .rq-filter.active {
   border-color: var(--accent);
-  background: rgba(168,85,247,0.06);
+  background: rgba(139,92,246,0.06);
   color: var(--accent);
 }
 .rq-filter-count {
   font-size: 10px;
-  background: rgba(168,85,247,0.15);
+  background: rgba(139,92,246,0.15);
   padding: 1px 5px;
   border-radius: 3px;
 }
@@ -898,7 +898,7 @@ onMounted(load)
   font-family: var(--mono);
   padding: 2px 8px;
   border-radius: 4px;
-  background: rgba(168,85,247,0.12);
+  background: rgba(139,92,246,0.12);
   color: var(--accent);
   text-transform: lowercase;
 }
@@ -935,7 +935,7 @@ onMounted(load)
   font-size: 11px;
   margin-top: 4px;
   padding: 4px 8px;
-  background: rgba(168,85,247,0.06);
+  background: rgba(139,92,246,0.06);
   border-radius: 4px;
   border-left: 2px solid var(--accent);
 }

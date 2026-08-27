@@ -204,7 +204,7 @@ onUnmounted(() => {
   margin-bottom: 12px;
   border-radius: 10px;
   border: 1px solid var(--accent);
-  background: rgba(168,85,247,0.05);
+  background: rgba(139,92,246,0.05);
   transition: all .3s;
 }
 .master-switch.off {
@@ -236,12 +236,12 @@ onUnmounted(() => {
   background: var(--bg); cursor: pointer; position: relative; transition: all .2s; padding: 0; flex-shrink: 0;
 }
 .br-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
-.br-toggle.on { background: rgba(168,85,247,0.2); border-color: var(--accent); }
+.br-toggle.on { background: rgba(139,92,246,0.2); border-color: var(--accent); }
 .br-toggle-knob {
   position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
   border-radius: 50%; background: var(--text-muted); transition: all .2s;
 }
-.br-toggle.on .br-toggle-knob { left: 18px; background: var(--accent); box-shadow: 0 0 8px rgba(168,85,247,0.4); }
+.br-toggle.on .br-toggle-knob { left: 18px; background: var(--accent); }
 
 @media (max-width: 768px) {
   .section { padding: 16px 12px; }

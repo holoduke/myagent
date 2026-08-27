@@ -708,8 +708,7 @@ onMounted(load)
 }
 .ch-preset.active {
   border-color: var(--accent);
-  background: rgba(168,85,247,0.06);
-  box-shadow: 0 0 8px rgba(168,85,247,0.1);
+  background: rgba(139,92,246,0.06);
 }
 .ch-preset-name {
   font-family: var(--mono);
@@ -750,7 +749,7 @@ onMounted(load)
   padding: 0;
 }
 .br-toggle.on {
-  background: rgba(168,85,247,0.2);
+  background: rgba(139,92,246,0.2);
   border-color: var(--accent);
 }
 .br-toggle-knob {
@@ -766,7 +765,6 @@ onMounted(load)
 .br-toggle.on .br-toggle-knob {
   left: 23px;
   background: var(--accent);
-  box-shadow: 0 0 8px rgba(168,85,247,0.4);
 }
 
 /* Preset tiles */
@@ -791,8 +789,7 @@ onMounted(load)
 }
 .br-preset.active {
   border-color: var(--accent);
-  background: rgba(168,85,247,0.06);
-  box-shadow: 0 0 8px rgba(168,85,247,0.1);
+  background: rgba(139,92,246,0.06);
 }
 .br-preset-name {
   font-family: var(--mono);
@@ -947,7 +944,7 @@ onMounted(load)
 }
 .si-badge.pending { background: rgba(234,179,8,0.15); color: #eab308; }
 .si-badge.approved { background: rgba(59,130,246,0.15); color: #3b82f6; }
-.si-badge.running { background: rgba(168,85,247,0.15); color: #a855f7; animation: pulse 2s infinite; }
+.si-badge.running { background: rgba(139,92,246,0.15); color: var(--accent); animation: pulse 2s infinite; }
 .si-badge.completed { background: rgba(34,197,94,0.15); color: #22c55e; }
 .si-badge.failed { background: rgba(239,68,68,0.15); color: #ef4444; }
 .si-badge.rejected { background: rgba(107,114,128,0.15); color: #6b7280; }

@@ -178,7 +178,7 @@ function handleSave() {
 .dir-policy-btn:hover { border-color: var(--border-glow); }
 .dir-policy-btn.active {
   border-color: var(--accent);
-  background: rgba(168,85,247,0.06);
+  background: rgba(139,92,246,0.06);
   color: var(--accent);
 }
 
@@ -203,7 +203,7 @@ function handleSave() {
   padding: 0;
 }
 .br-toggle.on {
-  background: rgba(168,85,247,0.2);
+  background: rgba(139,92,246,0.2);
   border-color: var(--accent);
 }
 .br-toggle-knob {
@@ -219,7 +219,6 @@ function handleSave() {
 .br-toggle.on .br-toggle-knob {
   left: 23px;
   background: var(--accent);
-  box-shadow: 0 0 8px rgba(168,85,247,0.4);
 }
 
 @media (max-width: 768px) {

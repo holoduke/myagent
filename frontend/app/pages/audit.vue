@@ -147,7 +147,7 @@ onMounted(load)
   font-family: var(--mono);
   padding: 2px 8px;
   border-radius: 4px;
-  background: rgba(168, 85, 247, 0.1);
+  background: rgba(139,92,246, 0.1);
   color: var(--accent);
   text-transform: uppercase;
   letter-spacing: 0.5px;

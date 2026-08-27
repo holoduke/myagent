@@ -339,7 +339,7 @@ onMounted(load)
   padding: 0;
 }
 .br-toggle.on {
-  background: rgba(168,85,247,0.2);
+  background: rgba(139,92,246,0.2);
   border-color: var(--accent);
 }
 .br-toggle-knob {
@@ -355,7 +355,6 @@ onMounted(load)
 .br-toggle.on .br-toggle-knob {
   left: 23px;
   background: var(--accent);
-  box-shadow: 0 0 8px rgba(168,85,247,0.4);
 }
 
 /* ── Footer (reuse settings pattern) ── */
@@ -431,7 +430,7 @@ onMounted(load)
   font-size: 11px;
   font-family: var(--mono);
   color: var(--accent);
-  background: rgba(168,85,247,0.1);
+  background: rgba(139,92,246,0.1);
   padding: 1px 6px;
   border-radius: 4px;
 }

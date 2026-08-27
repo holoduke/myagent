@@ -475,7 +475,7 @@ onMounted(load)
   padding: 5px 14px; border-radius: 6px; font-size: 12px; font-family: var(--mono);
   cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-muted); transition: all .15s;
 }
-.brain-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(168,85,247,0.08); }
+.brain-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(139,92,246,0.08); }
 .brain-tab:hover { color: var(--text); }
 
 /* ── Goals ── */
@@ -500,7 +500,6 @@ onMounted(load)
 .brain-progress-fill {
   height: 100%; border-radius: 3px; transition: width .3s;
   background: linear-gradient(90deg, var(--accent), var(--cyan));
-  box-shadow: 0 0 6px rgba(168,85,247,0.3);
 }
 .brain-progress-pct { font-size: 12px; color: var(--text-muted); font-family: var(--mono); min-width: 36px; text-align: right; }
 
@@ -523,12 +522,12 @@ onMounted(load)
   width: 36px; height: 20px; border-radius: 10px; border: 1px solid var(--border);
   background: var(--bg); cursor: pointer; position: relative; transition: all .2s; padding: 0; flex-shrink: 0;
 }
-.br-toggle.on { background: rgba(168,85,247,0.2); border-color: var(--accent); }
+.br-toggle.on { background: rgba(139,92,246,0.2); border-color: var(--accent); }
 .br-toggle-knob {
   position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
   border-radius: 50%; background: var(--text-muted); transition: all .2s;
 }
-.br-toggle.on .br-toggle-knob { left: 18px; background: var(--accent); box-shadow: 0 0 8px rgba(168,85,247,0.4); }
+.br-toggle.on .br-toggle-knob { left: 18px; background: var(--accent); }
 
 /* ── Small button variant ── */
 .btn-sm { padding: 4px 10px; font-size: 11px; }
@@ -544,7 +543,7 @@ onMounted(load)
   width: 36px; height: 28px; border-radius: 6px; font-size: 12px; font-family: var(--mono);
   cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-muted); transition: all .15s;
 }
-.hour-btn.selected { border-color: var(--accent); color: var(--accent); background: rgba(168,85,247,0.12); }
+.hour-btn.selected { border-color: var(--accent); color: var(--accent); background: rgba(139,92,246,0.12); }
 .hour-btn:hover { color: var(--text); }
 
 /* ── Day checkboxes ── */

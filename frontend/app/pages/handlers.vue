@@ -556,7 +556,7 @@ onMounted(loadData)
 }
 .action-badge.flag { background: rgba(234,179,8,0.15); color: #eab308; }
 .action-badge.reply { background: rgba(59,130,246,0.15); color: #3b82f6; }
-.action-badge.memory { background: rgba(168,85,247,0.15); color: var(--accent); }
+.action-badge.memory { background: rgba(139,92,246,0.15); color: var(--accent); }
 .action-badge.webhook { background: rgba(34,197,94,0.15); color: #22c55e; }
 .handler-stat {
   font-size: 11px;

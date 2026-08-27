@@ -272,7 +272,7 @@ onMounted(loadBackups)
 .btn:hover { color: var(--text); border-color: var(--text-muted); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary { border-color: var(--accent); color: var(--accent); }
-.btn-primary:hover { background: rgba(168,85,247,0.1); }
+.btn-primary:hover { background: rgba(139,92,246,0.1); }
 .btn-sm { padding: 4px 10px; font-size: 11px; }
 .btn-warn { border-color: var(--yellow); color: var(--yellow); }
 .btn-warn:hover { background: rgba(234,179,8,0.1); }
@@ -345,8 +345,8 @@ onMounted(loadBackups)
 }
 .badge.manual {
   color: var(--accent);
-  background: rgba(168,85,247,0.1);
-  border: 1px solid rgba(168,85,247,0.2);
+  background: rgba(139,92,246,0.1);
+  border: 1px solid rgba(139,92,246,0.2);
 }
 
 .backup-actions {

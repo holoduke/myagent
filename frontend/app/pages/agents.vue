@@ -143,7 +143,7 @@ const providers = [
     id: 'claude' as const,
     name: 'Claude',
     description: 'Anthropic Claude Code CLI with full tool use',
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2"><path d="M12 2a7 7 0 017 7c0 3-2 5.5-4 7.5S12 22 12 22s-1-3.5-3-5.5S5 12 5 9a7 7 0 017-7z"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M12 2a7 7 0 017 7c0 3-2 5.5-4 7.5S12 22 12 22s-1-3.5-3-5.5S5 12 5 9a7 7 0 017-7z"/></svg>',
   },
   {
     id: 'codex' as const,
@@ -389,7 +389,7 @@ onMounted(load)
   text-transform: uppercase;
   letter-spacing: 1px;
 }
-.provider-badge.claude { background: rgba(168,85,247,0.15); color: #a855f7; }
+.provider-badge.claude { background: rgba(139,92,246,0.15); color: var(--accent); }
 .provider-badge.codex { background: rgba(16,185,129,0.15); color: #10b981; }
 .provider-badge.grok { background: rgba(245,158,11,0.15); color: #f59e0b; }
 .default-badge {
@@ -397,7 +397,7 @@ onMounted(load)
   font-size: 10px;
   padding: 2px 8px;
   border-radius: 6px;
-  background: rgba(168,85,247,0.1);
+  background: rgba(139,92,246,0.1);
   color: var(--accent);
   text-transform: uppercase;
   letter-spacing: 1px;

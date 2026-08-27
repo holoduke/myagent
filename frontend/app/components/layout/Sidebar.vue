@@ -2,7 +2,7 @@
   <div class="sidebar">
     <div class="sidebar-logo">
       <h1><span class="hal-dot"></span>ARIA</h1>
-      <div class="version">v1.0 mainframe</div>
+      <div class="version">personal agent</div>
     </div>
     <div class="sidebar-nav">
       <template v-for="(section, si) in navSections" :key="si">
@@ -78,83 +78,78 @@ const navSections = [
 <style scoped>
 .sidebar {
   width: var(--sidebar-w);
-  background: var(--bg-card);
+  background: var(--bg);
   border-right: 1px solid var(--border);
-  box-shadow: 1px 0 10px rgba(168,85,247,0.03);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   z-index: 20;
 }
 .sidebar-logo {
-  padding: 20px 16px;
-  border-bottom: 1px solid var(--border);
+  padding: 20px 16px 16px;
 }
 .sidebar-logo h1 {
-  font-family: var(--mono);
-  font-size: 18px;
-  color: var(--accent);
-  text-shadow: var(--glow-accent);
-  letter-spacing: 4px;
+  font-family: var(--sans);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 2.5px;
   display: flex;
   align-items: center;
   gap: 10px;
 }
 .sidebar-logo .hal-dot {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 8px rgba(168,85,247,0.6);
   animation: breathe 3s ease-in-out infinite;
 }
 .sidebar-logo .version {
   font-size: 10px;
   color: var(--text-muted);
   font-family: var(--mono);
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
   margin-top: 4px;
 }
 .sidebar-nav {
   flex: 1;
-  padding: 8px 0;
+  padding: 4px 10px;
   overflow-y: auto;
 }
 .nav-section-label {
-  padding: 16px 16px 4px;
+  padding: 16px 8px 5px;
   font-size: 10px;
-  font-family: var(--mono);
   font-weight: 600;
   color: var(--text-muted);
-  letter-spacing: 1.5px;
+  letter-spacing: 0.8px;
   text-transform: uppercase;
 }
 .nav-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 16px;
+  padding: 7px 10px;
+  margin-bottom: 1px;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13.5px;
   font-family: var(--sans);
   font-weight: 500;
-  border-left: 3px solid transparent;
-  transition: all .15s;
+  border-radius: var(--radius-sm);
+  transition: background .12s, color .12s;
   text-decoration: none;
 }
 .nav-item:hover {
   color: var(--text);
-  background: rgba(255,255,255,0.02);
+  background: var(--bg-surface);
 }
 .nav-item.active {
-  color: var(--accent);
-  border-left-color: var(--accent);
-  box-shadow: inset 3px 0 10px rgba(168,85,247,0.15);
-  background: rgba(168,85,247,0.05);
+  color: var(--text);
+  background: var(--bg-elevated);
 }
-.nav-item :deep(svg) { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.7; }
-.nav-item.active :deep(svg) { opacity: 1; }
+.nav-item :deep(svg) { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.65; }
+.nav-item.active :deep(svg) { opacity: 1; color: var(--accent-warm); }
 .sidebar-footer {
   padding: 12px 16px;
   border-top: 1px solid var(--border);
@@ -163,18 +158,17 @@ const navSections = [
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 7px 12px;
   color: var(--text-muted);
-  font-size: 12px;
-  font-family: var(--mono);
+  font-size: 12.5px;
   cursor: pointer;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   width: 100%;
   transition: all .15s;
 }
-.sidebar-footer .logout-btn:hover { color: var(--red); border-color: var(--red); }
+.sidebar-footer .logout-btn:hover { color: var(--red); border-color: rgba(248,113,113,0.4); }
 .sidebar-footer .logout-btn svg { width: 14px; height: 14px; }
 
 @media (max-width: 768px) {

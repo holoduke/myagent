@@ -2,7 +2,7 @@
   <div class="section">
     <div class="home-header">
       <h1><span class="hal-dot"></span>ARIA</h1>
-      <div class="version">v1.0 mainframe</div>
+      <div class="version">personal agent</div>
     </div>
 
     <div class="tile-grid">
@@ -62,7 +62,6 @@ const navItems = [
   font-family: var(--mono);
   font-size: 28px;
   color: var(--accent);
-  text-shadow: var(--glow-accent);
   letter-spacing: 6px;
   display: flex;
   align-items: center;
@@ -74,7 +73,6 @@ const navItems = [
   height: 12px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 10px rgba(168,85,247,0.6);
   animation: breathe 3s ease-in-out infinite;
 }
 .home-header .version {
@@ -116,8 +114,8 @@ const navItems = [
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: rgba(168,85,247,0.08);
-  border: 1px solid rgba(168,85,247,0.12);
+  background: rgba(139,92,246,0.08);
+  border: 1px solid rgba(139,92,246,0.12);
   color: var(--accent);
 }
 .tile-icon :deep(svg) {

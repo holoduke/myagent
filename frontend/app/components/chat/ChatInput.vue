@@ -68,7 +68,7 @@ textarea {
   line-height: 1.4;
   transition: all .2s;
 }
-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,77,42,0.08); }
+textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139,92,246,0.12); }
 textarea::placeholder { color: var(--text-ghost); }
 .send-btn {
   width: 42px;
@@ -84,7 +84,7 @@ textarea::placeholder { color: var(--text-ghost); }
   transition: all .2s;
   flex-shrink: 0;
 }
-.send-btn:hover { background: rgba(255,77,42,0.1); box-shadow: var(--glow-accent); }
+.send-btn:hover { background: rgba(139,92,246,0.12); }
 .send-btn:disabled { opacity: .25; cursor: not-allowed; }
 .send-btn svg { width: 17px; height: 17px; fill: currentColor; }
 </style>

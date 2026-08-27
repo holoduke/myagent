@@ -532,7 +532,7 @@ onMounted(loadAll)
   border-radius: 6px;
   text-transform: uppercase;
   letter-spacing: 1px;
-  background: rgba(168,85,247,0.1);
+  background: rgba(139,92,246,0.1);
   color: var(--accent);
 }
 .skill-status {
@@ -552,7 +552,7 @@ onMounted(loadAll)
   color: #ef4444;
 }
 .skill-status.available {
-  background: rgba(168,85,247,0.1);
+  background: rgba(139,92,246,0.1);
   color: var(--accent);
 }
 
