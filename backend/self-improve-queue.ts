@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { FileStore } from "./utils/file-store.js";
 import type { ImprovementTask } from "./self-improve-prompt.js";
+import { getBrainConfig, getOwnerLocalDate } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 import { BRAIN_DIR } from "./config.js";
 
@@ -204,5 +205,22 @@ export function getWeeklyCompletedCount(): number {
   return history.entries.filter(
     e => e.status === "completed" && e.completedAt && e.completedAt > oneWeekAgo,
   ).length;
+}
+
+/** Completed improvements in the current owner-local day. Pure core exported for tests. */
+export function countCompletedOnDay(
+  entries: QueueItem[],
+  localDateOf: (ms: number) => string,
+  today: string,
+): number {
+  return entries.filter(
+    e => e.status === "completed" && e.completedAt && localDateOf(e.completedAt) === today,
+  ).length;
+}
+
+export function getDailyCompletedCount(): number {
+  const { ownerTimezone } = getBrainConfig();
+  const localDateOf = (ms: number) => getOwnerLocalDate(ownerTimezone, new Date(ms));
+  return countCompletedOnDay(loadHistory().entries, localDateOf, getOwnerLocalDate(ownerTimezone));
 }
 

@@ -4,7 +4,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
-import { spawn } from "child_process";
+import { spawn, execFile } from "child_process";
 import { createLogger } from "./logger.js";
 import { openWorkerLog, pruneWorkerLogs } from "./worker-logs.js";
 import type { BrainState } from "./memory/types.js";
@@ -117,6 +117,9 @@ export function pickUpImproveResult(
       };
       if (queueResult.success) {
         completeItem(queueItemId, queueResult);
+        if (queueResult.prUrl) {
+          autoMergeImprovePr(queueResult.prUrl, graph);
+        }
       } else {
         failItem(queueItemId, queueResult);
       }
@@ -191,6 +194,48 @@ export function pickUpImproveResult(
   } catch (err) {
     log(`Failed to process improve result: ${err}`);
   }
+}
+
+/**
+ * Squash-merge a successful self-improve PR so Coolify deploys it.
+ * Fire-and-forget: a failed merge (conflict, checks) leaves the PR open and
+ * records a pinned meta node so it surfaces instead of silently piling up.
+ */
+function autoMergeImprovePr(prUrl: string, graph: MemoryGraph): void {
+  const cfg = getBrainConfig();
+  if (!cfg.selfImproveAutoMerge) {
+    log(`Auto-merge disabled — PR left open for manual review: ${prUrl}`);
+    return;
+  }
+  log(`Auto-merging self-improve PR: ${prUrl}`);
+  execFile(
+    "gh",
+    ["pr", "merge", prUrl, "--squash", "--delete-branch"],
+    { timeout: 60_000 },
+    (err, _stdout, stderr) => {
+      if (!err) {
+        log(`Auto-merged ${prUrl} — Coolify will deploy`);
+        return;
+      }
+      log(`Auto-merge FAILED for ${prUrl}: ${(stderr || err.message).slice(0, 300)} — PR left open`);
+      try {
+        graph.addNode({
+          id: `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`,
+          type: "meta",
+          content: `Self-improve PR could not be auto-merged and needs attention: ${prUrl}\nError: ${(stderr || err.message).slice(0, 300)}`,
+          tags: ["self-improvement", "merge-failed"],
+          strength: 0.9,
+          pinned: true,
+          createdAt: Date.now(),
+          lastAccessedAt: Date.now(),
+          accessCount: 1,
+        });
+        graph.save();
+      } catch (nodeErr) {
+        log(`Failed to record merge-failure node: ${nodeErr}`);
+      }
+    },
+  );
 }
 
 export function interceptDirectTask(
