@@ -68,6 +68,39 @@ function review(overrides: Partial<Review> = {}): Review {
   };
 }
 
+describe("detectVitalsAnomalies", () => {
+  it("flags a crash-rate jump of 50%+ relative and 0.1pp+ absolute", async () => {
+    const { detectVitalsAnomalies } = await import("../backend/integrations/playstore-poll.js");
+    const anomalies = detectVitalsAnomalies([
+      day("2026-08-25", 0.002, 0.001, 1000),
+      day("2026-08-26", 0.004, 0.001, 1000),
+    ]);
+    expect(anomalies).toEqual([{ metric: "crashRate", previous: 0.002, current: 0.004 }]);
+  });
+
+  it("ignores relative jumps below the absolute floor (noise on tiny rates)", async () => {
+    const { detectVitalsAnomalies } = await import("../backend/integrations/playstore-poll.js");
+    expect(detectVitalsAnomalies([
+      day("2026-08-25", 0.0001, null, null),
+      day("2026-08-26", 0.0003, null, null),
+    ])).toEqual([]);
+  });
+
+  it("ignores improvements and small increases", async () => {
+    const { detectVitalsAnomalies } = await import("../backend/integrations/playstore-poll.js");
+    expect(detectVitalsAnomalies([
+      day("2026-08-25", 0.006, 0.004, null),
+      day("2026-08-26", 0.004, 0.005, null),
+    ])).toEqual([]);
+  });
+
+  it("returns empty with fewer than two days of data", async () => {
+    const { detectVitalsAnomalies } = await import("../backend/integrations/playstore-poll.js");
+    expect(detectVitalsAnomalies([day("2026-08-26", 0.01, 0.01, null)])).toEqual([]);
+    expect(detectVitalsAnomalies([])).toEqual([]);
+  });
+});
+
 describe("parseCliArgs", () => {
   it("parses the reviews command with default and explicit days", async () => {
     const { parseCliArgs } = await import("../backend/scripts/playstore-cli.js");

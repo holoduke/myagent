@@ -78,7 +78,7 @@ export interface Observation {
   text: string;
   chatJid?: string;
   chatName?: string;
-  source?: "whatsapp" | "gmail" | "slack" | "calendar" | "homeassistant" | "rss" | "owntracks" | "twilio" | "browser";
+  source?: "whatsapp" | "gmail" | "slack" | "calendar" | "homeassistant" | "rss" | "owntracks" | "twilio" | "browser" | "playstore";
   emailMeta?: EmailMeta;
   calendarMeta?: CalendarMeta;
   locationMeta?: LocationMeta;
@@ -211,7 +211,8 @@ export function recordObservation(obs: Observation): void {
   }
 
   // Track contact frequency for anomaly detection (Phase 5b)
-  if (!obs.isFromMe && obs.senderJid && obs.source !== "calendar" && obs.source !== "rss") {
+  // Skip non-person sources — feed items and store events aren't contacts.
+  if (!obs.isFromMe && obs.senderJid && obs.source !== "calendar" && obs.source !== "rss" && obs.source !== "playstore") {
     updateFrequency(obs.senderJid, obs.sender, obs.timestamp);
   }
 

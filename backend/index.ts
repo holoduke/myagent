@@ -13,6 +13,7 @@ import { handleGmailRoutes } from "./integrations/gmail-routes.js";
 import { startCalendarPolling, stopCalendarPolling } from "./integrations/calendar.js";
 import { startHAPolling, stopHAPolling } from "./integrations/homeassistant.js";
 import { startRSSPolling, stopRSSPolling } from "./integrations/rss.js";
+import { startPlayStorePolling, stopPlayStorePolling } from "./integrations/playstore-poll.js";
 import { startSlackPolling, stopSlackPolling } from "./integrations/slack.js";
 import { handleSlackRoutes } from "./integrations/slack-routes.js";
 import { handleOwnTracksWebhook } from "./integrations/owntracks.js";
@@ -36,6 +37,7 @@ function cleanupServices(): void {
   stopCalendarPolling();
   stopHAPolling();
   stopRSSPolling();
+  stopPlayStorePolling();
   closeBrowser();
 }
 
@@ -65,6 +67,7 @@ async function main() {
   startHAPolling();
   startRSSPolling();
   startSlackPolling();
+  startPlayStorePolling();
 
   // Initialize browser automation (lazy — launches on first task)
   initBrowser();
