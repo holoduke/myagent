@@ -68,6 +68,26 @@ function review(overrides: Partial<Review> = {}): Review {
   };
 }
 
+describe("parseCliArgs", () => {
+  it("parses the reviews command with default and explicit days", async () => {
+    const { parseCliArgs } = await import("../backend/scripts/playstore-cli.js");
+    expect(parseCliArgs(["reviews"])).toEqual({ command: "reviews", days: 7 });
+    expect(parseCliArgs(["reviews", "--days", "30"])).toEqual({ command: "reviews", days: 30 });
+    expect(() => parseCliArgs(["reviews", "--days", "0"])).toThrow();
+    expect(() => parseCliArgs(["reviews", "--days", "abc"])).toThrow();
+  });
+
+  it("parses reply and requires reviewId, --text, and tracks --confirm", async () => {
+    const { parseCliArgs } = await import("../backend/scripts/playstore-cli.js");
+    expect(parseCliArgs(["reply", "abc-123", "--text", "Thanks!", "--confirm"]))
+      .toEqual({ command: "reply", reviewId: "abc-123", text: "Thanks!", confirm: true });
+    expect(parseCliArgs(["reply", "abc-123", "--text", "Thanks!"]).confirm).toBe(false);
+    expect(() => parseCliArgs(["reply", "--text", "Thanks!"])).toThrow();
+    expect(() => parseCliArgs(["reply", "abc-123"])).toThrow();
+    expect(() => parseCliArgs(["unknown"])).toThrow();
+  });
+});
+
 describe("formatPlayStoreReport", () => {
   it("shows the latest vitals with trend arrows against the previous day", () => {
     const vitals = [
