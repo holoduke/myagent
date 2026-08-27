@@ -138,6 +138,32 @@ export function enqueueImprovementProposals(
   return enqueued;
 }
 
+// ── Delivery Feedback ──
+
+/**
+ * Record the real outcome of a brain-returned message in state so the next
+ * tick can (a) inject it into the prompt and (b) cross-check "sent" claims
+ * against delivery-log.json. Prevents the brain from building false memories
+ * of contact that never happened.
+ */
+function recordBrainDelivery(
+  state: BrainState,
+  message: string,
+  targetJid: string,
+  status: "sent" | "suppressed" | "failed",
+  detail?: string,
+): void {
+  state.lastBrainMessage = {
+    at: Date.now(),
+    targetJid,
+    snippet: message.slice(0, 120),
+    status,
+    detail,
+    // "sent" awaits delivery-log verification on the next tick; the others are final
+    verified: status !== "sent",
+  };
+}
+
 // ── Think Tick (Claude call) ──
 
 export async function thinkTick(
@@ -199,6 +225,7 @@ export async function thinkTick(
     initiativeSignals,
     responsivenessPreset: getActivePreset(cfg),
     recentChatDeliveries,
+    lastBrainMessage: state.lastBrainMessage,
     selfImproveStats: selfImproveStatsThink,
   });
 
@@ -406,12 +433,14 @@ export async function thinkTick(
     if (response.message) {
       const isDigestTriggered = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
       const isDirectReply = allObs.some(o => !o.isFromMe && o.trustLevel === "owner");
+      const messageTarget = response.messageTargetJid || ownerJid;
 
       // Autonomy gating: check if proactive messaging is permitted at current level.
       // A policy-level block is not a judgment failure, so it must not decrement trust —
       // otherwise the demote-spiral drags the agent down from its own gating.
       if (!isDirectReply && initiativeSignals.length > 0 && !isActionPermitted("send_proactive")) {
         log(`Proactive message blocked by autonomy level (${response.message.slice(0, 60)}...)`);
+        recordBrainDelivery(state, response.message, messageTarget, "suppressed", "blocked by autonomy level");
       } else
       // Phase 3: Self-critique for proactive/initiative messages
       if (initiativeSignals.length > 0 || !isDirectReply) {
@@ -429,21 +458,24 @@ export async function thinkTick(
         if (!critique.shouldSend) {
           log(`Message suppressed by self-critique (score ${critique.score}): ${critique.reason}`);
           recordFailure("send_message", `self-critique suppressed (score ${critique.score})`);
+          recordBrainDelivery(state, response.message, messageTarget, "suppressed", `self-critique (score ${critique.score}): ${critique.reason}`);
         } else {
-          await trySendMessage(state, sendMessage, ownerJid, response.message, {
+          const delivery = await trySendMessage(state, sendMessage, ownerJid, response.message, {
             bypassLimits: isDigestTriggered,
             targetJid: response.messageTargetJid,
           });
-          trackSentMessage(response.message, response.messageTargetJid || ownerJid, initiativeSignals.length > 0, critique.score);
+          recordBrainDelivery(state, response.message, messageTarget, delivery.status, delivery.detail);
+          trackSentMessage(response.message, messageTarget, initiativeSignals.length > 0, critique.score);
           scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
           recordSuccess("send_message");
         }
       } else {
-        await trySendMessage(state, sendMessage, ownerJid, response.message, {
+        const delivery = await trySendMessage(state, sendMessage, ownerJid, response.message, {
           bypassLimits: isDigestTriggered,
           targetJid: response.messageTargetJid,
         });
-        trackSentMessage(response.message, response.messageTargetJid || ownerJid, false);
+        recordBrainDelivery(state, response.message, messageTarget, delivery.status, delivery.detail);
+        trackSentMessage(response.message, messageTarget, false);
         scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
         recordSuccess("send_message");
       }
@@ -934,10 +966,12 @@ export async function reflectTick(
       if (!reflectCritique.shouldSend) {
         log(`Reflect message suppressed by self-critique (score ${reflectCritique.score}): ${reflectCritique.reason}`);
         recordFailure("send_message", `reflect self-critique suppressed (score ${reflectCritique.score})`);
+        recordBrainDelivery(state, response.message, response.messageTargetJid || ownerJid, "suppressed", `reflect self-critique (score ${reflectCritique.score}): ${reflectCritique.reason}`);
       } else {
-        await trySendMessage(state, sendMessage, ownerJid, response.message, {
+        const delivery = await trySendMessage(state, sendMessage, ownerJid, response.message, {
           targetJid: response.messageTargetJid,
         });
+        recordBrainDelivery(state, response.message, response.messageTargetJid || ownerJid, delivery.status, delivery.detail);
         scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
       }
     }

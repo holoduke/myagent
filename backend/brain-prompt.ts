@@ -1,5 +1,5 @@
 import type { Observation } from "./observer.js";
-import type { MemoryNode, WorkingMemory } from "./memory/types.js";
+import type { MemoryNode, WorkingMemory, BrainMessageDelivery } from "./memory/types.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import { serializeNodesForPrompt, collectRelevantRejectedEdges, formatRejectedEdgesForPrompt } from "./memory/activation.js";
 import { ariaPersonality } from "./aria-identity.js";
@@ -619,6 +619,27 @@ export interface RecentChatDelivery {
   timestamp: number;
 }
 
+/**
+ * LAST MESSAGE DELIVERY section — the actual delivery status of the previous
+ * brain-returned message, cross-checked against delivery-log.json. This keeps
+ * the brain honest: it must not record a message as sent unless delivery is
+ * confirmed here.
+ */
+function formatLastBrainMessage(d: BrainMessageDelivery): string {
+  const when = `${formatTime(d.at)} (${timeAgo(d.at)})`;
+  const ref = `[${when}] → ${d.targetJid}: "${d.snippet}"`;
+  if (d.status === "sent" && d.verified) {
+    return `Status: SENT ✓ (confirmed in delivery log)\n${ref}`;
+  }
+  if (d.status === "sent" && !d.verified) {
+    return `Status: SENT (pending confirmation — not yet cross-checked against the delivery log)\n${ref}\nDo not treat this as confirmed contact until it shows as verified.`;
+  }
+  if (d.status === "suppressed") {
+    return `Status: SUPPRESSED — NOT delivered (${d.detail || "unknown reason"})\n${ref}\nThe recipient never received this. Do NOT record it as sent/VERSTUURD in working memory. If it still matters, decide consciously whether to try again.`;
+  }
+  return `Status: FAILED — NOT delivered${d.detail ? ` (${d.detail})` : ""}\n${ref}\nThe recipient NEVER received this message. Do NOT record it as sent/VERSTUURD in working memory or build on it as if contact happened. If it still matters, send it again.`;
+}
+
 export interface ThinkContext {
   ownerName: string;
   githubRepo?: string;
@@ -637,6 +658,7 @@ export interface ThinkContext {
   initiativeSignals?: InitiativeSignal[];
   responsivenessPreset?: string | null;
   recentChatDeliveries?: RecentChatDelivery[];
+  lastBrainMessage?: BrainMessageDelivery;
   selfImproveStats?: {
     enabled: boolean;
     maxPerWeek: number;
@@ -670,6 +692,10 @@ export function buildThinkPrompt(ctx: ThinkContext): string {
       }).join("\n\n")}\n`
     : "";
 
+  const lastDeliveryBlock = ctx.lastBrainMessage
+    ? `\n═══ LAST MESSAGE DELIVERY ═══\n\nThe real delivery status of the last message you returned from a brain tick (from the delivery log — this is the ground truth, not your memory of it):\n\n${formatLastBrainMessage(ctx.lastBrainMessage)}\n`
+    : "";
+
   const chatDeliveryBlock = ctx.recentChatDeliveries && ctx.recentChatDeliveries.length > 0
     ? `\n═══ RECENTLY SENT (chat session / other) ═══\n\nThese messages and emails were already sent recently. Do NOT send duplicate messages or emails to the same contacts/recipients about the same topics.\n\n${ctx.recentChatDeliveries.map(d => `  [${formatTime(d.timestamp)}] → ${d.jid}: "${d.messageSnippet}"`).join("\n")}\n`
     : "";
@@ -691,7 +717,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${effectivelyQuiet ? "AC
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${formatConsciousnessSection()}${goalsBlock}${initiativeBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}${formatEnhancedContextSections(ctx.graph)}${formatCognitiveLoadSection(ctx.wm, ctx.observations)}${formatDigestTemplate(ctx.wm, ctx.graph)}
+${formatConsciousnessSection()}${goalsBlock}${initiativeBlock}${lastDeliveryBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}${formatEnhancedContextSections(ctx.graph)}${formatCognitiveLoadSection(ctx.wm, ctx.observations)}${formatDigestTemplate(ctx.wm, ctx.graph)}
 ═══ ACTIVATED MEMORIES ═══
 ${serializeNodesForPrompt(ctx.contextNodes, ctx.graph)}
 ${rejectedBlock}
