@@ -2,11 +2,9 @@
   <div class="section">
     <LayoutSectionHeader>Brain</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!loaded" :error="error" @retry="load()" />
 
-    <template v-else-if="loaded">
+    <template v-if="loaded && !error">
       <!-- Stat row -->
       <div class="stat-grid" style="margin-bottom:20px">
         <UiStatCard :value="activeGoals.length" label="Active Goals" />
@@ -58,7 +56,7 @@
           </div>
           <div v-if="g.data.status === 'active'" class="btn-row" style="margin-top:8px">
             <button class="btn" @click="completeGoal(g.nodeId)">Complete</button>
-            <button class="btn danger" @click="abandonGoal(g.nodeId)">Abandon</button>
+            <button class="btn danger" @click="abandonGoal(g.nodeId, g.data.title)">Abandon</button>
           </div>
         </div>
       </UiCard>
@@ -71,14 +69,14 @@
         </div>
         <div v-if="recurringTasks.length === 0" class="brain-empty">No recurring tasks</div>
         <div v-for="t in recurringTasks" :key="t.id" class="brain-row">
-          <button class="br-toggle" :class="{ on: t.enabled }" @click="toggleTask(t)">
+          <button class="br-toggle" :class="{ on: t.enabled }" role="switch" :aria-checked="t.enabled" :aria-label="'Toggle task ' + t.label" @click="toggleTask(t)">
             <span class="br-toggle-knob" />
           </button>
           <span class="brain-row-text" :class="{ disabled: !t.enabled }">{{ t.label }}</span>
           <UiTypeBadge :type="t.type.replace(/_/g, ' ')" />
           <span class="brain-row-hint">{{ scheduleLabel(t) }}</span>
           <span v-if="t.lastRunAt" class="brain-row-meta">{{ timeAgo(t.lastRunAt) }}</span>
-          <button class="btn danger btn-sm" @click="removeTask(t.id)">Del</button>
+          <button class="btn danger btn-sm" @click="removeTask(t.id, t.label)">Del</button>
         </div>
       </UiCard>
 
@@ -99,8 +97,6 @@
         </div>
       </UiCard>
     </template>
-
-    <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
 
     <!-- Create Goal Modal -->
     <UiModal :open="showGoalModal" title="New Goal" @close="showGoalModal = false">
@@ -322,7 +318,8 @@ async function completeGoal(nodeId: string) {
   }
 }
 
-async function abandonGoal(nodeId: string) {
+async function abandonGoal(nodeId: string, title: string) {
+  if (!confirm(`Abandon goal "${title}"?`)) return
   try {
     await api(`/api/brain/goals/${nodeId}/abandon`, { method: 'POST' })
     await load()
@@ -361,7 +358,8 @@ async function toggleTask(t: RecurringTask) {
   }
 }
 
-async function removeTask(id: string) {
+async function removeTask(id: string, label: string) {
+  if (!confirm(`Delete recurring task "${label}"?`)) return
   try {
     await api(`/api/brain/recurring/${id}`, { method: 'DELETE' })
     await load()
@@ -475,7 +473,7 @@ onMounted(load)
   padding: 5px 14px; border-radius: 6px; font-size: 12px; font-family: var(--mono);
   cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-muted); transition: all .15s;
 }
-.brain-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(168,85,247,0.08); }
+.brain-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(139,92,246,0.08); }
 .brain-tab:hover { color: var(--text); }
 
 /* ── Goals ── */
@@ -500,7 +498,6 @@ onMounted(load)
 .brain-progress-fill {
   height: 100%; border-radius: 3px; transition: width .3s;
   background: linear-gradient(90deg, var(--accent), var(--cyan));
-  box-shadow: 0 0 6px rgba(168,85,247,0.3);
 }
 .brain-progress-pct { font-size: 12px; color: var(--text-muted); font-family: var(--mono); min-width: 36px; text-align: right; }
 
@@ -523,12 +520,12 @@ onMounted(load)
   width: 36px; height: 20px; border-radius: 10px; border: 1px solid var(--border);
   background: var(--bg); cursor: pointer; position: relative; transition: all .2s; padding: 0; flex-shrink: 0;
 }
-.br-toggle.on { background: rgba(168,85,247,0.2); border-color: var(--accent); }
+.br-toggle.on { background: rgba(139,92,246,0.2); border-color: var(--accent); }
 .br-toggle-knob {
   position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
   border-radius: 50%; background: var(--text-muted); transition: all .2s;
 }
-.br-toggle.on .br-toggle-knob { left: 18px; background: var(--accent); box-shadow: 0 0 8px rgba(168,85,247,0.4); }
+.br-toggle.on .br-toggle-knob { left: 18px; background: var(--accent); }
 
 /* ── Small button variant ── */
 .btn-sm { padding: 4px 10px; font-size: 11px; }
@@ -544,7 +541,7 @@ onMounted(load)
   width: 36px; height: 28px; border-radius: 6px; font-size: 12px; font-family: var(--mono);
   cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--text-muted); transition: all .15s;
 }
-.hour-btn.selected { border-color: var(--accent); color: var(--accent); background: rgba(168,85,247,0.12); }
+.hour-btn.selected { border-color: var(--accent); color: var(--accent); background: rgba(139,92,246,0.12); }
 .hour-btn:hover { color: var(--text); }
 
 /* ── Day checkboxes ── */

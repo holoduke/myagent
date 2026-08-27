@@ -51,7 +51,7 @@ const { toasts } = useToast()
 
 .toast.info {
   border-color: var(--accent);
-  box-shadow: 0 0 12px rgba(168, 85, 247, 0.2);
+  box-shadow: 0 0 12px rgba(139,92,246, 0.2);
 }
 
 .toast-enter-active {

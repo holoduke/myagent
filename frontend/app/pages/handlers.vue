@@ -2,11 +2,9 @@
   <div class="section">
     <LayoutSectionHeader>Message Handlers</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!loaded" :error="error" @retry="loadData()" />
 
-    <template v-else-if="loaded">
+    <template v-if="loaded && !error">
       <!-- Stats Overview -->
       <div v-if="handlers.length > 0" class="stats-row">
         <div class="stat-mini">
@@ -263,8 +261,6 @@
         </div>
       </UiCard>
     </template>
-
-    <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
   </div>
 </template>
 
@@ -556,7 +552,7 @@ onMounted(loadData)
 }
 .action-badge.flag { background: rgba(234,179,8,0.15); color: #eab308; }
 .action-badge.reply { background: rgba(59,130,246,0.15); color: #3b82f6; }
-.action-badge.memory { background: rgba(168,85,247,0.15); color: var(--accent); }
+.action-badge.memory { background: rgba(139,92,246,0.15); color: var(--accent); }
 .action-badge.webhook { background: rgba(34,197,94,0.15); color: #22c55e; }
 .handler-stat {
   font-size: 11px;

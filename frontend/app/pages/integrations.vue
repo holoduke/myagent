@@ -2,7 +2,7 @@
   <div class="section">
     <div class="section-top">
       <LayoutSectionHeader>Integrations</LayoutSectionHeader>
-      <button v-if="dashboard && inactiveIntegrations.length" class="add-btn" @click="showAddModal = true">
+      <button v-if="dashboard && inactiveIntegrations.length" class="add-btn" aria-label="Add integration" @click="showAddModal = true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       </button>
     </div>
@@ -18,7 +18,7 @@
           <div class="intg-tile-header">
             <div class="intg-tile-icon" v-html="intg.icon"></div>
             <label class="intg-toggle" @click.stop>
-              <input type="checkbox" :checked="isEnabled(intg.key)" @change="toggleIntegration(intg.key)">
+              <input type="checkbox" :checked="isEnabled(intg.key)" role="switch" :aria-checked="isEnabled(intg.key)" :aria-label="'Toggle ' + intg.name" @change="toggleIntegration(intg.key)">
               <span class="intg-toggle-slider"></span>
             </label>
           </div>

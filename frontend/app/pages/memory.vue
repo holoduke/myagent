@@ -2,9 +2,7 @@
   <div class="section">
     <LayoutSectionHeader>Memory Explorer</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!data" :error="error" @retry="loadMemory()" />
 
     <div v-if="renderError" class="card" style="margin-bottom:16px">
       <p style="color:var(--red)">Render error: {{ renderError }}</p>
@@ -185,8 +183,6 @@
         </div>
       </template>
     </template>
-
-    <div v-if="!data && !error" class="empty-hint" style="padding:40px">Loading...</div>
   </div>
 </template>
 
@@ -536,7 +532,7 @@ onMounted(loadMemory)
 }
 .tier-label.core { color: #22c55e; }
 .tier-label.important { color: #3b82f6; }
-.tier-label.work { color: #a855f7; }
+.tier-label.work { color: var(--accent); }
 .tier-label.standard { color: var(--text-dim); }
 .tier-label.ephemeral { color: var(--text-ghost); }
 .tier-bar-bg {
@@ -553,7 +549,7 @@ onMounted(loadMemory)
 }
 .tier-bar-fill.core { background: #22c55e; }
 .tier-bar-fill.important { background: #3b82f6; }
-.tier-bar-fill.work { background: #a855f7; }
+.tier-bar-fill.work { background: var(--accent); }
 .tier-bar-fill.standard { background: var(--text-dim); }
 .tier-bar-fill.ephemeral { background: var(--text-ghost); }
 .tier-count {

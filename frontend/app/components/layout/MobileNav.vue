@@ -44,20 +44,19 @@ const navItems = [
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 6px 8px;
+  gap: 3px;
+  padding: 6px 10px;
   color: var(--text-muted);
   cursor: pointer;
   border: none;
   background: none;
-  font-size: 9px;
-  font-family: var(--mono);
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
   transition: all .15s;
   text-decoration: none;
 }
-.mob-nav-item.active { color: var(--accent); }
+.mob-nav-item.active { color: var(--accent-warm); }
 .mob-nav-item :deep(svg) { width: 18px; height: 18px; }
 
 @media (max-width: 768px) {

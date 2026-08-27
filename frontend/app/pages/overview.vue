@@ -2,15 +2,13 @@
   <div class="section">
     <LayoutSectionHeader>System Overview</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!data" :error="error" @retry="loadDashboard()" />
 
-    <template v-else-if="data">
+    <template v-if="data && !error">
       <!-- Master Brain Switch -->
       <div class="master-switch" :class="{ off: !brainEnabled }">
         <div class="master-switch-left">
-          <button class="br-toggle" :class="{ on: brainEnabled }" :disabled="toggling" @click="toggleBrain">
+          <button class="br-toggle" :class="{ on: brainEnabled }" :disabled="toggling" role="switch" :aria-checked="brainEnabled" aria-label="Toggle brain" @click="toggleBrain">
             <span class="br-toggle-knob" />
           </button>
           <div>
@@ -44,7 +42,7 @@
           <UiKvRow label="Last Think" :value="timeAgo(bs.lastThinkTick)" />
           <UiKvRow label="Last Consolidate" :value="timeAgo(bs.lastConsolidateTick)" />
           <UiKvRow label="Last Reflect" :value="timeAgo(bs.lastReflectTick)" />
-          <UiKvRow label="Messages Today" :value="(bs.messagesToday || 0) + '/5'" />
+          <UiKvRow label="Messages Today" :value="`${bs.messagesToday || 0}/${brainCfg?.maxMessagesPerDay ?? 5}`" />
           <UiKvRow label="Last Message" :value="timeAgo(bs.lastMessageTime)" />
         </UiCard>
 
@@ -95,19 +93,18 @@
         <UiStatCard :value="data.scheduledCount || 0" label="Scheduled" />
       </div>
     </template>
-
-    <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { DashboardData } from '~/types/aria'
+import type { DashboardData, BrainConfig, BrainConfigResponse } from '~/types/aria'
 
 const { api } = useApi()
 const { timeAgo } = useTimeAgo()
 const { showToast } = useToast()
 
 const data = ref<DashboardData | null>(null)
+const brainCfg = ref<BrainConfig | null>(null)
 const error = ref('')
 const resetting = ref(false)
 const toggling = ref(false)
@@ -166,7 +163,12 @@ async function resetFailures() {
 
 async function loadDashboard() {
   try {
-    data.value = await api<DashboardData>('/api/dashboard')
+    const [dash, cfgResp] = await Promise.all([
+      api<DashboardData>('/api/dashboard'),
+      api<BrainConfigResponse>('/api/brain-config').catch(() => null),
+    ])
+    data.value = dash
+    brainCfg.value = cfgResp?.config ?? null
     error.value = ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Unknown error'
@@ -204,7 +206,7 @@ onUnmounted(() => {
   margin-bottom: 12px;
   border-radius: 10px;
   border: 1px solid var(--accent);
-  background: rgba(168,85,247,0.05);
+  background: rgba(139,92,246,0.05);
   transition: all .3s;
 }
 .master-switch.off {
@@ -236,12 +238,12 @@ onUnmounted(() => {
   background: var(--bg); cursor: pointer; position: relative; transition: all .2s; padding: 0; flex-shrink: 0;
 }
 .br-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
-.br-toggle.on { background: rgba(168,85,247,0.2); border-color: var(--accent); }
+.br-toggle.on { background: rgba(139,92,246,0.2); border-color: var(--accent); }
 .br-toggle-knob {
   position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
   border-radius: 50%; background: var(--text-muted); transition: all .2s;
 }
-.br-toggle.on .br-toggle-knob { left: 18px; background: var(--accent); box-shadow: 0 0 8px rgba(168,85,247,0.4); }
+.br-toggle.on .br-toggle-knob { left: 18px; background: var(--accent); }
 
 @media (max-width: 768px) {
   .section { padding: 16px 12px; }

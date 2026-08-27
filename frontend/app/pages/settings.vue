@@ -2,11 +2,9 @@
   <div class="section">
     <LayoutSectionHeader>Settings</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!loaded" :error="error" @retry="load()" />
 
-    <template v-else-if="loaded">
+    <template v-if="loaded && !error">
       <!-- Character Type -->
       <UiCard title="Character" :icon="icons.character" style="margin-bottom:16px">
         <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">Choose a personality preset or write your own.</div>
@@ -405,8 +403,6 @@
         </div>
       </UiCard>
     </template>
-
-    <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
   </div>
 </template>
 
@@ -416,6 +412,7 @@ import type { DashboardData, SelfImprove, BrainConfig, BrainPreset, BrainConfigR
 const { api } = useApi()
 const { logout } = useAuth()
 const { showToast } = useToast()
+const { timeAgo } = useTimeAgo()
 
 const si = ref<SelfImprove>({ pendingTask: null, lastResult: null, bootCounter: 0, lastGoodCommit: null })
 const loaded = ref(false)
@@ -606,21 +603,15 @@ async function saveBrainConfig() {
   }
 }
 
-function timeAgo(ts: number): string {
-  const diff = Date.now() - ts
-  if (diff < 60000) return 'just now'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
-  return `${Math.floor(diff / 86400000)}d ago`
-}
-
 async function loadQueue() {
   try {
     const resp = await api<ImproveQueueResponse>('/api/improve-queue')
     improveQueue.value = resp.queue
     improveHistory.value = resp.history
     improveWeeklyCount.value = resp.weeklyCount
-  } catch {}
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to load self-improve queue', 'error')
+  }
 }
 
 async function handleApprove(id: string) {
@@ -663,7 +654,9 @@ async function load() {
       const defaultPromptResp = await api<{ prompt: string }>('/api/detection-prompt/default')
       detectionDefaultPrompt.value = defaultPromptResp.prompt
       if (!detectionPrompt.value) detectionPrompt.value = detectionDefaultPrompt.value
-    } catch {}
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Failed to load default detection prompt', 'error')
+    }
     improveQueue.value = queueResp.queue
     improveHistory.value = queueResp.history
     improveWeeklyCount.value = queueResp.weeklyCount
@@ -708,8 +701,7 @@ onMounted(load)
 }
 .ch-preset.active {
   border-color: var(--accent);
-  background: rgba(168,85,247,0.06);
-  box-shadow: 0 0 8px rgba(168,85,247,0.1);
+  background: rgba(139,92,246,0.06);
 }
 .ch-preset-name {
   font-family: var(--mono);
@@ -750,7 +742,7 @@ onMounted(load)
   padding: 0;
 }
 .br-toggle.on {
-  background: rgba(168,85,247,0.2);
+  background: rgba(139,92,246,0.2);
   border-color: var(--accent);
 }
 .br-toggle-knob {
@@ -766,7 +758,6 @@ onMounted(load)
 .br-toggle.on .br-toggle-knob {
   left: 23px;
   background: var(--accent);
-  box-shadow: 0 0 8px rgba(168,85,247,0.4);
 }
 
 /* Preset tiles */
@@ -791,8 +782,7 @@ onMounted(load)
 }
 .br-preset.active {
   border-color: var(--accent);
-  background: rgba(168,85,247,0.06);
-  box-shadow: 0 0 8px rgba(168,85,247,0.1);
+  background: rgba(139,92,246,0.06);
 }
 .br-preset-name {
   font-family: var(--mono);
@@ -947,7 +937,7 @@ onMounted(load)
 }
 .si-badge.pending { background: rgba(234,179,8,0.15); color: #eab308; }
 .si-badge.approved { background: rgba(59,130,246,0.15); color: #3b82f6; }
-.si-badge.running { background: rgba(168,85,247,0.15); color: #a855f7; animation: pulse 2s infinite; }
+.si-badge.running { background: rgba(139,92,246,0.15); color: var(--accent); animation: pulse 2s infinite; }
 .si-badge.completed { background: rgba(34,197,94,0.15); color: #22c55e; }
 .si-badge.failed { background: rgba(239,68,68,0.15); color: #ef4444; }
 .si-badge.rejected { background: rgba(107,114,128,0.15); color: #6b7280; }

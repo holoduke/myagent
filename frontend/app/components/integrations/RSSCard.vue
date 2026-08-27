@@ -14,7 +14,7 @@
         <UiStatusDot :status="feed.enabled ? 'ok' : 'warn'" />
         <span class="rss-feed-name">{{ feed.name }}</span>
         <span class="rss-feed-meta">{{ feed.itemCount }} items &middot; {{ timeAgo(feed.lastPoll) }}</span>
-        <button class="btn danger rss-remove-btn" @click="remove(feed.id)">Remove</button>
+        <button class="btn danger rss-remove-btn" @click="remove(feed.id, feed.name)">Remove</button>
       </div>
     </template>
     <div v-else style="color:var(--text-ghost);font-size:13px;padding:8px 0">
@@ -70,7 +70,8 @@ async function add() {
   }
 }
 
-async function remove(id: string) {
+async function remove(id: string, name: string) {
+  if (!confirm(`Remove RSS feed "${name}"?`)) return
   try {
     await api('/api/rss/feeds', { method: 'DELETE', body: { id } })
     emit('reload')

@@ -66,7 +66,7 @@ onMounted(async () => {
   letter-spacing: 1px;
   font-weight: 600;
 }
-.provider-badge.claude { background: rgba(168,85,247,0.15); color: #a855f7; }
+.provider-badge.claude { background: rgba(139,92,246,0.15); color: var(--accent); }
 .provider-badge.codex { background: rgba(16,185,129,0.15); color: #10b981; }
 .provider-badge.grok { background: rgba(245,158,11,0.15); color: #f59e0b; }
 .chat-actions { display: flex; gap: 6px; }
