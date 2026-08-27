@@ -302,15 +302,18 @@ function formatWorkingMemory(wm: WorkingMemory): string {
     parts.push(`Active goals:\n${goalLines.join("\n")}`);
   }
 
-  // Pending follow-ups
-  if (wm.pendingFollowUps && wm.pendingFollowUps.length > 0) {
-    const fuLines = wm.pendingFollowUps.slice(0, 5).map(f => {
+  // Pending follow-ups — skip items without readable text instead of printing "undefined"
+  const readableFollowUps = (wm.pendingFollowUps || []).filter(
+    f => typeof f.question === "string" && f.question.trim().length > 0,
+  );
+  if (readableFollowUps.length > 0) {
+    const fuLines = readableFollowUps.slice(0, 5).map(f => {
       const target = f.targetPerson ? ` (for ${f.targetPerson})` : "";
       const due = f.dueAt ? ` [due: ${new Date(f.dueAt).toLocaleDateString()}]` : "";
       return `  - ${f.question}${target}${due}`;
     });
-    if (wm.pendingFollowUps.length > 5) {
-      fuLines.push(`  ... and ${wm.pendingFollowUps.length - 5} more follow-ups`);
+    if (readableFollowUps.length > 5) {
+      fuLines.push(`  ... and ${readableFollowUps.length - 5} more follow-ups`);
     }
     parts.push(`Follow-ups:\n${fuLines.join("\n")}`);
   }
@@ -473,6 +476,7 @@ export function formatDigestTemplate(wm: WorkingMemory, graph: MemoryGraph): str
 
   // Follow-ups section
   const dueFollowUps = wm.pendingFollowUps.filter(fu => {
+    if (typeof fu.question !== "string" || !fu.question.trim()) return false;
     if (fu.potentiallyResolved) return false;
     if (!fu.dueAt) return true; // no due date = always show
     return fu.dueAt <= Date.now() + 24 * 60 * 60 * 1000; // due within 24h

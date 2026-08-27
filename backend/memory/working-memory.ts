@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import type { WorkingMemory, PendingFollowUp, ConversationThread, TemporalContext, TemporalSummaries } from "./types.js";
 import type { Observation } from "../observer.js";
@@ -37,7 +38,45 @@ function defaultWorkingMemory(): WorkingMemory {
 }
 
 export function loadWorkingMemory(): WorkingMemory {
-  return { ...defaultWorkingMemory(), ...safeReadJSON<Partial<WorkingMemory>>(WM_FILE, {}) };
+  const wm = { ...defaultWorkingMemory(), ...safeReadJSON<Partial<WorkingMemory>>(WM_FILE, {}) };
+  wm.pendingFollowUps = normalizePendingFollowUps(wm.pendingFollowUps);
+  return wm;
+}
+
+/**
+ * Normalize pendingFollowUps from LLM output or legacy stored data.
+ * The brain sometimes returns items with `text`/`topic` instead of `question`,
+ * or bare strings; storing those verbatim made the prompt render "- undefined".
+ * Items without readable text are dropped entirely.
+ */
+export function normalizePendingFollowUps(raw: unknown): PendingFollowUp[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PendingFollowUp[] = [];
+  for (const item of raw) {
+    if (typeof item === "string") {
+      const question = item.trim();
+      if (question) out.push({ id: newFollowUpId(), question, context: "", createdAt: Date.now() });
+      continue;
+    }
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const question = [o.question, o.text, o.topic].find(
+      (v): v is string => typeof v === "string" && v.trim().length > 0,
+    );
+    if (!question) continue;
+    out.push({
+      ...(o as unknown as PendingFollowUp),
+      id: typeof o.id === "string" && o.id ? o.id : newFollowUpId(),
+      question: question.trim(),
+      context: typeof o.context === "string" ? o.context : "",
+      createdAt: typeof o.createdAt === "number" ? o.createdAt : Date.now(),
+    });
+  }
+  return out;
+}
+
+function newFollowUpId(): string {
+  return `fu_${randomBytes(4).toString("hex")}`;
 }
 
 export function saveWorkingMemory(wm: WorkingMemory): void {
@@ -64,7 +103,7 @@ export function updateWorkingMemory(
   if (updates.mood !== undefined) wm.mood = updates.mood;
   if (updates.shortTermTracking !== undefined) wm.shortTermTracking = updates.shortTermTracking;
   if (updates.activatedNodeIds !== undefined) wm.activatedNodeIds = updates.activatedNodeIds;
-  if (updates.pendingFollowUps !== undefined) wm.pendingFollowUps = updates.pendingFollowUps;
+  if (updates.pendingFollowUps !== undefined) wm.pendingFollowUps = normalizePendingFollowUps(updates.pendingFollowUps);
   if (updates.conversationThreads !== undefined) wm.conversationThreads = updates.conversationThreads;
   wm.lastUpdated = Date.now();
   return wm;
