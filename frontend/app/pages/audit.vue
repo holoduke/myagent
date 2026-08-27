@@ -2,11 +2,9 @@
   <div class="section">
     <LayoutSectionHeader>Audit Log</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!loaded" :error="error" @retry="load()" />
 
-    <template v-else-if="loaded">
+    <template v-if="loaded && !error">
       <!-- Limit selector -->
       <div class="audit-controls">
         <label class="audit-limit-label">Show</label>
@@ -33,8 +31,6 @@
         </div>
       </div>
     </template>
-
-    <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
   </div>
 </template>
 

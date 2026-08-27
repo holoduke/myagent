@@ -2,11 +2,9 @@
   <div class="section">
     <LayoutSectionHeader>Directives</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!loaded" :error="error" @retry="load()" />
 
-    <template v-else-if="loaded">
+    <template v-if="loaded && !error">
       <!-- Reply Directives (grouped by category) -->
       <div v-for="group in groupedReplyDirectives" :key="group.category" style="margin-bottom:16px">
         <UiCard :title="group.label" :icon="icons.reply">
@@ -249,8 +247,6 @@
         </div>
       </UiCard>
     </template>
-
-    <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
   </div>
 </template>
 

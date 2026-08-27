@@ -2,15 +2,13 @@
   <div class="section">
     <LayoutSectionHeader>System Overview</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!data" :error="error" @retry="loadDashboard()" />
 
-    <template v-else-if="data">
+    <template v-if="data && !error">
       <!-- Master Brain Switch -->
       <div class="master-switch" :class="{ off: !brainEnabled }">
         <div class="master-switch-left">
-          <button class="br-toggle" :class="{ on: brainEnabled }" :disabled="toggling" @click="toggleBrain">
+          <button class="br-toggle" :class="{ on: brainEnabled }" :disabled="toggling" role="switch" :aria-checked="brainEnabled" aria-label="Toggle brain" @click="toggleBrain">
             <span class="br-toggle-knob" />
           </button>
           <div>
@@ -44,7 +42,7 @@
           <UiKvRow label="Last Think" :value="timeAgo(bs.lastThinkTick)" />
           <UiKvRow label="Last Consolidate" :value="timeAgo(bs.lastConsolidateTick)" />
           <UiKvRow label="Last Reflect" :value="timeAgo(bs.lastReflectTick)" />
-          <UiKvRow label="Messages Today" :value="(bs.messagesToday || 0) + '/5'" />
+          <UiKvRow label="Messages Today" :value="`${bs.messagesToday || 0}/${brainCfg?.maxMessagesPerDay ?? 5}`" />
           <UiKvRow label="Last Message" :value="timeAgo(bs.lastMessageTime)" />
         </UiCard>
 
@@ -95,19 +93,18 @@
         <UiStatCard :value="data.scheduledCount || 0" label="Scheduled" />
       </div>
     </template>
-
-    <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { DashboardData } from '~/types/aria'
+import type { DashboardData, BrainConfig, BrainConfigResponse } from '~/types/aria'
 
 const { api } = useApi()
 const { timeAgo } = useTimeAgo()
 const { showToast } = useToast()
 
 const data = ref<DashboardData | null>(null)
+const brainCfg = ref<BrainConfig | null>(null)
 const error = ref('')
 const resetting = ref(false)
 const toggling = ref(false)
@@ -166,7 +163,12 @@ async function resetFailures() {
 
 async function loadDashboard() {
   try {
-    data.value = await api<DashboardData>('/api/dashboard')
+    const [dash, cfgResp] = await Promise.all([
+      api<DashboardData>('/api/dashboard'),
+      api<BrainConfigResponse>('/api/brain-config').catch(() => null),
+    ])
+    data.value = dash
+    brainCfg.value = cfgResp?.config ?? null
     error.value = ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Unknown error'

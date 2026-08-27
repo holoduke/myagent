@@ -29,7 +29,7 @@
     </div>
 
     <!-- Scroll FAB -->
-    <button v-show="showFab" class="scroll-fab" @click="scrollBottom">
+    <button v-show="showFab" class="scroll-fab" aria-label="Scroll to latest" @click="scrollBottom">
       <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
     </button>
 
@@ -94,7 +94,7 @@ watch(() => chatStore.streamContent, () => {
 })
 
 useVisibilityRefresh(async () => {
-  await chatStore.loadHistory()
+  await chatStore.loadHistory(true)
   scrollBottom()
 })
 

@@ -2,9 +2,7 @@
   <div class="section">
     <LayoutSectionHeader>Memory Explorer</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!data" :error="error" @retry="loadMemory()" />
 
     <div v-if="renderError" class="card" style="margin-bottom:16px">
       <p style="color:var(--red)">Render error: {{ renderError }}</p>
@@ -185,8 +183,6 @@
         </div>
       </template>
     </template>
-
-    <div v-if="!data && !error" class="empty-hint" style="padding:40px">Loading...</div>
   </div>
 </template>
 

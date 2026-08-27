@@ -291,6 +291,7 @@ async function addContact() {
 }
 
 async function removeContact(jid: string) {
+  if (!confirm(`Remove contact "${jid}" from the whitelist?`)) return
   try {
     await api('/api/whitelist', { method: 'DELETE', body: { jid } })
     if (expandedJid.value === jid) expandedJid.value = null

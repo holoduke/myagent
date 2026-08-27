@@ -2,11 +2,9 @@
   <div class="section">
     <LayoutSectionHeader>Settings</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!loaded" :error="error" @retry="load()" />
 
-    <template v-else-if="loaded">
+    <template v-if="loaded && !error">
       <!-- Character Type -->
       <UiCard title="Character" :icon="icons.character" style="margin-bottom:16px">
         <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">Choose a personality preset or write your own.</div>
@@ -405,8 +403,6 @@
         </div>
       </UiCard>
     </template>
-
-    <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
   </div>
 </template>
 
@@ -416,6 +412,7 @@ import type { DashboardData, SelfImprove, BrainConfig, BrainPreset, BrainConfigR
 const { api } = useApi()
 const { logout } = useAuth()
 const { showToast } = useToast()
+const { timeAgo } = useTimeAgo()
 
 const si = ref<SelfImprove>({ pendingTask: null, lastResult: null, bootCounter: 0, lastGoodCommit: null })
 const loaded = ref(false)
@@ -606,21 +603,15 @@ async function saveBrainConfig() {
   }
 }
 
-function timeAgo(ts: number): string {
-  const diff = Date.now() - ts
-  if (diff < 60000) return 'just now'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
-  return `${Math.floor(diff / 86400000)}d ago`
-}
-
 async function loadQueue() {
   try {
     const resp = await api<ImproveQueueResponse>('/api/improve-queue')
     improveQueue.value = resp.queue
     improveHistory.value = resp.history
     improveWeeklyCount.value = resp.weeklyCount
-  } catch {}
+  } catch (e) {
+    showToast(e instanceof Error ? e.message : 'Failed to load self-improve queue', 'error')
+  }
 }
 
 async function handleApprove(id: string) {
@@ -663,7 +654,9 @@ async function load() {
       const defaultPromptResp = await api<{ prompt: string }>('/api/detection-prompt/default')
       detectionDefaultPrompt.value = defaultPromptResp.prompt
       if (!detectionPrompt.value) detectionPrompt.value = detectionDefaultPrompt.value
-    } catch {}
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Failed to load default detection prompt', 'error')
+    }
     improveQueue.value = queueResp.queue
     improveHistory.value = queueResp.history
     improveWeeklyCount.value = queueResp.weeklyCount

@@ -2,11 +2,9 @@
   <div class="section">
     <LayoutSectionHeader>Message Handlers</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!loaded" :error="error" @retry="loadData()" />
 
-    <template v-else-if="loaded">
+    <template v-if="loaded && !error">
       <!-- Stats Overview -->
       <div v-if="handlers.length > 0" class="stats-row">
         <div class="stat-mini">
@@ -263,8 +261,6 @@
         </div>
       </UiCard>
     </template>
-
-    <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
   </div>
 </template>
 

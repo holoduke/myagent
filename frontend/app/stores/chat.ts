@@ -28,8 +28,8 @@ export const useChatStore = defineStore('chat', () => {
     messageCount.value++
   }
 
-  async function loadHistory() {
-    if (historyLoaded.value) return
+  async function loadHistory(force = false) {
+    if (historyLoaded.value && !force) return
 
     try {
       const data = await $fetch<ChatMessage[]>('/api/history')
@@ -38,12 +38,14 @@ export const useChatStore = defineStore('chat', () => {
         totalCost.value = 0
         messageCount.value = 0
 
+        const next: ChatMessage[] = []
         for (const m of data) {
-          messages.value.push(m)
+          next.push(m)
           if (m.role === 'assistant' && m.stats) {
             addStats(m.stats)
           }
         }
+        messages.value = next
       }
     } catch {
       // Allow retry on next mount/visibility change

@@ -2,11 +2,9 @@
   <div class="section">
     <LayoutSectionHeader>Memory Snapshots</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!loaded" :error="error" @retry="loadBackups()" />
 
-    <template v-if="!error">
+    <template v-if="loaded && !error">
       <!-- Stats -->
       <UiCard title="Backup Overview" :icon="icons.overview" style="margin-bottom:16px">
         <div class="stat-grid">
@@ -125,6 +123,7 @@ const { showToast } = useToast()
 const { timeAgo, fmtDate } = useTimeAgo()
 
 const backups = ref<BackupMeta[]>([])
+const loaded = ref(false)
 const error = ref('')
 const creating = ref(false)
 const restoring = ref(false)
@@ -168,6 +167,8 @@ async function loadBackups() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Unknown error'
     showToast(error.value, 'error')
+  } finally {
+    loaded.value = true
   }
 }
 

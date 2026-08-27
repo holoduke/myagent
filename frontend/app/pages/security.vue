@@ -2,11 +2,9 @@
   <div class="section">
     <LayoutSectionHeader>Trust &amp; Security</LayoutSectionHeader>
 
-    <div v-if="error" class="card">
-      <p style="color:var(--red)">Failed to load: {{ error }}</p>
-    </div>
+    <UiLoadState :loading="!loaded" :error="error" @retry="load()" />
 
-    <template v-else-if="loaded">
+    <template v-if="loaded && !error">
       <!-- Trust Sources -->
       <UiCard title="Trust Sources" :icon="icons.shield" style="margin-bottom:16px">
         <div style="color:var(--text-muted);font-size:12px;margin-bottom:12px">Configure default trust level per message source. Owner-level contacts bypass injection filtering.</div>
@@ -28,6 +26,9 @@
                 <button
                   class="br-toggle"
                   :class="{ on: rule.ownerAlwaysTrusted }"
+                  role="switch"
+                  :aria-checked="rule.ownerAlwaysTrusted"
+                  :aria-label="'Owner always trusted for ' + source"
                   @click="toggleOwnerAlways(source as string)"
                 >
                   <span class="br-toggle-knob" />
@@ -130,8 +131,6 @@
         </div>
       </UiCard>
     </template>
-
-    <div v-else style="text-align:center;padding:40px;color:var(--text-ghost)">Loading...</div>
   </div>
 </template>
 
@@ -139,6 +138,8 @@
 import type { TrustConfig, InjectionLogEntry } from '~/types/aria'
 
 const { api } = useApi()
+const { showToast } = useToast()
+const { timeAgo } = useTimeAgo()
 
 const loaded = ref(false)
 const error = ref('')
@@ -209,19 +210,12 @@ async function saveTrustConfig() {
     })
     Object.assign(trustForm, resp)
     dirty.value = false
+    showToast('Trust config saved', 'success')
   } catch (e) {
-    console.error('Failed to save trust config:', e)
+    showToast(e instanceof Error ? e.message : 'Failed to save trust config', 'error')
   } finally {
     saving.value = false
   }
-}
-
-function timeAgo(ts: number): string {
-  const diff = Date.now() - ts
-  if (diff < 60000) return 'just now'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
-  return `${Math.floor(diff / 86400000)}d ago`
 }
 
 async function load() {

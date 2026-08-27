@@ -9,7 +9,7 @@
       @input="autoResize"
       @keydown.enter.exact.prevent="send"
     ></textarea>
-    <button class="send-btn" :disabled="chatStore.streaming || !text.trim()" @click="send">
+    <button class="send-btn" :disabled="chatStore.streaming || !text.trim()" aria-label="Send message" @click="send">
       <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
     </button>
   </div>

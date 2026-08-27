@@ -15,7 +15,7 @@
         <span class="gmail-email">{{ acc.email }}</span>
         <a v-if="!acc.authenticated" :href="`/gmail/auth/${acc.id}`" class="btn" style="margin-left:auto;padding:4px 10px;font-size:11px">Authorize</a>
         <span v-else class="gmail-poll">Last poll: {{ acc.lastPoll ? timeAgo(acc.lastPoll) : 'never' }}</span>
-        <button class="btn danger" style="padding:4px 10px;font-size:11px;margin-left:8px" @click="remove(acc.id)">Remove</button>
+        <button class="btn danger" style="padding:4px 10px;font-size:11px;margin-left:8px" @click="remove(acc.id, acc.email)">Remove</button>
       </div>
     </template>
     <div v-else style="color:var(--text-ghost);font-size:13px;padding:8px 0">
@@ -75,7 +75,8 @@ async function add() {
   }
 }
 
-async function remove(id: string) {
+async function remove(id: string, email: string) {
+  if (!confirm(`Remove Gmail account "${email}"?`)) return
   try {
     await api('/api/gmail/accounts', { method: 'DELETE', body: { id } })
     emit('reload')
