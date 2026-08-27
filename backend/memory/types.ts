@@ -258,8 +258,8 @@ export interface GoalData {
 }
 
 export type GoalOperation =
-  | { op: "create_goal"; title: string; description: string; priority: 1 | 2 | 3; deadline?: number; checkpoints?: string[]; createdBy?: "brain" | "owner" }
-  | { op: "update_goal"; nodeId: string; progress?: number; status?: "active" | "completed" | "abandoned" | "paused"; checkpoints?: { label: string; done: boolean }[] }
+  | { op: "create_goal"; title: string; description: string; priority: 1 | 2 | 3; deadline?: number; checkpoints?: (string | { label: string; done?: boolean })[]; createdBy?: "brain" | "owner" }
+  | { op: "update_goal"; nodeId: string; progress?: number; status?: "active" | "completed" | "abandoned" | "paused"; checkpoints?: (string | { label: string; done?: boolean })[] }
   | { op: "complete_goal"; nodeId: string }
   | { op: "abandon_goal"; nodeId: string; reason?: string };
 

@@ -21,6 +21,32 @@ function serializeGoalData(data: GoalData): string {
   return `${data.title}\n[GOAL_DATA]${JSON.stringify(data)}[/GOAL_DATA]`;
 }
 
+/**
+ * Normalize checkpoints from LLM output or legacy stored data.
+ * The brain sometimes returns plain strings ("✓ done thing", "[x] item") instead
+ * of {label, done} objects; storing those verbatim made the prompt render
+ * "[ ] undefined". Items without readable text are dropped entirely.
+ */
+function normalizeCheckpoints(raw: unknown): { label: string; done: boolean }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { label: string; done: boolean }[] = [];
+  for (const c of raw) {
+    if (typeof c === "string") {
+      const trimmed = c.trim();
+      const done = /^(\[x\]|✓|✔)/i.test(trimmed);
+      const label = trimmed.replace(/^(\[x\]|\[ \]|✓|✔)\s*/i, "").trim();
+      if (label) out.push({ label, done });
+    } else if (c && typeof c === "object") {
+      const o = c as Record<string, unknown>;
+      const label = [o.label, o.text, o.title].find(
+        (v): v is string => typeof v === "string" && v.trim().length > 0,
+      );
+      if (label) out.push({ label: label.trim(), done: o.done === true });
+    }
+  }
+  return out;
+}
+
 // ── Result type for applyGoalOps ──
 
 export interface GoalOpsResult {
@@ -96,7 +122,7 @@ export class GoalTracker {
               priority: op.priority,
               deadline: op.deadline,
               progress: 0,
-              checkpoints: (op.checkpoints || []).map(label => ({ label, done: false })),
+              checkpoints: normalizeCheckpoints(op.checkpoints),
               createdBy: op.createdBy || "brain",
               lastCheckedAt: Date.now(),
             };
@@ -136,7 +162,7 @@ export class GoalTracker {
 
             if (op.progress !== undefined) data.progress = Math.max(0, Math.min(100, op.progress));
             if (op.status !== undefined) data.status = op.status;
-            if (op.checkpoints !== undefined) data.checkpoints = op.checkpoints;
+            if (op.checkpoints !== undefined) data.checkpoints = normalizeCheckpoints(op.checkpoints);
             data.lastCheckedAt = Date.now();
 
             this.graph.updateNode(op.nodeId, { content: serializeGoalData(data) });
@@ -219,8 +245,10 @@ export class GoalTracker {
       const deadlineStr = data.deadline
         ? ` | deadline: ${new Date(data.deadline).toLocaleDateString()}`
         : "";
-      const checkStr = data.checkpoints.length > 0
-        ? `\n  Checkpoints: ${data.checkpoints.map(c => `${c.done ? "[x]" : "[ ]"} ${c.label}`).join(", ")}`
+      // Normalize on read too — legacy nodes may hold string checkpoints
+      const checkpoints = normalizeCheckpoints(data.checkpoints);
+      const checkStr = checkpoints.length > 0
+        ? `\n  Checkpoints: ${checkpoints.map(c => `${c.done ? "[x]" : "[ ]"} ${c.label}`).join(", ")}`
         : "";
       return `[${nodeId}] P${data.priority} "${data.title}" — ${data.progress}%${deadlineStr}${checkStr}\n  ${data.description.slice(0, 120)}`;
     }).join("\n\n");
