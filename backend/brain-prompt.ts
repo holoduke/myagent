@@ -928,9 +928,19 @@ Respond with ONLY the JSON object.`;
 
 // ── Commitment Detection Helper ──
 
+/** Outgoing messages grouped by conversation (source + audience). */
+export interface OutgoingActivityGroup {
+  source: string;
+  audience: string;
+  messageCount: number;
+  latestSnippet: string;
+  texts: string[];
+}
+
 function buildCommitmentsBlock(
   recentMoltbookActivity?: string[],
-  recentOutgoingActivity?: { source: string; audience: string; messageCount: number; latestSnippet: string; texts: string[] }[],
+  recentOutgoingActivity?: OutgoingActivityGroup[],
+  ownerOutgoingActivity?: OutgoingActivityGroup[],
 ): string {
   const sections: string[] = [];
 
@@ -943,7 +953,7 @@ function buildCommitmentsBlock(
     sections.push(`Moltbook posts/comments:\n${detectedSection}${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}`);
   }
 
-  // General outgoing activity (WhatsApp, email, brain messages) — grouped by conversation
+  // General outgoing activity ARIA actually sent (scheduled/chat/think/digest deliveries) — grouped by conversation
   if (recentOutgoingActivity && recentOutgoingActivity.length > 0) {
     const otherCommitments = recentOutgoingActivity.flatMap(group => {
       return group.texts.flatMap(text => {
@@ -962,6 +972,15 @@ function buildCommitmentsBlock(
 
   if (sections.length === 0) return "";
 
+  // Owner's own outgoing messages (observed via the shared WhatsApp session).
+  // Shown for context only — these are NOT ARIA's commitments.
+  const ownerBlock = ownerOutgoingActivity && ownerOutgoingActivity.length > 0
+    ? `
+Owner activity (observe-only — messages the OWNER sent themselves, NOT your commitments; do NOT create goals from these):
+${ownerOutgoingActivity.map(g => `  - ${g.messageCount} msg${g.messageCount > 1 ? "s" : ""} from owner to ${g.audience} (${g.source}) — latest: "${g.latestSnippet.slice(0, 120)}"`).join("\n")}
+`
+    : "";
+
   return `
 ═══ COMMITMENT REVIEW ═══
 
@@ -969,13 +988,13 @@ Review ALL recent commitments you've made across all channels.
 The accountability system auto-creates goals for notable+ commitments, but you should verify:
 
 ${sections.join("\n\n")}
-
+${ownerBlock}
 ACTION REQUIRED:
 1. Check each commitment — are any already fulfilled but not marked complete?
 2. Are any overdue? Should any be worked on now?
 3. For any non-trivial commitment not already tracked, create a goal via goalOps.
 4. Trivial commitments (quick lookups/checks) are filtered out automatically.
-5. Update progress on existing commitment-sourced goals.
+5. Update progress on existing commitment-sourced goals.${ownerOutgoingActivity && ownerOutgoingActivity.length > 0 ? "\n6. Owner activity above is the owner's own — never track it as your commitment or create goals from it." : ""}
 `;
 }
 
@@ -1006,8 +1025,10 @@ export interface ReflectContext {
   };
   /** Recent outgoing Moltbook posts/comments for commitment detection */
   recentMoltbookActivity?: string[];
-  /** Recent outgoing messages across all channels for commitment detection */
-  recentOutgoingActivity?: { source: string; audience: string; messageCount: number; latestSnippet: string; texts: string[] }[];
+  /** Recent messages ARIA actually sent (delivery-log verified) for commitment detection */
+  recentOutgoingActivity?: OutgoingActivityGroup[];
+  /** Owner's own outgoing messages (observed fromMe, not ARIA-sent) — observe-only context */
+  ownerOutgoingActivity?: OutgoingActivityGroup[];
   /** Weekly drift audit summary, if available */
   driftSummary?: string;
   /** Structured person profiles for relationship reasoning */
@@ -1080,7 +1101,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${formatConsciousnessSection()}${goalsBlock}${initiativeBlock}${buildCommitmentsBlock(ctx.recentMoltbookActivity, ctx.recentOutgoingActivity)}
+${formatConsciousnessSection()}${goalsBlock}${initiativeBlock}${buildCommitmentsBlock(ctx.recentMoltbookActivity, ctx.recentOutgoingActivity, ctx.ownerOutgoingActivity)}
 ═══ GRAPH STATS ═══
 Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Ghosts: ${ctx.stats.ghostCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
 By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(", ")}

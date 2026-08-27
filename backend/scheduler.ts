@@ -13,7 +13,7 @@ const SCHEDULE_FILE = `${BRAIN_DIR}/scheduled-messages.json`;
 const IN_FLIGHT_FILE = `${BRAIN_DIR}/scheduled-messages-inflight.json`;
 const DELIVERY_LOG_FILE = `${BRAIN_DIR}/delivery-log.json`;
 export const DEDUP_WINDOW_MS = 3 * 60 * 60 * 1000; // 3 hours — must cover scheduler max backoff (2h) + buffer
-const DELIVERY_LOG_MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours – must exceed DEDUP_WINDOW_MS (3h) above
+const DELIVERY_LOG_MAX_AGE_MS = 13 * 60 * 60 * 1000; // 13 hours – must exceed DEDUP_WINDOW_MS (3h) and the reflect tick's 12h commitment lookback (ARIA-origin matching)
 
 export interface ScheduledMessage {
   id: string;

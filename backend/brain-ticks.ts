@@ -9,6 +9,7 @@ import { askClaudeStreaming } from "./claude.js";
 import { getObservationsSince } from "./observer.js";
 import type { Observation } from "./observer.js";
 import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./brain-prompt.js";
+import type { OutgoingActivityGroup } from "./brain-prompt.js";
 import type { MessageQueue } from "./queue.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, ImprovementProposal } from "./memory/types.js";
@@ -794,28 +795,52 @@ export async function reflectTick(
 
   const COMMITMENT_LOOKBACK = 12 * 60 * 60 * 1000;
   const recentOutgoing = getObservationsSince(Date.now() - COMMITMENT_LOOKBACK, { isFromMe: true }, 50);
-  const recentOutgoingFlat = recentOutgoing
+
+  // isFromMe=true covers BOTH ARIA's own sends and the owner's outgoing messages
+  // (ARIA sends through the owner's Baileys session, so messages the owner types
+  // on his phone are also observed with fromMe=true). Only messages ARIA actually
+  // sent are ARIA's commitments — cross-check against delivery-log.json, plus
+  // synthetic ARIA observations (twilio calls, recurring/digest triggers).
+  const ariaDeliveries = getRecentDeliveries(COMMITMENT_LOOKBACK);
+  const DELIVERY_MATCH_TOLERANCE_MS = 15 * 60 * 1000;
+  const isAriaSent = (o: Observation): boolean => {
+    if (o.senderJid === "system" || (o.sender || "").startsWith("ARIA")) return true;
+    const textKey = o.text.slice(0, 120);
+    return ariaDeliveries.some(d =>
+      d.messageSnippet === textKey &&
+      Math.abs(d.timestamp - o.timestamp) <= DELIVERY_MATCH_TOLERANCE_MS,
+    );
+  };
+
+  const outgoingFlat = recentOutgoing
     .filter(o => o.text && o.text.length >= 10)
     .map(o => ({
       source: o.source || "whatsapp",
       audience: o.chatName || o.groupName || "unknown",
       text: o.text,
+      ariaSent: isAriaSent(o),
     }));
 
   // Group outgoing activity by conversation (source + audience) for a concise reflect prompt
-  const groupedMap = new Map<string, { source: string; audience: string; messageCount: number; latestSnippet: string; texts: string[] }>();
-  for (const a of recentOutgoingFlat) {
-    const key = `${a.source}::${a.audience}`;
-    const existing = groupedMap.get(key);
-    if (existing) {
-      existing.messageCount++;
-      existing.latestSnippet = a.text.slice(0, 200);
-      existing.texts.push(a.text);
-    } else {
-      groupedMap.set(key, { source: a.source, audience: a.audience, messageCount: 1, latestSnippet: a.text.slice(0, 200), texts: [a.text] });
+  const groupByConversation = (items: { source: string; audience: string; text: string }[]): OutgoingActivityGroup[] => {
+    const map = new Map<string, OutgoingActivityGroup>();
+    for (const a of items) {
+      const key = `${a.source}::${a.audience}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.messageCount++;
+        existing.latestSnippet = a.text.slice(0, 200);
+        existing.texts.push(a.text);
+      } else {
+        map.set(key, { source: a.source, audience: a.audience, messageCount: 1, latestSnippet: a.text.slice(0, 200), texts: [a.text] });
+      }
     }
-  }
-  const recentOutgoingActivity = Array.from(groupedMap.values());
+    return Array.from(map.values());
+  };
+  const ariaOutgoingFlat = outgoingFlat.filter(a => a.ariaSent);
+  const ownerOutgoingFlat = outgoingFlat.filter(a => !a.ariaSent);
+  const recentOutgoingActivity = groupByConversation(ariaOutgoingFlat);
+  const ownerOutgoingActivity = groupByConversation(ownerOutgoingFlat);
 
   let driftSummary: string | undefined;
   try {
@@ -850,7 +875,7 @@ export async function reflectTick(
     log(`Person profile loading error (non-fatal): ${err}`);
   }
 
-  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals, ${recentMoltbookActivity.length} moltbook items, ${recentOutgoingActivity.length} outgoing conversations (${recentOutgoingFlat.length} msgs)`);
+  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals, ${recentMoltbookActivity.length} moltbook items, ${recentOutgoingActivity.length} ARIA outgoing conversations (${ariaOutgoingFlat.length} msgs), ${ownerOutgoingActivity.length} owner conversations (${ownerOutgoingFlat.length} msgs, observe-only)`);
 
   const prompt = buildReflectPrompt({
     ownerName: OWNER_NAME,
@@ -871,6 +896,7 @@ export async function reflectTick(
     selfImproveStats,
     recentMoltbookActivity,
     recentOutgoingActivity,
+    ownerOutgoingActivity,
     driftSummary,
     personProfilesSection,
   });
