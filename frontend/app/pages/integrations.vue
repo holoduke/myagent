@@ -88,6 +88,16 @@
         </p>
       </UiModal>
 
+      <UiModal :open="activeModal === 'playstore'" title="Play Store" @close="activeModal = null">
+        <p class="add-hint">
+          Once per day (default 09:00 local, <code>PLAYSTORE_DIGEST_HOUR</code> to change) ARIA fetches
+          Play Store vitals (crash rate, ANR rate, active users) and new reviews for the configured app
+          and sends a report over WhatsApp. Requires a service-account key at
+          <code>/data/playstore/service-account.json</code>; app settings in
+          <code>/data/playstore/config.json</code>.
+        </p>
+      </UiModal>
+
       <UiModal :open="activeModal === 'owntracks'" title="OwnTracks" @close="activeModal = null">
         <IntegrationsOwnTracksCard :owntracks="otData" />
       </UiModal>
@@ -246,6 +256,16 @@ const integrations = computed<IntegrationDef[]>(() => [
     statusClass: isEnabled('news') ? 'online' : 'offline',
     statusText: isEnabled('news') ? 'Daily' : 'Disabled',
     stat: 'once per day',
+  },
+  {
+    key: 'playstore',
+    name: 'Play Store',
+    description: 'Daily Football Mania vitals and reviews via WhatsApp',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="#34A853" stroke-width="2"><path d="M5 3l14 9-14 9V3z"/><line x1="5" y1="3" x2="14" y2="12"/><line x1="5" y1="21" x2="14" y2="12"/></svg>',
+    isActive: () => isEnabled('playstore'),
+    statusClass: isEnabled('playstore') ? 'online' : 'offline',
+    statusText: isEnabled('playstore') ? 'Daily' : 'Disabled',
+    stat: 'vitals + reviews',
   },
   {
     key: 'owntracks',

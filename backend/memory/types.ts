@@ -217,6 +217,7 @@ export interface BrainState {
 
   // daily news digest
   lastNewsDigestTick?: number;
+  lastPlayStoreDigestTick?: number;
 
   // delivery feedback for the last brain-returned message
   lastBrainMessage?: BrainMessageDelivery;
