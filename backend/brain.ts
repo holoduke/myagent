@@ -30,6 +30,7 @@ import { getBrainConfig, getOwnerLocalDate, getOwnerLocalTime } from "./brain-co
 import { BRAIN_DIR, OWNER_NAME, GITHUB_REPO } from "./config.js";
 import { createBackup, shouldRunBackup, BACKUP_INTERVAL } from "./memory/backup.js";
 import { shouldRunNewsDigest, runNewsDigest } from "./news-digest.js";
+import { shouldRunPlayStoreDigest, runPlayStoreDigest } from "./playstore-digest.js";
 import { shouldRunReplay, replayAndCompare } from "./memory/retrieval-replay.js";
 import { loadConsciousness } from "./consciousness.js";
 
@@ -96,6 +97,7 @@ function defaultState(): BrainState {
     pendingSelfMod: false,
     lastBackupTick: 0,
     lastNewsDigestTick: 0,
+    lastPlayStoreDigestTick: 0,
   };
 }
 
@@ -405,6 +407,9 @@ let reflectRunning = false;
 let newsDigestRunning = false;
 let lastNewsDigestAttempt = 0;
 const NEWS_DIGEST_RETRY_MS = 30 * 60 * 1000; // failed/skipped runs retry at most every 30 min
+let playStoreDigestRunning = false;
+let lastPlayStoreDigestAttempt = 0;
+const PLAYSTORE_DIGEST_RETRY_MS = 30 * 60 * 1000;
 
 // ── Hourly Stats Tracking ──
 interface TickStats {
@@ -845,6 +850,34 @@ async function tick(
       })
       .catch((err) => log(`News digest failed (non-fatal): ${err}`))
       .finally(() => { newsDigestRunning = false; });
+  }
+
+  // ── Daily Play Store report (once/day after configured local hour, via WhatsApp) ──
+  if (
+    shouldRunPlayStoreDigest(freshState.lastPlayStoreDigestTick ?? 0, cfg.ownerTimezone) &&
+    !playStoreDigestRunning &&
+    Date.now() - lastPlayStoreDigestAttempt >= PLAYSTORE_DIGEST_RETRY_MS
+  ) {
+    playStoreDigestRunning = true;
+    lastPlayStoreDigestAttempt = Date.now();
+    // Same fire-and-forget pattern as the news digest: the day's slot is only
+    // consumed on a sent report, failed runs retry after the spacing interval.
+    runPlayStoreDigest(sendMessage, ownerJid)
+      .then((result) => {
+        if (!result.consumed) {
+          if (result.reason) log(`Play Store report skipped: ${result.reason}`);
+          return;
+        }
+        const state = loadState();
+        state.lastPlayStoreDigestTick = Date.now();
+        if (result.delivered) {
+          state.lastMessageTime = Date.now();
+          state.messagesToday++;
+        }
+        saveState(state);
+      })
+      .catch((err) => log(`Play Store report failed (non-fatal): ${err}`))
+      .finally(() => { playStoreDigestRunning = false; });
   }
 
   saveState(freshState);
