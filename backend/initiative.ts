@@ -4,6 +4,7 @@ import { GoalTracker } from "./goals.js";
 import { getBrainConfig, getOwnerLocalDate, getOwnerLocalDay } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 import { detectAnomalies } from "./frequency-tracker.js";
+import { downtimeOverlapMs } from "./downtime-tracker.js";
 
 const log = createLogger("initiative");
 
@@ -58,12 +59,21 @@ export function detectInitiativeSignals(
   const personNodes = graph.findByType("person");
   for (const node of personNodes) {
     if (node.pinned && node.accessCount > 5 && (now - node.lastAccessedAt) > ABSENCE_THRESHOLD) {
+      // If the system itself was offline for ≥50% of the absence window, the
+      // silence is (mostly) ARIA being deaf — annotate and cap at LOW priority
+      // so we don't suggest out-of-touch check-ins after an outage.
+      const absenceMs = now - node.lastAccessedAt;
+      const downMs = downtimeOverlapMs(node.lastAccessedAt, now);
+      const likelyArtifact = downMs / absenceMs >= 0.5;
+      const downDays = Math.round(downMs / (24 * 60 * 60 * 1000));
       signals.push({
         type: "person_absent",
-        priority: 0.4,
-        description: `Haven't heard from/about "${node.content.slice(0, 40)}" in ${Math.floor((now - node.lastAccessedAt) / (24 * 60 * 60 * 1000))} days`,
+        priority: likelyArtifact ? 0.2 : 0.4,
+        description: `Haven't heard from/about "${node.content.slice(0, 40)}" in ${Math.floor(absenceMs / (24 * 60 * 60 * 1000))} days${likelyArtifact ? ` (system was offline for ${downDays}d of this period — likely artifact)` : ""}`,
         relatedNodeIds: [node.id],
-        suggestedAction: `Check in about ${node.content.slice(0, 30)}`,
+        suggestedAction: likelyArtifact
+          ? `Silence overlaps system downtime — verify before checking in about ${node.content.slice(0, 30)}`
+          : `Check in about ${node.content.slice(0, 30)}`,
       });
     }
   }
@@ -107,14 +117,18 @@ export function detectInitiativeSignals(
   try {
     const anomalies = detectAnomalies();
     for (const anomaly of anomalies) {
+      // Downtime artifacts (system was deaf for most of the silence window)
+      // are capped at LOW priority — they shouldn't trigger check-in messages.
       signals.push({
         type: "frequency_anomaly",
-        priority: anomaly.type === "silence" ? 0.5 : 0.4,
+        priority: anomaly.likelyArtifact ? 0.2 : anomaly.type === "silence" ? 0.5 : 0.4,
         description: anomaly.description,
         relatedNodeIds: [],
-        suggestedAction: anomaly.type === "silence"
-          ? `Check in with ${anomaly.contactName} — unusually quiet`
-          : `Note: ${anomaly.contactName} is unusually active today`,
+        suggestedAction: anomaly.likelyArtifact
+          ? `Silence overlaps system downtime — verify before checking in with ${anomaly.contactName}`
+          : anomaly.type === "silence"
+            ? `Check in with ${anomaly.contactName} — unusually quiet`
+            : `Note: ${anomaly.contactName} is unusually active today`,
       });
     }
   } catch (err) {
