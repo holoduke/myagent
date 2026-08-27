@@ -35,6 +35,7 @@ import { loadConsciousness } from "./consciousness.js";
 // ── Extracted modules ──
 import { thinkTick, consolidateTick, reflectTick } from "./brain-ticks.js";
 import { pollScheduledMessages } from "./brain-delivery.js";
+import { getRecentDeliveries } from "./scheduler.js";
 import {
   pickUpImproveResult,
   interceptDirectTask,
@@ -107,6 +108,37 @@ function saveState(state: BrainState): void {
     atomicWriteJSON(STATE_FILE, state);
   } catch (err) {
     log(`Failed to save state: ${err}`);
+  }
+}
+
+// ── Delivery Feedback Verification ──
+
+/**
+ * Cross-check the last brain-returned message against delivery-log.json.
+ * A message recorded as "sent" must appear in the delivery log; if it hasn't
+ * after one full tick interval, downgrade it to "failed" and log an explicit
+ * failure. This closes the loop that let the brain build false memories of
+ * contact (message returned by a think tick but never actually delivered).
+ */
+function verifyLastBrainMessageDelivery(state: BrainState, tickInterval: number): void {
+  const lbm = state.lastBrainMessage;
+  if (!lbm || lbm.verified || lbm.status !== "sent") return;
+  try {
+    const found = getRecentDeliveries().some(
+      d => d.jid === lbm.targetJid && d.messageSnippet === lbm.snippet && d.timestamp >= lbm.at - 60_000,
+    );
+    if (found) {
+      lbm.verified = true;
+      return;
+    }
+    if (Date.now() - lbm.at >= tickInterval) {
+      lbm.status = "failed";
+      lbm.detail = "reported as sent but never appeared in delivery-log.json within one tick";
+      lbm.verified = true;
+      log(`⚠ DELIVERY FAILURE: brain message to ${lbm.targetJid} ("${lbm.snippet.slice(0, 60)}") reported sent at ${new Date(lbm.at).toISOString()} but never appeared in delivery-log.json within one tick — treating as NOT delivered`);
+    }
+  } catch (err) {
+    log(`Delivery verification error (non-fatal): ${err}`);
   }
 }
 
@@ -435,6 +467,9 @@ async function tick(
   const now = Date.now();
   const today = getOwnerLocalDate(cfg.ownerTimezone);
 
+  // ── Delivery feedback: cross-check last brain message against delivery log ──
+  verifyLastBrainMessageDelivery(state, cfg.tickInterval);
+
   // ── Pick up self-improve results from worker ──
   pickUpImproveResult(state, graph, saveState, IMPROVE_RESULT_FILE, IMPROVE_TASK_FILE, QUEUED_MARKER_FILE);
 
@@ -734,6 +769,7 @@ async function tick(
   freshState.lastSuccessfulTick = state.lastSuccessfulTick;
   freshState.messagesTodayDate = state.messagesTodayDate;
   freshState.recurringBudgetDate = state.recurringBudgetDate;
+  freshState.lastBrainMessage = state.lastBrainMessage;
 
   freshState.nodeCount = graph.nodeCount;
   freshState.edgeCount = graph.edgeCount;

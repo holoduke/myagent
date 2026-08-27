@@ -478,9 +478,11 @@ export async function sendMessage(jid: string, text: string): Promise<void> {
     log.debug(`Outgoing dedup skip: already sent to ${jid} (hash=${hash})`);
     return;
   }
-  sentMessages.set(dedupKey, Date.now());
 
   await sock.sendMessage(jid, { text });
+  // Only record dedup AFTER a successful send — recording before meant a failed
+  // send silently blocked retries for 5 minutes while callers assumed delivery.
+  sentMessages.set(dedupKey, Date.now());
 }
 
 export async function sendImage(

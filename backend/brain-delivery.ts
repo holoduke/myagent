@@ -154,13 +154,19 @@ async function deliverScheduledMessages(
 
 // ── Message Sending with Limits ──
 
+/** Outcome of a trySendMessage attempt, so callers can record real delivery status. */
+export interface DeliveryResult {
+  status: "sent" | "suppressed" | "failed";
+  detail?: string;
+}
+
 export async function trySendMessage(
   state: BrainState,
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
   message: string,
   options?: { bypassLimits?: boolean; targetJid?: string | null },
-): Promise<void> {
+): Promise<DeliveryResult> {
   const cfg = getBrainConfig();
   const now = Date.now();
   const { hour: currentHour } = getOwnerLocalTime(cfg.ownerTimezone);
@@ -183,7 +189,7 @@ export async function trySendMessage(
   });
   if (verifyResult.verdict === "blocked") {
     log(`Verifier blocked proactive message: ${verifyResult.reasons.join("; ")}`);
-    return;
+    return { status: "suppressed", detail: `verifier blocked: ${verifyResult.reasons.join("; ")}` };
   }
 
   // Check if owner is in a meeting — suppress non-bypass proactive messages
@@ -191,12 +197,16 @@ export async function trySendMessage(
 
   if (!bypass && isQuiet) {
     log("Suppressed message: quiet hours");
+    return { status: "suppressed", detail: "quiet hours" };
   } else if (inMeeting) {
     log("Suppressed message: owner is in a meeting");
+    return { status: "suppressed", detail: "owner in meeting" };
   } else if (!bypass && !messageIntervalOk) {
     log(`Suppressed message: too soon (${Math.round((now - state.lastMessageTime) / 60000)}m since last)`);
+    return { status: "suppressed", detail: `too soon (${Math.round((now - state.lastMessageTime) / 60000)}m since last message)` };
   } else if (!bypass && !underDailyLimit) {
     log(`Suppressed message: daily limit reached (${state.messagesToday}/${cfg.maxMessagesPerDay})`);
+    return { status: "suppressed", detail: `daily limit reached (${state.messagesToday}/${cfg.maxMessagesPerDay})` };
   } else {
     try {
       if (bypass) log("Briefing message — bypassing rate limits");
@@ -205,8 +215,10 @@ export async function trySendMessage(
       state.messagesToday++;
       logDelivery(recipientJid, bypass ? "digest" : "think", message);
       log(`Sent proactive message to ${recipientJid} (${message.length} chars, #${state.messagesToday} today)`);
+      return { status: "sent" };
     } catch (err) {
       log(`Failed to send proactive message: ${err}`);
+      return { status: "failed", detail: String(err) };
     }
   }
 }

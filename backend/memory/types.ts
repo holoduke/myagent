@@ -162,6 +162,20 @@ export interface WorkingMemory {
 
 // ── Brain State ──
 
+/**
+ * Delivery record for the most recent message the brain returned from a tick.
+ * status "sent" starts unverified; the next tick cross-checks delivery-log.json
+ * and either confirms it (verified=true) or downgrades it to "failed".
+ */
+export interface BrainMessageDelivery {
+  at: number;             // when the brain returned/attempted the message
+  targetJid: string;
+  snippet: string;        // first 120 chars — matches delivery-log messageSnippet
+  status: "sent" | "suppressed" | "failed";
+  detail?: string;        // suppression/failure reason
+  verified: boolean;      // true once cross-checked against delivery-log.json (or nothing to check)
+}
+
 export interface BrainState {
   // timing
   lastObserveTick: number;
@@ -203,6 +217,9 @@ export interface BrainState {
 
   // daily news digest
   lastNewsDigestTick?: number;
+
+  // delivery feedback for the last brain-returned message
+  lastBrainMessage?: BrainMessageDelivery;
 }
 
 // ── Tick Types ──
