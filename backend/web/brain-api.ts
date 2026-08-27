@@ -63,6 +63,7 @@ export const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
   "ownerTimezone",
   "thinkCooldown", "consolidateInterval", "reflectInterval", "tickInterval", "preset",
   "selfImproveEnabled", "selfImproveAutoApprove", "selfImproveMaxPerWeek",
+  "selfImproveMinPerDay", "selfImproveDailyHour", "selfImproveAutoMerge",
   "characterType", "characterCustomPrompt",
   "detectionMode", "detectionPrompt",
   "selfCritiqueEnabled", "selfCritiqueThreshold",

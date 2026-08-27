@@ -210,7 +210,8 @@ export interface BrainState {
   lastSuccessfulTick: number;
   pendingSelfMod: boolean;
   selfModSpawnedAt?: number;
-  lastImproveNudgeDate?: string;
+  lastImproveNudgeDate?: string; // legacy — superseded by lastImproveNudgeAt
+  lastImproveNudgeAt?: number;
 
   // backups
   lastBackupTick: number;
