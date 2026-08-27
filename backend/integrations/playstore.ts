@@ -199,3 +199,61 @@ export async function fetchRecentReviews(sinceMs: number): Promise<Review[]> {
   log(`Fetched ${out.length} reviews modified in window (${cfg.packageName})`);
   return out;
 }
+
+/** Review with its Play Store id, for listing/replying via the CLI. */
+export interface ReviewWithId extends Review {
+  reviewId: string;
+}
+
+/** Fetch the most recent reviews including their ids, newest first. */
+export async function fetchReviewsWithIds(sinceMs: number): Promise<ReviewWithId[]> {
+  const cfg = getPlayStoreConfig();
+  const auth = authFor("https://www.googleapis.com/auth/androidpublisher");
+  const androidpublisher = google.androidpublisher({ version: "v3", auth });
+
+  const res = await androidpublisher.reviews.list({
+    packageName: cfg.packageName,
+    maxResults: REVIEWS_PAGE_SIZE,
+  });
+
+  const out: ReviewWithId[] = [];
+  for (const raw of ((res.data.reviews ?? []) as (RawReview & { reviewId?: string })[])) {
+    const uc = raw.comments?.[0]?.userComment;
+    if (!uc || !raw.reviewId) continue;
+    const lastModifiedMs = uc.lastModified?.seconds ? parseInt(uc.lastModified.seconds, 10) * 1000 : 0;
+    if (!lastModifiedMs || lastModifiedMs < sinceMs) continue;
+    out.push({
+      reviewId: raw.reviewId,
+      date: new Date(lastModifiedMs).toISOString().slice(0, 10),
+      lastModifiedMs,
+      stars: uc.starRating ?? 0,
+      text: (uc.text ?? "").replace(/\s+/g, " ").trim(),
+      language: uc.reviewerLanguage ?? "?",
+      replied: (raw.comments ?? []).some(c => c.developerComment),
+    });
+  }
+  out.sort((a, b) => b.lastModifiedMs - a.lastModifiedMs);
+  return out;
+}
+
+/**
+ * Post a developer reply to a review. Public-facing: callers must only invoke
+ * this with owner-approved text.
+ */
+export async function replyToReview(reviewId: string, replyText: string): Promise<void> {
+  if (!reviewId.trim()) throw new Error("reviewId is required");
+  const trimmed = replyText.trim();
+  if (!trimmed) throw new Error("reply text is required");
+  if (trimmed.length > 350) throw new Error(`reply text too long (${trimmed.length} chars, Play Store max is 350)`);
+
+  const cfg = getPlayStoreConfig();
+  const auth = authFor("https://www.googleapis.com/auth/androidpublisher");
+  const androidpublisher = google.androidpublisher({ version: "v3", auth });
+
+  await androidpublisher.reviews.reply({
+    packageName: cfg.packageName,
+    reviewId,
+    requestBody: { replyText: trimmed },
+  });
+  log(`Posted developer reply to review ${reviewId} (${cfg.packageName})`);
+}
