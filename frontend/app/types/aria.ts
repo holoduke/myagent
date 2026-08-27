@@ -161,6 +161,34 @@ export interface OwnTracksStatus {
   lastLocation: { lat: number; lon: number; timestamp: number; battery?: number } | null
 }
 
+export interface PlayStoreVitalsDay {
+  date: string
+  crashRate: number | null
+  anrRate: number | null
+  distinctUsers: number | null
+}
+
+export interface PlayStoreReview {
+  reviewId: string
+  date: string
+  lastModifiedMs: number
+  stars: number
+  text: string
+  language: string
+  replied: boolean
+}
+
+export interface PlayStoreStatus {
+  configured: boolean
+  appLabel: string
+  packageName: string
+  snapshot: {
+    generatedAt: number
+    vitals: PlayStoreVitalsDay[]
+    reviews: PlayStoreReview[]
+  } | null
+}
+
 export interface TwilioCallRecord {
   callSid: string
   to: string

@@ -88,13 +88,11 @@
         </p>
       </UiModal>
 
-      <UiModal :open="activeModal === 'playstore'" title="Play Store" @close="activeModal = null">
-        <p class="add-hint">
-          Once per day (default 09:00 local, <code>PLAYSTORE_DIGEST_HOUR</code> to change) ARIA fetches
-          Play Store vitals (crash rate, ANR rate, active users) and new reviews for the configured app
-          and sends a report over WhatsApp. Requires a service-account key at
-          <code>/data/playstore/service-account.json</code>; app settings in
-          <code>/data/playstore/config.json</code>.
+      <UiModal :open="activeModal === 'playstore'" title="Play Store" max-width="640px" @close="activeModal = null">
+        <IntegrationsPlayStoreCard @error="(msg: string) => showToast(msg, 'error')" />
+        <p class="add-hint" style="margin-top:12px">
+          ARIA sends a daily WhatsApp report at 09:00 local (<code>PLAYSTORE_DIGEST_HOUR</code> to change)
+          and can reply to reviews when you ask her to.
         </p>
       </UiModal>
 

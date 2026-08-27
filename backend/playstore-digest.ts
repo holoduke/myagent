@@ -10,8 +10,7 @@
 
 import { isIntegrationEnabled } from "./integrations/integration-config.js";
 import {
-  fetchVitals,
-  fetchRecentReviews,
+  refreshSnapshot,
   getPlayStoreConfig,
   isPlayStoreConfigured,
 } from "./integrations/playstore.js";
@@ -140,10 +139,10 @@ export async function runPlayStoreDigest(
   let vitals: VitalsDay[];
   let reviews: Review[];
   try {
-    [vitals, reviews] = await Promise.all([
-      fetchVitals(),
-      fetchRecentReviews(Date.now() - REVIEW_LOOKBACK_MS),
-    ]);
+    // Refreshing the shared snapshot also keeps the dashboard UI current.
+    const snapshot = await refreshSnapshot();
+    vitals = snapshot.vitals;
+    reviews = snapshot.reviews.filter(r => r.lastModifiedMs >= Date.now() - REVIEW_LOOKBACK_MS);
   } catch (err) {
     log(`Play Store fetch failed: ${err}`);
     return { consumed: false, delivered: false, reason: `fetch failed: ${err}` };

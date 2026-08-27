@@ -9,6 +9,7 @@ import { getHAStatus, saveConfig, restartHAPolling, testHAConnection } from "../
 import type { HAConfig, HAConnectionMode } from "../integrations/homeassistant.js";
 import { getRSSStatus, addFeed, removeFeed } from "../integrations/rss.js";
 import { getOwnTracksStatus } from "../integrations/owntracks.js";
+import { loadSnapshot, refreshSnapshot, isPlayStoreConfigured, getPlayStoreConfig } from "../integrations/playstore.js";
 import { getTwilioStatus, makeSimpleCall, makeAgentCall, saveConfig as saveTwilioConfig, loadCallHistory } from "../integrations/twilio.js";
 import { getBrowserStatus, clearBrowserHistory, runWorkflow, runSession, navigateTo, takeScreenshot, extractText } from "../integrations/browser.js";
 import { requestCaptchaVerification, getPendingCaptchas, getCaptchaHistory } from "../captcha-verify.js";
@@ -150,6 +151,24 @@ export function handleIntegrationRoutes(
     }
   }
 
+  // -- Play Store status (cached snapshot; cheap) --
+  if (pathname === "/api/playstore/status" && req.method === "GET" && isAuthenticated(req)) {
+    const cfg = getPlayStoreConfig();
+    respondJson(res, 200, {
+      configured: isPlayStoreConfigured(),
+      appLabel: cfg.appLabel,
+      packageName: cfg.packageName,
+      snapshot: loadSnapshot(),
+    });
+    return true;
+  }
+
+  // -- Play Store refresh (live fetch, updates the snapshot) --
+  if (pathname === "/api/playstore/refresh" && req.method === "POST" && isAuthenticated(req)) {
+    handlePlayStoreRefresh(req, res);
+    return true;
+  }
+
   // -- OwnTracks status --
   if (pathname === "/api/owntracks/status" && req.method === "GET" && isAuthenticated(req)) {
     respondJson(res, 200, getOwnTracksStatus());
@@ -269,6 +288,14 @@ export function handleIntegrationRoutes(
 }
 
 // -- SSH handlers --
+
+const handlePlayStoreRefresh = apiHandler(async () => {
+  if (!isPlayStoreConfigured()) {
+    throw new ApiError(400, "Play Store not configured: service-account key missing");
+  }
+  const snapshot = await refreshSnapshot();
+  return { snapshot };
+});
 
 const handleSSHAddTarget = apiHandler(async (_req, _res, body: { label?: string; host?: string; user?: string; port?: number }) => {
   if (!body.label || !body.host || !body.user) throw new ApiError(400, "label, host, and user are required");

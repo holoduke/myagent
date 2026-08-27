@@ -11,7 +11,7 @@
 
 import { existsSync } from "fs";
 import { google } from "googleapis";
-import { safeReadJSON } from "../utils/file-store.js";
+import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("playstore");
@@ -86,14 +86,46 @@ function rowMetric(row: MetricRow, name: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function timelineSpec(now: Date) {
-  const start = new Date(now.getTime() - VITALS_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
-  const toApiDate = (d: Date) => ({ year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() });
+interface ApiDate { year: number; month: number; day: number }
+
+function toApiDate(d: Date): ApiDate {
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+}
+
+function timelineSpec(endDate: ApiDate) {
+  const end = new Date(Date.UTC(endDate.year, endDate.month - 1, endDate.day));
+  const start = new Date(end.getTime() - VITALS_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
   return {
     aggregation_period: "DAILY",
     start_time: toApiDate(start),
-    end_time: toApiDate(now),
+    end_time: endDate,
   };
+}
+
+interface FreshnessResponse {
+  data?: {
+    freshnessInfo?: {
+      freshnesses?: { aggregationPeriod?: string; latestEndTime?: Partial<ApiDate> }[];
+    };
+  };
+}
+
+/**
+ * The reporting API rejects end_time beyond the metric set's data freshness
+ * (it lags a few days). Ask the metric set for its DAILY freshness; fall back
+ * to now minus 4 days when unavailable.
+ */
+async function latestAvailableDate(getMetricSet: () => Promise<FreshnessResponse>, now: Date): Promise<ApiDate> {
+  const fallback = toApiDate(new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000));
+  try {
+    const res = await getMetricSet();
+    const daily = res.data?.freshnessInfo?.freshnesses?.find(f => f.aggregationPeriod === "DAILY");
+    const t = daily?.latestEndTime;
+    if (t?.year && t.month && t.day) return { year: t.year, month: t.month, day: t.day };
+    return fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 /**
@@ -116,10 +148,14 @@ export async function fetchVitals(now: Date = new Date()): Promise<VitalsDay[]> 
     return fresh;
   };
 
+  const crashEnd = await latestAvailableDate(
+    () => reporting.vitals.crashrate.get({ name: `${appName}/crashRateMetricSet` }) as Promise<FreshnessResponse>,
+    now,
+  );
   const crashRes = await reporting.vitals.crashrate.query({
     name: `${appName}/crashRateMetricSet`,
     requestBody: {
-      timeline_spec: timelineSpec(now),
+      timeline_spec: timelineSpec(crashEnd),
       dimensions: [],
       metrics: ["crashRate", "distinctUsers"],
       page_size: 50,
@@ -132,10 +168,14 @@ export async function fetchVitals(now: Date = new Date()): Promise<VitalsDay[]> 
     byDate.set(date, { ...day, crashRate: rowMetric(row, "crashRate"), distinctUsers: rowMetric(row, "distinctUsers") });
   }
 
+  const anrEnd = await latestAvailableDate(
+    () => reporting.vitals.anrrate.get({ name: `${appName}/anrRateMetricSet` }) as Promise<FreshnessResponse>,
+    now,
+  );
   const anrRes = await reporting.vitals.anrrate.query({
     name: `${appName}/anrRateMetricSet`,
     requestBody: {
-      timeline_spec: timelineSpec(now),
+      timeline_spec: timelineSpec(anrEnd),
       dimensions: [],
       metrics: ["anrRate"],
       page_size: 50,
@@ -163,41 +203,6 @@ interface RawReview {
     };
     developerComment?: { text?: string };
   }[];
-}
-
-/**
- * Fetch reviews modified since `sinceMs`, newest first. Reads a single page of
- * the most recent reviews — plenty for a daily delta on one app.
- */
-export async function fetchRecentReviews(sinceMs: number): Promise<Review[]> {
-  const cfg = getPlayStoreConfig();
-  const auth = authFor("https://www.googleapis.com/auth/androidpublisher");
-  const androidpublisher = google.androidpublisher({ version: "v3", auth });
-
-  const res = await androidpublisher.reviews.list({
-    packageName: cfg.packageName,
-    maxResults: REVIEWS_PAGE_SIZE,
-  });
-
-  const out: Review[] = [];
-  for (const raw of ((res.data.reviews ?? []) as RawReview[])) {
-    const uc = raw.comments?.[0]?.userComment;
-    if (!uc) continue;
-    const lastModifiedMs = uc.lastModified?.seconds ? parseInt(uc.lastModified.seconds, 10) * 1000 : 0;
-    if (!lastModifiedMs || lastModifiedMs < sinceMs) continue;
-    out.push({
-      date: new Date(lastModifiedMs).toISOString().slice(0, 10),
-      lastModifiedMs,
-      stars: uc.starRating ?? 0,
-      text: (uc.text ?? "").replace(/\s+/g, " ").trim(),
-      language: uc.reviewerLanguage ?? "?",
-      replied: (raw.comments ?? []).some(c => c.developerComment),
-    });
-  }
-
-  out.sort((a, b) => b.lastModifiedMs - a.lastModifiedMs);
-  log(`Fetched ${out.length} reviews modified in window (${cfg.packageName})`);
-  return out;
 }
 
 /** Review with its Play Store id, for listing/replying via the CLI. */
@@ -234,6 +239,41 @@ export async function fetchReviewsWithIds(sinceMs: number): Promise<ReviewWithId
   }
   out.sort((a, b) => b.lastModifiedMs - a.lastModifiedMs);
   return out;
+}
+
+// ── Snapshot cache ──
+// The daily digest and the dashboard refresh both write here, so the UI can
+// show vitals/reviews without hitting Google APIs on every page load.
+
+const SNAPSHOT_FILE = `${PLAYSTORE_DIR}/last-data.json`;
+const SNAPSHOT_REVIEW_DAYS = 30;
+
+export interface PlayStoreSnapshot {
+  generatedAt: number;
+  vitals: VitalsDay[];
+  reviews: ReviewWithId[];
+}
+
+export function loadSnapshot(): PlayStoreSnapshot | null {
+  const snap = safeReadJSON<PlayStoreSnapshot | null>(SNAPSHOT_FILE, null);
+  if (!snap || !Array.isArray(snap.vitals) || !Array.isArray(snap.reviews)) return null;
+  return snap;
+}
+
+/** Fetch fresh vitals + reviews and persist them as the current snapshot. */
+export async function refreshSnapshot(): Promise<PlayStoreSnapshot> {
+  const [vitals, reviews] = await Promise.all([
+    fetchVitals(),
+    fetchReviewsWithIds(Date.now() - SNAPSHOT_REVIEW_DAYS * 24 * 60 * 60 * 1000),
+  ]);
+  const snapshot: PlayStoreSnapshot = { generatedAt: Date.now(), vitals, reviews };
+  try {
+    ensureDir(PLAYSTORE_DIR);
+    atomicWriteJSON(SNAPSHOT_FILE, snapshot);
+  } catch (err) {
+    log(`Failed to persist Play Store snapshot: ${err}`);
+  }
+  return snapshot;
 }
 
 /**
