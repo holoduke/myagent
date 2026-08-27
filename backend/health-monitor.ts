@@ -155,6 +155,16 @@ export function isCircuitClosed(name: string): boolean {
 }
 
 /**
+ * Read-only check whether a circuit breaker is currently in the open state.
+ * Unlike isCircuitClosed(), this never transitions open → half-open, so it's
+ * safe to call from passive observers (e.g. the downtime tracker heartbeat).
+ */
+export function isCircuitOpen(name: string): boolean {
+  const cb = loadHealth().circuitBreakers[name];
+  return !!cb && cb.state === "open";
+}
+
+/**
  * Record a success for a circuit breaker (resets to closed).
  */
 export function circuitSuccess(name: string): void {
