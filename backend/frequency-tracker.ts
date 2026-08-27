@@ -54,7 +54,25 @@ let dirty = false;
 function loadBaselines(): BaselineStore {
   if (baselines) return baselines;
   baselines = safeReadJSON<BaselineStore>(BASELINES_FILE, {});
+  pruneDeadEntries(baselines);
   return baselines;
+}
+
+/**
+ * Delete whole baseline entries whose last message is older than the entire
+ * retention window. These are dead JID keys (e.g. from the Baileys phone-JID →
+ * LID migration): every daily count they hold is past the prune cutoff, so
+ * they can never produce a valid baseline again — only false silence alarms.
+ */
+function pruneDeadEntries(store: BaselineStore): void {
+  const cutoff = Date.now() - BASELINE_DAYS * 86400000;
+  for (const [jid, baseline] of Object.entries(store)) {
+    if (baseline.lastMessageAt < cutoff) {
+      delete store[jid];
+      dirty = true;
+      log(`Pruned dead baseline for ${baseline.name || jid} (last message ${new Date(baseline.lastMessageAt).toISOString().slice(0, 10)})`);
+    }
+  }
 }
 
 function saveBaselines(): void {
@@ -100,6 +118,8 @@ export function updateFrequency(senderJid: string, senderName: string, timestamp
     }
   }
 
+  pruneDeadEntries(store);
+
   dirty = true;
 }
 
@@ -137,6 +157,11 @@ export function detectAnomalies(): FrequencyAnomaly[] {
 
     const todayCount = baseline.dailyCounts[today] || 0;
     const daysSinceLast = (now - baseline.lastMessageAt) / 86400000;
+
+    // An entry silent for longer than the entire baseline retention window is
+    // stale bookkeeping (dead JID), not real silence — the person may well be
+    // messaging today under a different JID. Never flag these.
+    if (daysSinceLast > BASELINE_DAYS) continue;
 
     // Detect silence: no messages for > mean + 2*stdDev days of expected activity
     const expectedDaysOfSilence = mean > 0 ? 1 / mean : Infinity; // avg days between messages

@@ -9,6 +9,7 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { BRAIN_DIR } from "./config.js";
 import { createLogger } from "./logger.js";
+import { isCircuitOpen } from "./health-monitor.js";
 
 const log = createLogger("downtime");
 
@@ -28,6 +29,8 @@ export interface UptimeInterval {
 
 interface HeartbeatStore {
   intervals: UptimeInterval[];
+  /** Windows where the process was up but the brain was down (claude_api circuit breaker open). */
+  degraded: UptimeInterval[];
 }
 
 let store: HeartbeatStore | null = null;
@@ -35,8 +38,9 @@ let lastPersist = 0;
 
 function loadStore(): HeartbeatStore {
   if (store) return store;
-  store = safeReadJSON<HeartbeatStore>(HEARTBEAT_FILE, { intervals: [] });
+  store = safeReadJSON<HeartbeatStore>(HEARTBEAT_FILE, { intervals: [], degraded: [] });
   if (!Array.isArray(store.intervals)) store.intervals = [];
+  if (!Array.isArray(store.degraded)) store.degraded = [];
   return store;
 }
 
@@ -78,15 +82,38 @@ export function recordObserveHeartbeat(now: number = Date.now(), seedMs?: number
     persist(true);
   }
 
+  // Degraded window: the process is up (heartbeat fires) but the brain is
+  // down because the claude_api circuit breaker is open. Recording these as
+  // deaf periods lets silence detectors treat a jun–aug style API outage the
+  // same as a process outage — otherwise contacts look "quiet" while ARIA
+  // simply couldn't think.
+  if (isCircuitOpen("claude_api")) {
+    const lastDeg = s.degraded[s.degraded.length - 1];
+    if (lastDeg && now - lastDeg.end <= MERGE_GAP_MS) {
+      if (now > lastDeg.end) lastDeg.end = now;
+    } else {
+      log("Brain degraded: claude_api circuit breaker open — recording degraded window");
+      s.degraded.push({ start: now, end: now });
+      persist(true);
+    }
+  }
+
   const cutoff = now - RETENTION_MS;
   while (s.intervals.length > 1 && s.intervals[0].end < cutoff) {
     s.intervals.shift();
+  }
+  while (s.degraded.length > 0 && s.degraded[0].end < cutoff) {
+    s.degraded.shift();
   }
 
   persist();
 }
 
-/** Downtime periods (gaps between uptime intervals) ending after `sinceMs`. */
+/**
+ * Downtime periods ending after `sinceMs`: gaps between uptime intervals
+ * (process down) plus degraded windows (process up, brain down). Overlapping
+ * periods are merged so overlap math doesn't double-count.
+ */
 export function getDowntimePeriods(sinceMs: number): UptimeInterval[] {
   const s = loadStore();
   const periods: UptimeInterval[] = [];
@@ -97,7 +124,22 @@ export function getDowntimePeriods(sinceMs: number): UptimeInterval[] {
       periods.push({ start: gapStart, end: gapEnd });
     }
   }
-  return periods;
+  for (const d of s.degraded) {
+    if (d.end - d.start > MERGE_GAP_MS && d.end > sinceMs) {
+      periods.push({ start: d.start, end: d.end });
+    }
+  }
+  periods.sort((a, b) => a.start - b.start);
+  const merged: UptimeInterval[] = [];
+  for (const p of periods) {
+    const last = merged[merged.length - 1];
+    if (last && p.start <= last.end) {
+      if (p.end > last.end) last.end = p.end;
+    } else {
+      merged.push({ start: p.start, end: p.end });
+    }
+  }
+  return merged;
 }
 
 /** Milliseconds of system downtime overlapping the window [startMs, endMs]. */
@@ -111,15 +153,15 @@ export function downtimeOverlapMs(startMs: number, endMs: number): number {
 }
 
 /**
- * End timestamp of the most recent downtime gap longer than `minGapMs`, or 0.
- * Data recorded before this point spans a deaf period and shouldn't feed
- * frequency baselines.
+ * End timestamp of the most recent downtime period (process gap or degraded
+ * window) longer than `minGapMs`, or 0. Data recorded before this point spans
+ * a deaf period and shouldn't feed frequency baselines.
  */
 export function lastMajorDowntimeEnd(minGapMs: number): number {
-  const s = loadStore();
-  for (let i = s.intervals.length - 1; i >= 1; i--) {
-    if (s.intervals[i].start - s.intervals[i - 1].end > minGapMs) {
-      return s.intervals[i].start;
+  const periods = getDowntimePeriods(0);
+  for (let i = periods.length - 1; i >= 0; i--) {
+    if (periods[i].end - periods[i].start > minGapMs) {
+      return periods[i].end;
     }
   }
   return 0;
