@@ -160,10 +160,85 @@ function isNarrationContext(
 }
 
 /**
+ * Returns true when the character at index `i` acts as an apostrophe
+ * (contraction/possessive) rather than a quote boundary — i.e. it sits
+ * between two word characters, as in "I'll" or "ARIA's".
+ */
+function isApostrophe(s: string, i: number): boolean {
+  const prev = i > 0 ? s[i - 1] : "";
+  const next = i + 1 < s.length ? s[i + 1] : "";
+  return /\w/.test(prev) && /\w/.test(next);
+}
+
+/**
+ * Returns true if the match at `matchIndex` falls inside quotation marks —
+ * straight/curly single or double quotes, or an inline backtick code span.
+ * Quoted text is someone else's words or rhetorical material (e.g. an
+ * anti-pattern being quoted to criticize it), not a first-person promise.
+ *
+ * Scoped to the current line: quotes in posts/messages rarely span lines,
+ * and line scoping keeps stray apostrophes and quotes elsewhere in the
+ * text from skewing the counts. Also covers quoted list items like
+ * `- "I will ..."` since the list marker sits on the same line.
+ */
+function isQuotedContext(text: string, matchIndex: number): boolean {
+  const lineStart = text.lastIndexOf("\n", matchIndex - 1) + 1;
+  const before = text.slice(lineStart, matchIndex);
+
+  // Inline code span: odd number of backticks before the match on this line
+  const backticks = (before.match(/`/g) || []).length;
+  if (backticks % 2 === 1) return true;
+
+  // Straight double quotes: an unclosed `"` before the match means we're
+  // inside a quotation — unless the opener directly follows a `:`, which
+  // indicates a JSON string value (real outgoing content, handled by the
+  // narration filter instead).
+  let dqOpen = -1;
+  for (let i = 0; i < before.length; i++) {
+    if (before[i] === '"' && (i === 0 || before[i - 1] !== "\\")) {
+      dqOpen = dqOpen === -1 ? i : -1;
+    }
+  }
+  if (dqOpen !== -1 && !before.slice(0, dqOpen).trimEnd().endsWith(":")) {
+    return true;
+  }
+
+  // Curly double quotes: an unclosed “ before the match
+  if (before.lastIndexOf("“") > before.lastIndexOf("”")) return true;
+
+  // Curly single quotes: ‘ opens; ’ closes only when it isn't an apostrophe
+  let curlySingleOpen = 0;
+  for (let i = 0; i < before.length; i++) {
+    const ch = before[i];
+    if (ch === "‘") curlySingleOpen++;
+    else if (ch === "’" && curlySingleOpen > 0 && !isApostrophe(before, i)) {
+      curlySingleOpen--;
+    }
+  }
+  if (curlySingleOpen > 0) return true;
+
+  // Straight single quotes are ambiguous with apostrophes. Only count
+  // quote-like occurrences: an opener follows start-of-line, whitespace,
+  // or bracket/dash punctuation; anything else non-apostrophe closes.
+  let singleOpen = 0;
+  for (let i = 0; i < before.length; i++) {
+    if (before[i] !== "'") continue;
+    if (isApostrophe(before, i)) continue;
+    const prev = i > 0 ? before[i - 1] : "";
+    if (prev === "" || /[\s([{—\-:,>]/.test(prev)) singleOpen++;
+    else if (singleOpen > 0) singleOpen--;
+  }
+  if (singleOpen > 0) return true;
+
+  return false;
+}
+
+/**
  * Extract commitment-like phrases from text.
  * Returns deduplicated matches with the pattern that triggered them.
  * Filters out matches that appear to be meta-narration (JSON summary
- * fields, code fences, self-reflective phrasing) rather than real promises.
+ * fields, code fences, self-reflective phrasing) or that fall inside
+ * quotation marks (someone else's words) rather than real promises.
  */
 export function extractCommitments(text: string): ExtractedCommitment[] {
   if (!text || text.length < 10) return [];
@@ -178,6 +253,7 @@ export function extractCommitments(text: string): ExtractedCommitment[] {
     while ((match = regex.exec(text)) !== null) {
       const commitText = match[0].trim();
       if (isNarrationContext(text, match.index, match[0])) continue;
+      if (isQuotedContext(text, match.index)) continue;
       if (!seen.has(commitText.toLowerCase())) {
         seen.add(commitText.toLowerCase());
         results.push({ text: commitText, pattern: label });
