@@ -214,6 +214,15 @@ export function recordObservation(obs: Observation): void {
   // Skip non-person sources — feed items and store events aren't contacts.
   if (!obs.isFromMe && obs.senderJid && obs.source !== "calendar" && obs.source !== "rss" && obs.source !== "playstore") {
     updateFrequency(obs.senderJid, obs.sender, obs.timestamp);
+    // Group activity also bumps the group chat's own baseline (keyed on the
+    // @g.us JID): a group's "silence" is measured across all participants, so
+    // only counting individual sender JIDs leaves group entries falsely quiet.
+    const groupJid = obs.isGroup
+      ? (obs.chatJid ?? (obs.senderJid.endsWith("@g.us") ? obs.senderJid : undefined))
+      : undefined;
+    if (groupJid && groupJid !== obs.senderJid) {
+      updateFrequency(groupJid, obs.groupName || obs.chatName || groupJid.split("@")[0], obs.timestamp);
+    }
   }
 
   // Detect injection attempts in untrusted content

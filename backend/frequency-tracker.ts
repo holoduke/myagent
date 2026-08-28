@@ -31,6 +31,8 @@ export interface FrequencyAnomaly {
   description: string;
   /** True when the silence window mostly overlaps system downtime — the system was deaf, the contact wasn't necessarily quiet. */
   likelyArtifact?: boolean;
+  /** True when the tracked JID is a group chat (@g.us) rather than an individual contact. */
+  isGroup?: boolean;
 }
 
 interface ContactBaseline {
@@ -140,6 +142,7 @@ export function detectAnomalies(): FrequencyAnomaly[] {
   const staleCutoffDate = staleCutoff > 0 ? new Date(staleCutoff).toISOString().slice(0, 10) : "";
 
   for (const [jid, baseline] of Object.entries(store)) {
+    const isGroup = jid.endsWith("@g.us");
     let dates = Object.keys(baseline.dailyCounts).sort();
     if (staleCutoffDate) {
       dates = dates.filter(d => d >= staleCutoffDate);
@@ -181,7 +184,8 @@ export function detectAnomalies(): FrequencyAnomaly[] {
         baselineStdDev: stdDev,
         daysSinceLastMessage: Math.floor(daysSinceLast),
         likelyArtifact,
-        description: `${baseline.name} has been unusually quiet — no messages in ${Math.floor(daysSinceLast)} days (normally ~${mean.toFixed(1)} msgs/day)${likelyArtifact ? ` (system was offline for ${downDays}d of this period — likely artifact)` : ""}`,
+        isGroup,
+        description: `${isGroup ? `The "${baseline.name}" group chat` : baseline.name} has been unusually quiet — no messages in ${Math.floor(daysSinceLast)} days (normally ~${mean.toFixed(1)} msgs/day)${likelyArtifact ? ` (system was offline for ${downDays}d of this period — likely artifact)` : ""}`,
       });
     }
 
@@ -195,7 +199,8 @@ export function detectAnomalies(): FrequencyAnomaly[] {
         baselineMean: mean,
         baselineStdDev: stdDev,
         daysSinceLastMessage: Math.floor(daysSinceLast),
-        description: `${baseline.name} is unusually active today — ${todayCount} messages vs normal ~${mean.toFixed(1)}/day`,
+        isGroup,
+        description: `${isGroup ? `The "${baseline.name}" group chat` : baseline.name} is unusually active today — ${todayCount} messages vs normal ~${mean.toFixed(1)}/day`,
       });
     }
   }
