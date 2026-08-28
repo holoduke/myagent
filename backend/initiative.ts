@@ -127,7 +127,9 @@ export function detectInitiativeSignals(
         suggestedAction: anomaly.likelyArtifact
           ? `Silence overlaps system downtime — verify before checking in with ${anomaly.contactName}`
           : anomaly.type === "silence"
-            ? `Check in with ${anomaly.contactName} — unusually quiet`
+            ? anomaly.isGroup
+              ? `The "${anomaly.contactName}" group is unusually quiet — verify recent group activity before any check-in`
+              : `Check in with ${anomaly.contactName} — unusually quiet`
             : `Note: ${anomaly.contactName} is unusually active today`,
       });
     }

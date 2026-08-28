@@ -406,13 +406,19 @@ export async function startWhatsApp(
           senderJid = jid; // Incoming DM: remote JID is the sender
         }
 
-        // For DMs, resolve the chat counterpart's name
+        // Resolve the chat identity: for DMs the counterpart, for groups the
+        // group itself (@g.us JID) — downstream consumers (frequency tracking,
+        // observe-tick reinforcement, group-scoped directives, reply targeting)
+        // key on chatJid to identify the conversation.
         let chatJid: string | undefined;
         let chatName: string | undefined;
         if (!isGroup) {
           chatJid = jid; // remoteJid is always the other party in a DM
           const contact = contactStore.get(jid);
           chatName = contact?.notify || contact?.name || jid.split("@")[0];
+        } else {
+          chatJid = jid; // the group's @g.us JID
+          chatName = groupName;
         }
 
         try {

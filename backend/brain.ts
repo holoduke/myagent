@@ -909,29 +909,49 @@ function observeTick(state: BrainState, observations: Observation[]): void {
   // Build name→nodeId index for O(1) sender lookup instead of O(persons×observations)
   const personNodes = graph.findByType("person");
   const nameIndex = new Map<string, string[]>();
+  const indexKey = (key: string, id: string) => {
+    if (key.length < 2) return;
+    const ids = nameIndex.get(key) ?? [];
+    ids.push(id);
+    nameIndex.set(key, ids);
+  };
   for (const node of personNodes) {
-    // Index by content words and tags
+    // Index by content words and tags. Words are also indexed with surrounding
+    // punctuation stripped so identifiers like "(JID 1234-5678)" in node
+    // content become matchable against a group chat's JID.
     const words = node.content.toLowerCase().split(/\s+/);
     for (const w of words) {
-      if (w.length < 2) continue;
-      const ids = nameIndex.get(w) ?? [];
-      ids.push(node.id);
-      nameIndex.set(w, ids);
+      indexKey(w, node.id);
+      const cleaned = w.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
+      if (cleaned !== w) indexKey(cleaned, node.id);
     }
     for (const tag of node.tags) {
-      const t = tag.toLowerCase();
-      const ids = nameIndex.get(t) ?? [];
-      ids.push(node.id);
-      nameIndex.set(t, ids);
+      indexKey(tag.toLowerCase(), node.id);
     }
   }
 
   const accessedIds = new Set<string>();
   for (const obs of observations) {
-    if (!obs.sender) continue;
-    const senderLower = obs.sender.toLowerCase();
-    const matchedIds = nameIndex.get(senderLower);
-    if (matchedIds) {
+    // Match by sender name — and for group chats also by the group's JID and
+    // name, so person nodes representing the group itself are reinforced by
+    // activity from any participant (not only nodes matching the sender).
+    const keys: string[] = [];
+    if (obs.sender) keys.push(obs.sender.toLowerCase());
+    if (obs.isGroup) {
+      const groupJid = obs.chatJid ?? (obs.senderJid?.endsWith("@g.us") ? obs.senderJid : undefined);
+      if (groupJid) {
+        keys.push(groupJid.toLowerCase());
+        keys.push(groupJid.split("@")[0].toLowerCase()); // bare id, as written in node content
+      }
+      const groupName = obs.groupName || obs.chatName;
+      if (groupName) {
+        const g = groupName.toLowerCase();
+        keys.push(g, g.replace(/\s+/g, "-")); // tag convention: "familie haas" → "familie-haas"
+      }
+    }
+    for (const key of keys) {
+      const matchedIds = nameIndex.get(key);
+      if (!matchedIds) continue;
       for (const id of matchedIds) {
         if (!accessedIds.has(id)) {
           graph.accessNode(id);
