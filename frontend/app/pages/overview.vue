@@ -46,6 +46,33 @@
           <UiKvRow label="Last Message" :value="timeAgo(bs.lastMessageTime)" />
         </UiCard>
 
+        <!-- Autonomy -->
+        <UiCard v-if="autonomy" title="Autonomy" :icon="icons.shield">
+          <UiKvRow label="Level" :value="`${autonomy.level}/4`" />
+          <div class="wm-field">
+            <div class="wm-label">Mode</div>
+            <div class="wm-val">{{ autonomy.levelDescriptions[autonomy.level] }}</div>
+          </div>
+          <template v-if="autonomy.nextLevelThreshold">
+            <div class="wm-field">
+              <div class="wm-label">Trust naar level {{ autonomy.level + 1 }}</div>
+              <div class="trust-bar">
+                <div class="trust-bar-fill" :style="{ width: trustPct + '%' }" />
+              </div>
+              <div class="wm-val" style="margin-top:4px">{{ autonomy.trustScore }}/{{ autonomy.nextLevelThreshold }}</div>
+            </div>
+          </template>
+          <div class="suppressed-line" :class="{ warn: autonomy.suppressedToday > 0 }">
+            {{ autonomy.suppressedToday }} {{ autonomy.suppressedToday === 1 ? 'bericht' : 'berichten' }} vandaag onderdrukt (blocked by autonomy level)
+          </div>
+          <UiKvRow
+            v-if="autonomy.lastBrainMessage"
+            label="Laatste bericht"
+            :value="`${autonomy.lastBrainMessage.status}${autonomy.lastBrainMessage.detail ? ' — ' + autonomy.lastBrainMessage.detail : ''}`"
+            :value-class="autonomy.lastBrainMessage.status === 'sent' ? 'good' : 'warn'"
+          />
+        </UiCard>
+
         <!-- Integrations -->
         <UiCard title="Integrations" :icon="icons.link">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
@@ -103,8 +130,21 @@ const { api } = useApi()
 const { timeAgo } = useTimeAgo()
 const { showToast } = useToast()
 
+interface AutonomyInfo {
+  level: number
+  trustScore: number
+  successCount: number
+  failureCount: number
+  shadowSuccessCount: number
+  levelDescriptions: Record<number, string>
+  nextLevelThreshold: number | null
+  suppressedToday: number
+  lastBrainMessage: { at: number; targetJid: string; snippet: string; status: string; detail?: string } | null
+}
+
 const data = ref<DashboardData | null>(null)
 const brainCfg = ref<BrainConfig | null>(null)
+const autonomy = ref<AutonomyInfo | null>(null)
 const error = ref('')
 const resetting = ref(false)
 const toggling = ref(false)
@@ -123,12 +163,18 @@ const systemLabel = computed(() => {
   if (failures.value > 0) return 'Degraded'
   return 'Operational'
 })
+const trustPct = computed(() => {
+  const a = autonomy.value
+  if (!a || !a.nextLevelThreshold) return 0
+  return Math.min(100, Math.round((a.trustScore / a.nextLevelThreshold) * 100))
+})
 
 const icons = {
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
   brain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 017 7c0 3-2 5.5-4 7.5S12 22 12 22s-1-3.5-3-5.5S5 12 5 9a7 7 0 017-7z"/></svg>',
   link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>',
   monitor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>',
+  shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
 }
 
 async function toggleBrain() {
@@ -163,12 +209,14 @@ async function resetFailures() {
 
 async function loadDashboard() {
   try {
-    const [dash, cfgResp] = await Promise.all([
+    const [dash, cfgResp, autonomyResp] = await Promise.all([
       api<DashboardData>('/api/dashboard'),
       api<BrainConfigResponse>('/api/brain-config').catch(() => null),
+      api<AutonomyInfo>('/api/autonomy').catch(() => null),
     ])
     data.value = dash
     brainCfg.value = cfgResp?.config ?? null
+    autonomy.value = autonomyResp
     error.value = ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Unknown error'
@@ -244,6 +292,31 @@ onUnmounted(() => {
   border-radius: 50%; background: var(--text-muted); transition: all .2s;
 }
 .br-toggle.on .br-toggle-knob { left: 18px; background: var(--accent); }
+
+/* ── Autonomy card ── */
+.trust-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin-top: 4px;
+}
+.trust-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width .3s;
+}
+.suppressed-line {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+.suppressed-line.warn {
+  color: var(--orange, #f59e0b);
+}
 
 @media (max-width: 768px) {
   .section { padding: 16px 12px; }

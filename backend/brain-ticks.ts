@@ -42,7 +42,7 @@ import { extractPreferenceSignals, updatePreferences } from "./preference-learne
 import { extractEmotionSignals, recordEmotionSignals } from "./emotion-tracker.js";
 import { trackSentMessage, resolveReflections, createReflectionNodes } from "./reflection-tracker.js";
 import { detectCausalLinks, recordCausalLinks } from "./causal-tracker.js";
-import { isActionPermitted, recordSuccess, recordFailure } from "./autonomy.js";
+import { isActionPermitted, recordSuccess, recordFailure, recordShadowSuccess, recordGateSuppression } from "./autonomy.js";
 import { probeMemoryHealth, circuitSuccess, circuitFailure, isCircuitClosed } from "./health-monitor.js";
 import { runSleepConsolidation } from "./sleep-consolidation.js";
 import { detectStaleBeliefs } from "./belief-tracker.js";
@@ -441,7 +441,26 @@ export async function thinkTick(
       // otherwise the demote-spiral drags the agent down from its own gating.
       if (!isDirectReply && initiativeSignals.length > 0 && !isActionPermitted("send_proactive")) {
         log(`Proactive message blocked by autonomy level (${response.message.slice(0, 60)}...)`);
+        recordGateSuppression();
         recordBrainDelivery(state, response.message, messageTarget, "suppressed", "blocked by autonomy level");
+        // Shadow trust: the gate is a policy block, not a judgment failure. Run the
+        // same self-critique the send path would have run; if the message would have
+        // passed, award capped shadow trust so the trust ladder stays climbable even
+        // while every proactive send is gated (otherwise trustScore stays 0 forever).
+        const hoursSinceLastMessage = state.lastMessageTime > 0
+          ? (now - state.lastMessageTime) / 3600000
+          : Infinity;
+        const shadowCritique = await critiqueResponse(response.message, {
+          isDirectReply,
+          isDigest: isDigestTriggered,
+          recentObservationCount: allObs.length,
+          hoursSinceLastMessage,
+          messagesToday: state.messagesToday,
+          maxMessagesPerDay: cfg.maxMessagesPerDay,
+        });
+        if (shadowCritique.shouldSend) {
+          recordShadowSuccess("send_proactive");
+        }
       } else
       // Phase 3: Self-critique for proactive/initiative messages
       if (initiativeSignals.length > 0 || !isDirectReply) {
