@@ -9,6 +9,7 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { BRAIN_DIR } from "./config.js";
 import { createLogger } from "./logger.js";
+import { getBrainConfig, getOwnerLocalDate } from "./brain-config.js";
 
 const log = createLogger("autonomy");
 
@@ -31,6 +32,12 @@ export interface AutonomyState {
   lastLevelChange: number;
   /** History of level changes */
   history: { level: AutonomyLevel; timestamp: number; reason: string }[];
+  /** Number of gate-blocked messages that still passed self-critique (shadow trust) */
+  shadowSuccessCount?: number;
+  /** Messages suppressed by the autonomy gate today (owner-local date) */
+  suppressedToday?: number;
+  /** Owner-local date the suppressedToday counter belongs to */
+  suppressedDate?: string;
 }
 
 /**
@@ -48,7 +55,7 @@ export const LEVEL_DESCRIPTIONS: Record<AutonomyLevel, string> = {
 };
 
 // Level thresholds: trust score needed to promote
-const PROMOTE_THRESHOLDS: Record<number, number> = {
+export const PROMOTE_THRESHOLDS: Record<number, number> = {
   1: 10,   // 10 successes to reach level 2
   2: 25,   // 25 more to reach level 3
   3: 50,   // 50 more to reach level 4
@@ -148,6 +155,63 @@ export function recordSuccess(action: string): void {
   }
 
   saveState();
+}
+
+/**
+ * Record a shadow success: a message the autonomy gate blocked but that
+ * self-critique judged worth sending. Awards +1 trust, capped at the
+ * promotion threshold minus 1 so actual promotion still requires at least
+ * one real delivered success (or manual action). This gives a gated level
+ * a path to demonstrate judgment — without it, recordSuccess never fires
+ * for proactive sends and the trust score stays 0 forever.
+ */
+export function recordShadowSuccess(action: string): void {
+  const s = loadState();
+  const threshold = PROMOTE_THRESHOLDS[s.level];
+  if (!threshold) return; // level 4: nothing to earn
+
+  s.shadowSuccessCount = (s.shadowSuccessCount ?? 0) + 1;
+
+  const cap = threshold - 1;
+  if (s.trustScore < cap) {
+    s.trustScore++;
+    s.history.push({
+      level: s.level,
+      timestamp: Date.now(),
+      reason: `Shadow success: ${action} blocked by gate but passed critique (trust ${s.trustScore}/${threshold})`,
+    });
+    if (s.history.length > 20) {
+      s.history = s.history.slice(-20);
+    }
+    log(`Shadow success: ${action} (trust ${s.trustScore}/${threshold}, capped at ${cap})`);
+  } else {
+    log(`Shadow success: ${action} — trust already at cap ${cap}/${threshold}, promotion needs a real success or manual action`);
+  }
+
+  saveState();
+}
+
+/**
+ * Record a message suppressed by the autonomy gate (daily counter, owner-local date).
+ */
+export function recordGateSuppression(): void {
+  const s = loadState();
+  const today = getOwnerLocalDate(getBrainConfig().ownerTimezone);
+  if (s.suppressedDate !== today) {
+    s.suppressedDate = today;
+    s.suppressedToday = 0;
+  }
+  s.suppressedToday = (s.suppressedToday ?? 0) + 1;
+  saveState();
+}
+
+/**
+ * How many messages the autonomy gate suppressed today (owner-local date).
+ */
+export function getSuppressedToday(): number {
+  const s = loadState();
+  const today = getOwnerLocalDate(getBrainConfig().ownerTimezone);
+  return s.suppressedDate === today ? (s.suppressedToday ?? 0) : 0;
 }
 
 /**
