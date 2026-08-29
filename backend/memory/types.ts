@@ -187,6 +187,11 @@ export interface BrainState {
   lastMessageTime: number;
   messagesToday: number;
   messagesTodayDate: string;
+  /** Timestamp of the most recent inbound owner message seen by a think tick.
+   *  Drives the autonomy-gate direct-reply exemption: if the owner spoke after
+   *  the last delivery to them, the brain's next message to them is a reply,
+   *  not a proactive send. */
+  lastOwnerMessageTime?: number;
 
   // observations
   lastObservationTime: number;

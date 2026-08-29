@@ -181,6 +181,15 @@ export async function thinkTick(
   const pending = graph.getPendingObservations();
   const allObs = pending.length > 0 ? pending : newObs;
 
+  // Track when the owner last messaged us — feeds the direct-reply gate
+  // exemption below, which must survive across ticks (the owner's question is
+  // often consumed by an earlier tick than the one that produces the answer).
+  for (const o of allObs) {
+    if (!o.isFromMe && o.trustLevel === "owner" && o.timestamp > (state.lastOwnerMessageTime ?? 0)) {
+      state.lastOwnerMessageTime = o.timestamp;
+    }
+  }
+
   const wm = loadWorkingMemory();
   populateTemporalContext(wm);
 
@@ -433,8 +442,28 @@ export async function thinkTick(
 
     if (response.message) {
       const isDigestTriggered = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
-      const isDirectReply = allObs.some(o => !o.isFromMe && o.trustLevel === "owner");
+      const isBatchDirectReply = allObs.some(o => !o.isFromMe && o.trustLevel === "owner");
       const messageTarget = response.messageTargetJid || ownerJid;
+
+      // Direct-reply exemption: if the owner messaged us after the last message
+      // we actually delivered to them, this response is an answer in an
+      // owner-initiated conversation — a reply, not a proactive send — even when
+      // the owner's message was consumed by an earlier tick and is no longer in
+      // this batch. A suppressed reply to a direct question actively damages
+      // trust, the opposite of what the autonomy gate is for.
+      const DIRECT_REPLY_MAX_AGE_MS = 12 * 60 * 60 * 1000; // stays within the delivery log's 13h retention
+      const ownerMsgAt = state.lastOwnerMessageTime ?? 0;
+      const lastDeliveryToOwner = getRecentDeliveries()
+        .filter(d => d.jid === ownerJid)
+        .reduce((max, d) => Math.max(max, d.timestamp), 0);
+      const isDirectReplyExemption = !isBatchDirectReply
+        && messageTarget === ownerJid
+        && ownerMsgAt > lastDeliveryToOwner
+        && (now - ownerMsgAt) < DIRECT_REPLY_MAX_AGE_MS;
+      const isDirectReply = isBatchDirectReply || isDirectReplyExemption;
+      if (isDirectReplyExemption) {
+        log(`Autonomy gate exemption (reason=direct-reply): owner message at ${new Date(ownerMsgAt).toISOString()} is newer than last delivery to owner — treating brain message as a reply, skipping suppress-check`);
+      }
 
       // Autonomy gating: check if proactive messaging is permitted at current level.
       // A policy-level block is not a judgment failure, so it must not decrement trust —
@@ -484,7 +513,8 @@ export async function thinkTick(
             bypassLimits: isDigestTriggered,
             targetJid: response.messageTargetJid,
           });
-          recordBrainDelivery(state, response.message, messageTarget, delivery.status, delivery.detail);
+          recordBrainDelivery(state, response.message, messageTarget, delivery.status,
+            delivery.detail ?? (isDirectReplyExemption ? "direct-reply" : undefined));
           trackSentMessage(response.message, messageTarget, initiativeSignals.length > 0, critique.score);
           scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
           recordSuccess("send_message");
@@ -494,7 +524,8 @@ export async function thinkTick(
           bypassLimits: isDigestTriggered,
           targetJid: response.messageTargetJid,
         });
-        recordBrainDelivery(state, response.message, messageTarget, delivery.status, delivery.detail);
+        recordBrainDelivery(state, response.message, messageTarget, delivery.status,
+          delivery.detail ?? (isDirectReplyExemption ? "direct-reply" : undefined));
         trackSentMessage(response.message, messageTarget, false);
         scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
         recordSuccess("send_message");
