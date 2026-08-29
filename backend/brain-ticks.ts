@@ -918,6 +918,7 @@ export async function reflectTick(
     ownerOutgoingActivity,
     driftSummary,
     personProfilesSection,
+    lastBrainMessage: state.lastBrainMessage,
   });
 
   const reflectPromptChars = prompt.length;

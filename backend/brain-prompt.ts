@@ -1037,6 +1037,8 @@ export interface ReflectContext {
   driftSummary?: string;
   /** Structured person profiles for relationship reasoning */
   personProfilesSection?: string;
+  /** Real delivery status of the last brain-returned message (ground truth) */
+  lastBrainMessage?: BrainMessageDelivery;
 }
 
 export function buildReflectPrompt(ctx: ReflectContext): string {
@@ -1062,6 +1064,10 @@ export function buildReflectPrompt(ctx: ReflectContext): string {
 
   const driftBlock = ctx.driftSummary
     ? `\n═══ DRIFT AUDIT ═══\n${ctx.driftSummary}\nFull reports: /data/brain/drift-reports/\n`
+    : "";
+
+  const lastDeliveryBlock = ctx.lastBrainMessage
+    ? `\n═══ LAST MESSAGE DELIVERY ═══\n\nThe real delivery status of the last message you returned from a brain tick (from the delivery log — this is the ground truth, not your memory of it):\n\n${formatLastBrainMessage(ctx.lastBrainMessage)}\n`
     : "";
 
   const siStats = ctx.selfImproveStats;
@@ -1105,7 +1111,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — 
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${formatConsciousnessSection()}${goalsBlock}${initiativeBlock}${buildCommitmentsBlock(ctx.recentMoltbookActivity, ctx.recentOutgoingActivity, ctx.ownerOutgoingActivity)}
+${formatConsciousnessSection()}${goalsBlock}${initiativeBlock}${lastDeliveryBlock}${buildCommitmentsBlock(ctx.recentMoltbookActivity, ctx.recentOutgoingActivity, ctx.ownerOutgoingActivity)}
 ═══ GRAPH STATS ═══
 Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Ghosts: ${ctx.stats.ghostCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
 By type: ${Object.entries(ctx.stats.byType).map(([k, v]) => `${k}:${v}`).join(", ")}
