@@ -512,6 +512,7 @@ export async function thinkTick(
           const delivery = await trySendMessage(state, sendMessage, ownerJid, response.message, {
             bypassLimits: isDigestTriggered,
             targetJid: response.messageTargetJid,
+            isDirectReply,
           });
           recordBrainDelivery(state, response.message, messageTarget, delivery.status,
             delivery.detail ?? (isDirectReplyExemption ? "direct-reply" : undefined));
@@ -523,6 +524,7 @@ export async function thinkTick(
         const delivery = await trySendMessage(state, sendMessage, ownerJid, response.message, {
           bypassLimits: isDigestTriggered,
           targetJid: response.messageTargetJid,
+          isDirectReply,
         });
         recordBrainDelivery(state, response.message, messageTarget, delivery.status,
           delivery.detail ?? (isDirectReplyExemption ? "direct-reply" : undefined));

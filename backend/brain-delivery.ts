@@ -165,7 +165,7 @@ export async function trySendMessage(
   sendMessage: (jid: string, text: string) => Promise<void>,
   ownerJid: string,
   message: string,
-  options?: { bypassLimits?: boolean; targetJid?: string | null },
+  options?: { bypassLimits?: boolean; targetJid?: string | null; isDirectReply?: boolean },
 ): Promise<DeliveryResult> {
   const cfg = getBrainConfig();
   const now = Date.now();
@@ -178,6 +178,10 @@ export async function trySendMessage(
   const messageIntervalOk = (now - state.lastMessageTime) >= cfg.minMessageInterval;
   const underDailyLimit = state.messagesToday < cfg.maxMessagesPerDay;
   const bypass = options?.bypassLimits === true;
+  // A verified reply to an owner-initiated question is not a proactive send:
+  // it skips the interval/daily throttle and doesn't consume the daily budget.
+  // Quiet hours and the verifier gate still apply.
+  const isDirectReply = options?.isDirectReply === true;
   const recipientJid = options?.targetJid || ownerJid;
 
   // Action verifier gate
@@ -196,23 +200,32 @@ export async function trySendMessage(
   const inMeeting = !bypass && isOwnerInMeeting();
 
   if (!bypass && isQuiet) {
+    if (isDirectReply) {
+      log("Suppressed message: quiet hours (was a direct reply — candidate for scheduled-channel reroute)");
+      return { status: "suppressed", detail: "quiet hours (direct reply — candidate for scheduled-channel reroute)" };
+    }
     log("Suppressed message: quiet hours");
     return { status: "suppressed", detail: "quiet hours" };
   } else if (inMeeting) {
+    if (isDirectReply) {
+      log("Suppressed message: owner is in a meeting (was a direct reply — candidate for scheduled-channel reroute)");
+      return { status: "suppressed", detail: "owner in meeting (direct reply — candidate for scheduled-channel reroute)" };
+    }
     log("Suppressed message: owner is in a meeting");
     return { status: "suppressed", detail: "owner in meeting" };
-  } else if (!bypass && !messageIntervalOk) {
+  } else if (!bypass && !isDirectReply && !messageIntervalOk) {
     log(`Suppressed message: too soon (${Math.round((now - state.lastMessageTime) / 60000)}m since last)`);
     return { status: "suppressed", detail: `too soon (${Math.round((now - state.lastMessageTime) / 60000)}m since last message)` };
-  } else if (!bypass && !underDailyLimit) {
+  } else if (!bypass && !isDirectReply && !underDailyLimit) {
     log(`Suppressed message: daily limit reached (${state.messagesToday}/${cfg.maxMessagesPerDay})`);
     return { status: "suppressed", detail: `daily limit reached (${state.messagesToday}/${cfg.maxMessagesPerDay})` };
   } else {
     try {
       if (bypass) log("Briefing message — bypassing rate limits");
+      if (isDirectReply) log("Direct reply — exempt from interval/daily throttle");
       await sendMessage(recipientJid, message);
       state.lastMessageTime = now;
-      state.messagesToday++;
+      if (!isDirectReply) state.messagesToday++;
       logDelivery(recipientJid, bypass ? "digest" : "think", message);
       log(`Sent proactive message to ${recipientJid} (${message.length} chars, #${state.messagesToday} today)`);
       return { status: "sent" };
