@@ -376,6 +376,10 @@ export function startBrainLoop(
   startWatchdog({
     getLastSuccessfulTick: () => loadState().lastSuccessfulTick,
     isBrainEnabled: () => getBrainConfig().enabled,
+    // ALERTs escalate to Gillis via the scheduled-messages queue, whose 60s
+    // delivery loop needs no Claude API call — the one output path that
+    // survives an API outage (root cause of the jun–aug silent failure).
+    ownerJid,
   });
 }
 
