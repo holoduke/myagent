@@ -15,6 +15,17 @@ const log = createLogger("downtime");
 
 const HEARTBEAT_FILE = `${BRAIN_DIR}/observe-heartbeat.json`;
 
+/**
+ * Fraction of a silence/absence window overlapping downtime above which the
+ * signal is an outage artifact: suppress it entirely instead of surfacing it.
+ */
+export const DOWNTIME_SUPPRESS_FRACTION = 0.5;
+/**
+ * Fraction above which a silence/absence signal is low-confidence: surface it,
+ * but annotated with the downtime overlap and capped at LOW priority.
+ */
+export const DOWNTIME_LOW_CONFIDENCE_FRACTION = 0.25;
+
 /** Heartbeats closer together than this belong to the same uptime interval. */
 const MERGE_GAP_MS = 30 * 60 * 1000;
 /** Drop interval history older than this. */

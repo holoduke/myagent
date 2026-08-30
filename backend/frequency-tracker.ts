@@ -7,7 +7,12 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { BRAIN_DIR } from "./config.js";
 import { createLogger } from "./logger.js";
-import { downtimeOverlapMs, lastMajorDowntimeEnd } from "./downtime-tracker.js";
+import {
+  downtimeOverlapMs,
+  lastMajorDowntimeEnd,
+  DOWNTIME_SUPPRESS_FRACTION,
+  DOWNTIME_LOW_CONFIDENCE_FRACTION,
+} from "./downtime-tracker.js";
 
 const log = createLogger("frequency");
 
@@ -16,7 +21,6 @@ const BASELINE_DAYS = 30;
 const ANOMALY_THRESHOLD_STDDEV = 2; // >2 standard deviations = anomaly
 const MIN_BASELINE_DAYS = 7; // Need at least 7 days of data before detecting anomalies
 const STALE_BASELINE_GAP_MS = 72 * 60 * 60 * 1000; // downtime >72h invalidates pre-gap baseline data
-const DOWNTIME_ARTIFACT_FRACTION = 0.5; // silence window ≥50% downtime = likely artifact
 
 // ── Types ──
 
@@ -29,7 +33,11 @@ export interface FrequencyAnomaly {
   baselineStdDev: number;
   daysSinceLastMessage: number;
   description: string;
-  /** True when the silence window mostly overlaps system downtime — the system was deaf, the contact wasn't necessarily quiet. */
+  /**
+   * True when a meaningful share (≥25%) of the silence window overlaps system
+   * downtime — low confidence, cap at LOW priority. Windows that are mostly
+   * (≥50%) downtime are suppressed at the source and never reach consumers.
+   */
   likelyArtifact?: boolean;
   /** True when the tracked JID is a group chat (@g.us) rather than an individual contact. */
   isGroup?: boolean;
@@ -139,18 +147,29 @@ export function detectAnomalies(): FrequencyAnomaly[] {
   // days during the gap reflect ARIA being deaf, not contacts being quiet.
   // Only trust daily counts recorded after the most recent >72h gap.
   const staleCutoff = lastMajorDowntimeEnd(STALE_BASELINE_GAP_MS);
-  const staleCutoffDate = staleCutoff > 0 ? new Date(staleCutoff).toISOString().slice(0, 10) : "";
+
+  // Enumerate the days the system was actually listening: the retention window
+  // (truncated to the end of the last major outage), minus days that were
+  // majority-downtime. dailyCounts only holds days with messages, so zero-fill
+  // over these observed days — using active days as the denominator would read
+  // as msgs-per-active-day, and counting deaf days would deflate every rate.
+  const windowStartMs = Math.max(now - BASELINE_DAYS * 86400000, staleCutoff);
+  const firstDayStartMs = Math.floor(windowStartMs / 86400000) * 86400000;
+  const observedDates: string[] = [];
+  for (let dayStart = firstDayStartMs; dayStart < now; dayStart += 86400000) {
+    const dayEnd = Math.min(dayStart + 86400000, now);
+    if (downtimeOverlapMs(dayStart, dayEnd) < (dayEnd - dayStart) / 2) {
+      observedDates.push(new Date(dayStart).toISOString().slice(0, 10));
+    }
+  }
 
   for (const [jid, baseline] of Object.entries(store)) {
     const isGroup = jid.endsWith("@g.us");
-    let dates = Object.keys(baseline.dailyCounts).sort();
-    if (staleCutoffDate) {
-      dates = dates.filter(d => d >= staleCutoffDate);
-    }
-    if (dates.length < MIN_BASELINE_DAYS) continue; // Not enough (fresh) history
+    const counts = observedDates.map(d => baseline.dailyCounts[d] || 0);
+    const activeDays = counts.filter(c => c > 0).length;
+    if (activeDays < MIN_BASELINE_DAYS) continue; // Not enough (fresh) history
 
-    // Calculate mean and stddev of daily counts
-    const counts = dates.map(d => baseline.dailyCounts[d]);
+    // Mean and stddev of msgs/day over observed (non-downtime) days
     const mean = counts.reduce((s, c) => s + c, 0) / counts.length;
     const variance = counts.reduce((s, c) => s + Math.pow(c - mean, 2), 0) / counts.length;
     const stdDev = Math.sqrt(variance);
@@ -166,27 +185,33 @@ export function detectAnomalies(): FrequencyAnomaly[] {
     // messaging today under a different JID. Never flag these.
     if (daysSinceLast > BASELINE_DAYS) continue;
 
-    // Detect silence: no messages for > mean + 2*stdDev days of expected activity
+    // Detect silence on the EFFECTIVE window: raw silence minus downtime
+    // overlap. Time the system was deaf says nothing about the contact.
+    const silenceMs = now - baseline.lastMessageAt;
+    const downMs = downtimeOverlapMs(baseline.lastMessageAt, now);
+    const downFraction = silenceMs > 0 ? downMs / silenceMs : 0;
+    const effectiveSilenceDays = Math.max(0, silenceMs - downMs) / 86400000;
     const expectedDaysOfSilence = mean > 0 ? 1 / mean : Infinity; // avg days between messages
-    if (daysSinceLast > expectedDaysOfSilence * ANOMALY_THRESHOLD_STDDEV && daysSinceLast > 3) {
-      // If the system itself was offline for most of the silence window, this
-      // is deafness, not silence — annotate so consumers cap it at LOW priority.
-      const silenceMs = now - baseline.lastMessageAt;
-      const downMs = downtimeOverlapMs(baseline.lastMessageAt, now);
-      const likelyArtifact = silenceMs > 0 && downMs / silenceMs >= DOWNTIME_ARTIFACT_FRACTION;
+    if (effectiveSilenceDays > expectedDaysOfSilence * ANOMALY_THRESHOLD_STDDEV && effectiveSilenceDays > 3) {
       const downDays = Math.round(downMs / 86400000);
-      anomalies.push({
-        contactJid: jid,
-        contactName: baseline.name,
-        type: "silence",
-        currentCount: todayCount,
-        baselineMean: mean,
-        baselineStdDev: stdDev,
-        daysSinceLastMessage: Math.floor(daysSinceLast),
-        likelyArtifact,
-        isGroup,
-        description: `${isGroup ? `The "${baseline.name}" group chat` : baseline.name} has been unusually quiet — no messages in ${Math.floor(daysSinceLast)} days (normally ~${mean.toFixed(1)} msgs/day)${likelyArtifact ? ` (system was offline for ${downDays}d of this period — likely artifact)` : ""}`,
-      });
+      if (downFraction >= DOWNTIME_SUPPRESS_FRACTION) {
+        // Mostly deafness, not silence — suppress rather than surface a poisoned signal.
+        log(`Suppressed silence anomaly for ${baseline.name}: ${downDays}d of ${Math.floor(daysSinceLast)}d window is system downtime`);
+      } else {
+        const likelyArtifact = downFraction >= DOWNTIME_LOW_CONFIDENCE_FRACTION;
+        anomalies.push({
+          contactJid: jid,
+          contactName: baseline.name,
+          type: "silence",
+          currentCount: todayCount,
+          baselineMean: mean,
+          baselineStdDev: stdDev,
+          daysSinceLastMessage: Math.floor(daysSinceLast),
+          likelyArtifact,
+          isGroup,
+          description: `${isGroup ? `The "${baseline.name}" group chat` : baseline.name} has been unusually quiet — no messages in ${Math.floor(daysSinceLast)} days (normally ~${mean.toFixed(1)} msgs/day)${downDays >= 1 ? ` (window overlaps ${downDays}d system downtime — low confidence)` : ""}`,
+        });
+      }
     }
 
     // Detect spike: today's count > mean + 2*stdDev
