@@ -160,7 +160,16 @@ export class GoalTracker {
               break;
             }
 
-            if (op.progress !== undefined) data.progress = Math.max(0, Math.min(100, op.progress));
+            if (op.progress !== undefined) {
+              let progress = op.progress;
+              // The brain LLM sometimes reports progress as a fraction (0-1)
+              // instead of a percentage (0-100); a raw 0.65 would render as "0.65%".
+              if (progress > 0 && progress <= 1) {
+                log(`update_goal ${op.nodeId}: progress ${progress} looks like a fraction, interpreting as ${progress * 100}%`);
+                progress = progress * 100;
+              }
+              data.progress = Math.max(0, Math.min(100, progress));
+            }
             if (op.status !== undefined) data.status = op.status;
             if (op.checkpoints !== undefined) data.checkpoints = normalizeCheckpoints(op.checkpoints);
             data.lastCheckedAt = Date.now();

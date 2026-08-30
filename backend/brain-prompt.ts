@@ -385,6 +385,7 @@ Always tag person nodes with relationship. Tag resolved items with "resolved".
 
 Use "concept" nodes + "hierarchical" edges to group 3+ related nodes.
 Goal ops (in "goalOps"): create_goal{title,description,priority(1-3),checkpoints[]}, update_goal{nodeId,progress,checkpoints}, complete_goal{nodeId}, abandon_goal{nodeId,reason}.
+progress is a percentage 0-100 (e.g. 65 for 65%), NOT a fraction 0-1.
 `;
 
 // ── Think Prompt ──
@@ -516,7 +517,7 @@ export function formatDigestTemplate(wm: WorkingMemory, graph: MemoryGraph): str
   const activeGoals = wm.activeGoals.slice(0, 5);
   if (activeGoals.length > 0) {
     sections.push(`**Active Goals**\n${activeGoals.map(g =>
-      `- ${g.title} (priority: ${g.priority}, ${g.deadlineStatus === "none" ? `${Math.round(g.progress * 100)}% done` : g.deadlineStatus})`
+      `- ${g.title} (priority: ${g.priority}, ${g.deadlineStatus === "none" ? `${Math.round(g.progress)}% done` : g.deadlineStatus})`
     ).join("\n")}`);
   }
 
