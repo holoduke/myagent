@@ -4,7 +4,11 @@ import { GoalTracker } from "./goals.js";
 import { getBrainConfig, getOwnerLocalDate, getOwnerLocalDay } from "./brain-config.js";
 import { createLogger } from "./logger.js";
 import { detectAnomalies } from "./frequency-tracker.js";
-import { downtimeOverlapMs } from "./downtime-tracker.js";
+import {
+  downtimeOverlapMs,
+  DOWNTIME_SUPPRESS_FRACTION,
+  DOWNTIME_LOW_CONFIDENCE_FRACTION,
+} from "./downtime-tracker.js";
 
 const log = createLogger("initiative");
 
@@ -59,19 +63,25 @@ export function detectInitiativeSignals(
   const personNodes = graph.findByType("person");
   for (const node of personNodes) {
     if (node.pinned && node.accessCount > 5 && (now - node.lastAccessedAt) > ABSENCE_THRESHOLD) {
-      // If the system itself was offline for ≥50% of the absence window, the
-      // silence is (mostly) ARIA being deaf — annotate and cap at LOW priority
-      // so we don't suggest out-of-touch check-ins after an outage.
+      // Measure absence net of system downtime — time ARIA was deaf says
+      // nothing about the person. Mostly-downtime windows are outage
+      // artifacts and are suppressed entirely; partial overlap is surfaced
+      // but annotated and capped at LOW priority.
       const absenceMs = now - node.lastAccessedAt;
       const downMs = downtimeOverlapMs(node.lastAccessedAt, now);
-      const likelyArtifact = downMs / absenceMs >= 0.5;
+      const downFraction = downMs / absenceMs;
+      const effectiveAbsenceMs = absenceMs - downMs;
+      if (downFraction >= DOWNTIME_SUPPRESS_FRACTION || effectiveAbsenceMs <= ABSENCE_THRESHOLD) {
+        continue;
+      }
+      const lowConfidence = downFraction >= DOWNTIME_LOW_CONFIDENCE_FRACTION;
       const downDays = Math.round(downMs / (24 * 60 * 60 * 1000));
       signals.push({
         type: "person_absent",
-        priority: likelyArtifact ? 0.2 : 0.4,
-        description: `Haven't heard from/about "${node.content.slice(0, 40)}" in ${Math.floor(absenceMs / (24 * 60 * 60 * 1000))} days${likelyArtifact ? ` (system was offline for ${downDays}d of this period — likely artifact)` : ""}`,
+        priority: lowConfidence ? 0.2 : 0.4,
+        description: `Haven't heard from/about "${node.content.slice(0, 40)}" in ${Math.floor(absenceMs / (24 * 60 * 60 * 1000))} days${downDays >= 1 ? ` (window overlaps ${downDays}d system downtime${lowConfidence ? " — low confidence" : ""})` : ""}`,
         relatedNodeIds: [node.id],
-        suggestedAction: likelyArtifact
+        suggestedAction: lowConfidence
           ? `Silence overlaps system downtime — verify before checking in about ${node.content.slice(0, 30)}`
           : `Check in about ${node.content.slice(0, 30)}`,
       });
@@ -117,8 +127,9 @@ export function detectInitiativeSignals(
   try {
     const anomalies = detectAnomalies();
     for (const anomaly of anomalies) {
-      // Downtime artifacts (system was deaf for most of the silence window)
-      // are capped at LOW priority — they shouldn't trigger check-in messages.
+      // Mostly-downtime silence windows never leave detectAnomalies; what
+      // arrives here with likelyArtifact set is partial overlap (≥25%) —
+      // low confidence, capped at LOW priority so it can't trigger check-ins.
       signals.push({
         type: "frequency_anomaly",
         priority: anomaly.likelyArtifact ? 0.2 : anomaly.type === "silence" ? 0.5 : 0.4,
