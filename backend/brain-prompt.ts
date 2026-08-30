@@ -40,7 +40,8 @@ function resolveCharacter(): CharacterOverride | undefined {
 
 function formatTime(ts: number): string {
   const tz = getBrainConfig().ownerTimezone;
-  return new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz });
+  // en-GB (not en-US): ICU renders proper zone abbreviations (CEST) instead of GMT+2
+  return new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz, timeZoneName: "short" });
 }
 
 function timeAgo(ts: number): string {
