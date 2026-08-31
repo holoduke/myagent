@@ -215,10 +215,27 @@ export function detectAnomalies(): FrequencyAnomaly[] {
     // messaging today under a different JID. Never flag these.
     if (daysSinceLast > BASELINE_DAYS) continue;
 
+    // Silence is a per-person property, not a per-JID one: after the Baileys
+    // phone-JID→LID migration one person can hold multiple entries with the
+    // same display name, and the stale alias reads as "quiet for N days" while
+    // the person is actively messaging under the new JID. Aggregate
+    // lastMessageAt across same-name individual entries (same matching logic
+    // as lastMessageAtForName) and use the max as the silence basis. Names too
+    // short to match reliably (<3 chars) keep the per-JID basis, as do groups.
+    let silenceBasisAt = baseline.lastMessageAt;
+    if (!isGroup && daysSinceLast > 3 && (baseline.name || "").trim().length >= 3) {
+      const aggregatedAt = lastMessageAtForName(baseline.name);
+      if (aggregatedAt !== null && aggregatedAt > silenceBasisAt) {
+        log(`Stale alias bypassed for ${baseline.name} (${jid}): per-JID silence ${Math.floor(daysSinceLast)}d, but same-name activity ${((now - aggregatedAt) / 3600000).toFixed(0)}h ago`);
+        silenceBasisAt = aggregatedAt;
+      }
+    }
+    const silenceBasisDays = (now - silenceBasisAt) / 86400000;
+
     // Detect silence on the EFFECTIVE window: raw silence minus downtime
     // overlap. Time the system was deaf says nothing about the contact.
-    const silenceMs = now - baseline.lastMessageAt;
-    const downMs = downtimeOverlapMs(baseline.lastMessageAt, now);
+    const silenceMs = now - silenceBasisAt;
+    const downMs = downtimeOverlapMs(silenceBasisAt, now);
     const downFraction = silenceMs > 0 ? downMs / silenceMs : 0;
     const effectiveSilenceDays = Math.max(0, silenceMs - downMs) / 86400000;
     const expectedDaysOfSilence = mean > 0 ? 1 / mean : Infinity; // avg days between messages
@@ -226,7 +243,7 @@ export function detectAnomalies(): FrequencyAnomaly[] {
       const downDays = Math.round(downMs / 86400000);
       if (downFraction >= DOWNTIME_SUPPRESS_FRACTION) {
         // Mostly deafness, not silence — suppress rather than surface a poisoned signal.
-        log(`Suppressed silence anomaly for ${baseline.name}: ${downDays}d of ${Math.floor(daysSinceLast)}d window is system downtime`);
+        log(`Suppressed silence anomaly for ${baseline.name}: ${downDays}d of ${Math.floor(silenceBasisDays)}d window is system downtime`);
       } else {
         const likelyArtifact = downFraction >= DOWNTIME_LOW_CONFIDENCE_FRACTION;
         anomalies.push({
@@ -236,10 +253,10 @@ export function detectAnomalies(): FrequencyAnomaly[] {
           currentCount: todayCount,
           baselineMean: mean,
           baselineStdDev: stdDev,
-          daysSinceLastMessage: Math.floor(daysSinceLast),
+          daysSinceLastMessage: Math.floor(silenceBasisDays),
           likelyArtifact,
           isGroup,
-          description: `${isGroup ? `The "${baseline.name}" group chat` : baseline.name} has been unusually quiet — no messages in ${Math.floor(daysSinceLast)} days (normally ~${mean.toFixed(1)} msgs/day)${downDays >= 1 ? ` (window overlaps ${downDays}d system downtime — low confidence)` : ""}`,
+          description: `${isGroup ? `The "${baseline.name}" group chat` : baseline.name} has been unusually quiet — no messages in ${Math.floor(silenceBasisDays)} days (normally ~${mean.toFixed(1)} msgs/day)${downDays >= 1 ? ` (window overlaps ${downDays}d system downtime — low confidence)` : ""}`,
         });
       }
     }
