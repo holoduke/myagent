@@ -3,7 +3,7 @@ import type { WorkingMemory, BrainState } from "./memory/types.js";
 import { GoalTracker } from "./goals.js";
 import { getBrainConfig, getOwnerLocalDate, getOwnerLocalDay } from "./brain-config.js";
 import { createLogger } from "./logger.js";
-import { detectAnomalies } from "./frequency-tracker.js";
+import { detectAnomalies, lastMessageAtForName } from "./frequency-tracker.js";
 import {
   downtimeOverlapMs,
   DOWNTIME_SUPPRESS_FRACTION,
@@ -62,13 +62,21 @@ export function detectInitiativeSignals(
   const ABSENCE_THRESHOLD = 7 * 24 * 60 * 60 * 1000 * absenceMultiplier; // 7d, 10.5d on weekends
   const personNodes = graph.findByType("person");
   for (const node of personNodes) {
-    if (node.pinned && node.accessCount > 5 && (now - node.lastAccessedAt) > ABSENCE_THRESHOLD) {
+    if (!node.pinned || node.accessCount <= 5) continue;
+    // Absence is measured against observed reality: the person's last actual
+    // message (frequency baselines). node.lastAccessedAt only tracks graph
+    // access during think ticks, which goes stale whenever the brain is
+    // degraded even though observation keeps running — and such windows can
+    // predate the downtime tracker, so overlap suppression can't catch them.
+    // Fall back to lastAccessedAt only when no baseline entry matches.
+    const lastSeenAt = lastMessageAtForName(node.content) ?? node.lastAccessedAt;
+    if ((now - lastSeenAt) > ABSENCE_THRESHOLD) {
       // Measure absence net of system downtime — time ARIA was deaf says
       // nothing about the person. Mostly-downtime windows are outage
       // artifacts and are suppressed entirely; partial overlap is surfaced
       // but annotated and capped at LOW priority.
-      const absenceMs = now - node.lastAccessedAt;
-      const downMs = downtimeOverlapMs(node.lastAccessedAt, now);
+      const absenceMs = now - lastSeenAt;
+      const downMs = downtimeOverlapMs(lastSeenAt, now);
       const downFraction = downMs / absenceMs;
       const effectiveAbsenceMs = absenceMs - downMs;
       if (downFraction >= DOWNTIME_SUPPRESS_FRACTION || effectiveAbsenceMs <= ABSENCE_THRESHOLD) {
