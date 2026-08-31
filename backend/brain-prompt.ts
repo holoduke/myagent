@@ -640,6 +640,9 @@ function formatLastBrainMessage(d: BrainMessageDelivery): string {
   if (d.status === "sent" && !d.verified) {
     return `Status: SENT (pending confirmation — not yet cross-checked against the delivery log)\n${ref}\nDo not treat this as confirmed contact until it shows as verified.`;
   }
+  if (d.status === "queued") {
+    return `Status: QUEUED — handed to the scheduled-messages channel (${d.detail || "delivery pending"})\n${ref}\nThe scheduled channel delivers this automatically with retries. Do NOT resend it yourself, and do not record it as sent/VERSTUURD until it shows up as delivered.`;
+  }
   if (d.status === "suppressed") {
     return `Status: SUPPRESSED — NOT delivered (${d.detail || "unknown reason"})\n${ref}\nThe recipient never received this. Do NOT record it as sent/VERSTUURD in working memory. If it still matters, decide consciously whether to try again.`;
   }

@@ -14,7 +14,7 @@ import type { MessageQueue } from "./queue.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, ImprovementProposal } from "./memory/types.js";
 import { createFlaggedRequest } from "./actionable-tracker.js";
-import { getRecentDeliveries, DEDUP_WINDOW_MS } from "./scheduler.js";
+import { getRecentDeliveries, scheduleMessage, DEDUP_WINDOW_MS } from "./scheduler.js";
 import { runConsolidation, detectGistClusters } from "./memory/decay.js";
 import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory, populateTemporalContext } from "./memory/working-memory.js";
 import {
@@ -27,7 +27,7 @@ import { scanAndProcessCommitments } from "./accountability.js";
 import { verify, rotateAuditLog } from "./action-verifier.js";
 import { runDriftAudit, getLatestDriftReport, pruneBaselines } from "./drift-audit.js";
 import { BrainError, wrapError } from "./brain-errors.js";
-import { getBrainConfig, getActivePreset } from "./brain-config.js";
+import { getBrainConfig, getActivePreset, getOwnerLocalTime } from "./brain-config.js";
 import type { BrainConfig } from "./brain-config.js";
 import {
   loadQueue,
@@ -35,7 +35,7 @@ import {
   getWeeklyCompletedCount,
 } from "./self-improve-queue.js";
 import { loadSubAgents, loadSubAgentHistory } from "./sub-agents.js";
-import { trySendMessage } from "./brain-delivery.js";
+import { trySendMessage, isQuietHour } from "./brain-delivery.js";
 import { OWNER_NAME, GITHUB_REPO } from "./config.js";
 import { critiqueResponse } from "./response-critique.js";
 import { extractPreferenceSignals, updatePreferences } from "./preference-learner.js";
@@ -151,7 +151,7 @@ function recordBrainDelivery(
   state: BrainState,
   message: string,
   targetJid: string,
-  status: "sent" | "suppressed" | "failed",
+  status: "sent" | "queued" | "suppressed" | "failed",
   detail?: string,
 ): void {
   state.lastBrainMessage = {
@@ -160,9 +160,22 @@ function recordBrainDelivery(
     snippet: message.slice(0, 120),
     status,
     detail,
-    // "sent" awaits delivery-log verification on the next tick; the others are final
+    // "sent" awaits delivery-log verification on the next tick; the others are
+    // final ("queued" is verified by the scheduled channel's own retry loop)
     verified: status !== "sent",
   };
+}
+
+/**
+ * Delivery time for a digest rerouted onto the scheduled-messages channel:
+ * immediately, unless we're inside quiet hours — then shortly after quietEnd
+ * (owner-local), so the fallback never wakes the owner.
+ */
+function digestRerouteDeliverAt(now: number, cfg: BrainConfig): number {
+  const { hour } = getOwnerLocalTime(cfg.ownerTimezone);
+  if (!isQuietHour(hour, cfg.quietStart, cfg.quietEnd)) return now;
+  const hoursUntilEnd = (cfg.quietEnd - hour + 24) % 24;
+  return now + hoursUntilEnd * 3600_000;
 }
 
 // ── Think Tick (Claude call) ──
@@ -469,26 +482,41 @@ export async function thinkTick(
       // A policy-level block is not a judgment failure, so it must not decrement trust —
       // otherwise the demote-spiral drags the agent down from its own gating.
       if (!isDirectReply && initiativeSignals.length > 0 && !isActionPermitted("send_proactive")) {
-        log(`Proactive message blocked by autonomy level (${response.message.slice(0, 60)}...)`);
-        recordGateSuppression();
-        recordBrainDelivery(state, response.message, messageTarget, "suppressed", "blocked by autonomy level");
-        // Shadow trust: the gate is a policy block, not a judgment failure. Run the
-        // same self-critique the send path would have run; if the message would have
-        // passed, award capped shadow trust so the trust ladder stays climbable even
-        // while every proactive send is gated (otherwise trustScore stays 0 forever).
-        const hoursSinceLastMessage = state.lastMessageTime > 0
-          ? (now - state.lastMessageTime) / 3600000
-          : Infinity;
-        const shadowCritique = await critiqueResponse(response.message, {
-          isDirectReply,
-          isDigest: isDigestTriggered,
-          recentObservationCount: allObs.length,
-          hoursSinceLastMessage,
-          messagesToday: state.messagesToday,
-          maxMessagesPerDay: cfg.maxMessagesPerDay,
-        });
-        if (shadowCritique.shouldSend) {
-          recordShadowSuccess("send_proactive");
+        if (isDigestTriggered) {
+          // Owner-contracted digest: the gate exists to hold back unsolicited
+          // proactive sends, not briefings the owner explicitly scheduled.
+          // Reroute onto the scheduled-messages channel (10s delivery loop,
+          // retries, delivery-log verified) instead of suppressing; delivery
+          // defers past quiet hours when we're inside them. No gate bypass for
+          // any other message type — only [DIGEST REQUEST:]-triggered output.
+          const deliverAt = digestRerouteDeliverAt(now, cfg);
+          const schedId = scheduleMessage(messageTarget, response.message, deliverAt, "digest");
+          log(`Digest blocked by autonomy level — rerouted via scheduled channel (${schedId}, deliverAt ${new Date(deliverAt).toISOString()})`);
+          recordBrainDelivery(state, response.message, messageTarget, "queued",
+            `autonomy gate active — digest rerouted to scheduled channel (${schedId}), delivery at ${new Date(deliverAt).toISOString()}`);
+          scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+        } else {
+          log(`Proactive message blocked by autonomy level (${response.message.slice(0, 60)}...)`);
+          recordGateSuppression();
+          recordBrainDelivery(state, response.message, messageTarget, "suppressed", "blocked by autonomy level");
+          // Shadow trust: the gate is a policy block, not a judgment failure. Run the
+          // same self-critique the send path would have run; if the message would have
+          // passed, award capped shadow trust so the trust ladder stays climbable even
+          // while every proactive send is gated (otherwise trustScore stays 0 forever).
+          const hoursSinceLastMessage = state.lastMessageTime > 0
+            ? (now - state.lastMessageTime) / 3600000
+            : Infinity;
+          const shadowCritique = await critiqueResponse(response.message, {
+            isDirectReply,
+            isDigest: isDigestTriggered,
+            recentObservationCount: allObs.length,
+            hoursSinceLastMessage,
+            messagesToday: state.messagesToday,
+            maxMessagesPerDay: cfg.maxMessagesPerDay,
+          });
+          if (shadowCritique.shouldSend) {
+            recordShadowSuccess("send_proactive");
+          }
         }
       } else
       // Phase 3: Self-critique for proactive/initiative messages

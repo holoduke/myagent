@@ -166,12 +166,14 @@ export interface WorkingMemory {
  * Delivery record for the most recent message the brain returned from a tick.
  * status "sent" starts unverified; the next tick cross-checks delivery-log.json
  * and either confirms it (verified=true) or downgrades it to "failed".
+ * status "queued" means the message was handed to the scheduled-messages
+ * channel, which has its own retry loop and delivery logging.
  */
 export interface BrainMessageDelivery {
   at: number;             // when the brain returned/attempted the message
   targetJid: string;
   snippet: string;        // first 120 chars — matches delivery-log messageSnippet
-  status: "sent" | "suppressed" | "failed";
+  status: "sent" | "queued" | "suppressed" | "failed";
   detail?: string;        // suppression/failure reason
   verified: boolean;      // true once cross-checked against delivery-log.json (or nothing to check)
 }
