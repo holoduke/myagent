@@ -9,7 +9,7 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { BRAIN_DIR } from "./config.js";
 import { createLogger } from "./logger.js";
-import { isCircuitOpen } from "./health-monitor.js";
+import { isCircuitOpen, onBreakerTransition } from "./health-monitor.js";
 
 const log = createLogger("downtime");
 
@@ -119,6 +119,49 @@ export function recordObserveHeartbeat(now: number = Date.now(), seedMs?: number
 
   persist();
 }
+
+/** Open (or extend) a degraded window at an exact breaker-open timestamp. */
+function beginDegradedWindow(at: number): void {
+  const s = loadStore();
+  const last = s.degraded[s.degraded.length - 1];
+  if (last && at - last.end <= MERGE_GAP_MS) {
+    if (at > last.end) last.end = at;
+  } else {
+    s.degraded.push({ start: at, end: at });
+  }
+  persist(true);
+}
+
+/**
+ * Seal the active degraded window at an exact breaker-close timestamp.
+ * Only extends a window whose end is within MERGE_GAP_MS — if the last
+ * degraded sample is older than that, the intervening time was process
+ * downtime and is already covered by the heartbeat gap.
+ */
+function endDegradedWindow(at: number): void {
+  const s = loadStore();
+  const last = s.degraded[s.degraded.length - 1];
+  if (last && at - last.end <= MERGE_GAP_MS && at > last.end) {
+    last.end = at;
+    persist(true);
+  }
+}
+
+// Exact degraded-window boundaries from the breaker itself. The heartbeat
+// poll above only samples while ticks run; these events pin the window edges
+// even between ticks, and seal the window at the recovery moment — including
+// the first success after a boot that restored a persisted-open breaker
+// (the poll starts the window at boot, the "closed" event ends it).
+onBreakerTransition((name, transition, at) => {
+  if (name !== "claude_api") return;
+  if (transition === "opened") {
+    log("claude_api breaker opened — starting degraded window");
+    beginDegradedWindow(at);
+  } else {
+    log("claude_api breaker closed — sealing degraded window");
+    endDegradedWindow(at);
+  }
+});
 
 /**
  * Downtime periods ending after `sinceMs`: gaps between uptime intervals
