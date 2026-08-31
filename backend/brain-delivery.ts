@@ -160,6 +160,14 @@ export interface DeliveryResult {
   detail?: string;
 }
 
+/** Whether an owner-local hour falls inside the configured quiet window. */
+export function isQuietHour(hour: number, quietStart: number, quietEnd: number): boolean {
+  if (quietStart === quietEnd) return false;
+  return quietStart > quietEnd
+    ? (hour >= quietStart || hour < quietEnd)   // overnight range (e.g. 23→7)
+    : (hour >= quietStart && hour < quietEnd);  // same-day range (e.g. 8→22)
+}
+
 export async function trySendMessage(
   state: BrainState,
   sendMessage: (jid: string, text: string) => Promise<void>,
@@ -170,11 +178,7 @@ export async function trySendMessage(
   const cfg = getBrainConfig();
   const now = Date.now();
   const { hour: currentHour } = getOwnerLocalTime(cfg.ownerTimezone);
-  const isQuiet = cfg.quietStart !== cfg.quietEnd && (
-    cfg.quietStart > cfg.quietEnd
-      ? (currentHour >= cfg.quietStart || currentHour < cfg.quietEnd)   // overnight range (e.g. 23→7)
-      : (currentHour >= cfg.quietStart && currentHour < cfg.quietEnd)   // same-day range (e.g. 8→22)
-  );
+  const isQuiet = isQuietHour(currentHour, cfg.quietStart, cfg.quietEnd);
   const messageIntervalOk = (now - state.lastMessageTime) >= cfg.minMessageInterval;
   const underDailyLimit = state.messagesToday < cfg.maxMessagesPerDay;
   const bypass = options?.bypassLimits === true;
