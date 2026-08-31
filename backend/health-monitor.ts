@@ -134,6 +134,32 @@ export function probeMemoryHealth(
 
 // ── Circuit Breakers ──
 
+export type BreakerTransition = "opened" | "closed";
+type BreakerTransitionListener = (name: string, transition: BreakerTransition, at: number) => void;
+
+const transitionListeners: BreakerTransitionListener[] = [];
+
+/**
+ * Register a listener for circuit breaker state transitions. Fires on edges
+ * only: any state → open ("opened"), and open/half-open → closed ("closed")
+ * — not on every success/failure. The downtime tracker uses this to record
+ * degraded-service windows with exact boundaries.
+ */
+export function onBreakerTransition(listener: BreakerTransitionListener): void {
+  transitionListeners.push(listener);
+}
+
+function emitBreakerTransition(name: string, transition: BreakerTransition): void {
+  const at = Date.now();
+  for (const listener of transitionListeners) {
+    try {
+      listener(name, transition, at);
+    } catch (err) {
+      log(`Breaker transition listener error (${name} ${transition}): ${err}`);
+    }
+  }
+}
+
 /**
  * Check if a circuit breaker allows an operation.
  */
@@ -170,11 +196,13 @@ export function isCircuitOpen(name: string): boolean {
 export function circuitSuccess(name: string): void {
   const h = loadHealth();
   const cb = h.circuitBreakers[name] ?? createBreaker(name);
+  const wasDegraded = cb.state !== "closed";
   cb.state = "closed";
   cb.failureCount = 0;
   cb.lastSuccess = Date.now();
   h.circuitBreakers[name] = cb;
   saveHealth();
+  if (wasDegraded) emitBreakerTransition(name, "closed");
 }
 
 /**
@@ -183,6 +211,7 @@ export function circuitSuccess(name: string): void {
 export function circuitFailure(name: string): void {
   const h = loadHealth();
   const cb = h.circuitBreakers[name] ?? createBreaker(name);
+  const wasOpen = cb.state === "open";
   cb.failureCount++;
   cb.lastFailure = Date.now();
 
@@ -194,6 +223,7 @@ export function circuitFailure(name: string): void {
 
   h.circuitBreakers[name] = cb;
   saveHealth();
+  if (!wasOpen && cb.state === "open") emitBreakerTransition(name, "opened");
 }
 
 function createBreaker(name: string): CircuitBreaker {
