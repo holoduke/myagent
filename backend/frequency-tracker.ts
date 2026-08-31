@@ -134,6 +134,36 @@ export function updateFrequency(senderJid: string, senderName: string, timestamp
 }
 
 /**
+ * Look up the last OBSERVED message timestamp for a person by display name.
+ * Matches individual contacts only (group JIDs are skipped), case-insensitive:
+ * the baseline name must equal the query or appear in it as a whole word —
+ * person graph nodes often hold more than the bare name. Returns the most
+ * recent timestamp across matching entries, or null when nothing matches.
+ *
+ * Unlike graph lastAccessedAt (which tracks think-tick access and goes stale
+ * whenever the brain is degraded), lastMessageAt is updated by the observation
+ * pipeline, so it reflects whether the person actually messaged.
+ */
+export function lastMessageAtForName(name: string): number | null {
+  const query = name.trim().toLowerCase();
+  if (!query) return null;
+  const store = loadBaselines();
+  let best: number | null = null;
+  for (const [jid, baseline] of Object.entries(store)) {
+    if (jid.endsWith("@g.us")) continue;
+    const bName = (baseline.name || "").trim().toLowerCase();
+    if (bName.length < 3) continue; // too short to match reliably
+    const escaped = bName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const wholeWord = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, "u");
+    if (bName !== query && !wholeWord.test(query)) continue;
+    if (best === null || baseline.lastMessageAt > best) {
+      best = baseline.lastMessageAt;
+    }
+  }
+  return best;
+}
+
+/**
  * Detect frequency anomalies across all tracked contacts.
  * Returns contacts with significantly unusual activity levels.
  */
