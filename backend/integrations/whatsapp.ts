@@ -18,6 +18,7 @@ import { EventEmitter } from "events";
 import { createLogger } from "../logger.js";
 import { transcribeAudio } from "../utils/transcribe.js";
 import { describeImage, isVisionRefusal } from "../utils/vision.js";
+import { normalizeJid, invalidateJidAliasMap } from "./jid-alias.js";
 
 // Emits 'logout' when WhatsApp session is logged out.
 // Listeners can perform cleanup before the process exits.
@@ -108,6 +109,8 @@ function saveContacts(): void {
     log.warn(`Contact store size (${contactStore.size}) exceeds max (${MAX_CONTACT_STORE_SIZE}) — consider cleanup`);
   }
   atomicWriteJSON(CONTACTS_PATH, Array.from(contactStore.values()));
+  // Contact pairs (lid ↔ phone JID) may have changed — let alias consumers rebuild.
+  invalidateJidAliasMap();
 }
 
 /** Search contacts by name (case-insensitive partial match on name or notify). */
@@ -166,7 +169,7 @@ export async function startWhatsApp(
   // Detect owner LID from stored credentials (strip device suffix for matching)
   const credLid = (state.creds.me as { lid?: string } | undefined)?.lid;
   if (credLid) {
-    ownerLid = credLid.replace(/:\d+@/, "@");
+    ownerLid = normalizeJid(credLid);
     log.info(`Owner LID from credentials: ${ownerLid}`);
   }
 
@@ -298,7 +301,7 @@ export async function startWhatsApp(
       if (!ownerLid && sock?.user) {
         const lid = (sock.user as { lid?: string }).lid;
         if (lid) {
-          ownerLid = lid.replace(/:\d+@/, "@");
+          ownerLid = normalizeJid(lid);
           log.info(`Owner LID from socket: ${ownerLid}`);
         }
       }
