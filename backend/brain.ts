@@ -510,13 +510,11 @@ async function tick(
         weeklyDone < cfg.selfImproveMaxPerWeek
       ) {
         state.lastImproveNudgeAt = Date.now();
-        const remaining = cfg.selfImproveMinPerDay - doneToday;
         log(`Daily improve target: ${doneToday}/${cfg.selfImproveMinPerDay} shipped today — forcing reflect (weekly ${weeklyDone}/${cfg.selfImproveMaxPerWeek})`);
         state.lastReflectTick = 0;
-        const wm = loadWorkingMemory();
-        wm.shortTermTracking = wm.shortTermTracking || [];
-        wm.shortTermTracking.push(`daily self-improve nudge — ${doneToday}/${cfg.selfImproveMinPerDay} improvements shipped today; propose ${Math.min(remaining, 2)} concrete, small, worthwhile improvement task(s) this reflect`);
-        saveWorkingMemory(wm);
+        // The reflect prompt derives its improvement nudge from selfImproveStats
+        // (improve queue + history ground truth) — no working-memory note needed,
+        // and a self-written tracking string would go stale and read as false fact.
         saveState(state);
       }
     }
