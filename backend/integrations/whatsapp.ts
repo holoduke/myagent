@@ -17,7 +17,12 @@ import { createHash } from "crypto";
 import { EventEmitter } from "events";
 import { createLogger } from "../logger.js";
 import { transcribeAudio } from "../utils/transcribe.js";
-import { describeImage, isVisionRefusal } from "../utils/vision.js";
+import {
+  describeImageDetailed,
+  isVisionRefusal,
+  logCaptionFailure,
+  type CaptionFailureReason,
+} from "../utils/vision.js";
 import { normalizeJid, invalidateJidAliasMap } from "./jid-alias.js";
 
 // Emits 'logout' when WhatsApp session is logged out.
@@ -328,14 +333,30 @@ export async function startWhatsApp(
       // ── Multimodal: image understanding ──
       if (!resolvedText.trim() && m?.imageMessage) {
         mediaType = "image";
+        const mimetype = m.imageMessage.mimetype || "image/jpeg";
         let description: string | null = null;
+        let failureReason: CaptionFailureReason | undefined;
+        let failureSnippet: string | undefined;
+        let buffer: Buffer | null = null;
         try {
-          const buffer = await downloadMediaMessage(msg, "buffer", {}) as Buffer;
-          const mimetype = m.imageMessage.mimetype || "image/jpeg";
-          const caption = m.imageMessage.caption || undefined;
-          description = await describeImage(buffer, mimetype, caption);
+          buffer = await downloadMediaMessage(msg, "buffer", {}) as Buffer;
         } catch (err) {
-          log(`Failed to process image message: ${err}`);
+          failureReason = "download-error";
+          failureSnippet = String(err).slice(0, 120);
+          log(`Failed to download image message: ${err}`);
+        }
+        if (buffer) {
+          try {
+            const caption = m.imageMessage.caption || undefined;
+            const result = await describeImageDetailed(buffer, mimetype, caption);
+            description = result.description;
+            failureReason = result.failureReason;
+            failureSnippet = result.failureSnippet;
+          } catch (err) {
+            failureReason = "exception";
+            failureSnippet = String(err).slice(0, 120);
+            log(`Failed to process image message: ${err}`);
+          }
         }
         // Defense in depth: re-check the description for refusal-style text in
         // case it slipped past describeImage's own guard.
@@ -343,6 +364,18 @@ export async function startWhatsApp(
           resolvedText = `[image] ${description}`;
           log.info(`Described image: ${description.slice(0, 80)}`);
         } else {
+          if (description) {
+            failureReason = "late-refusal";
+            failureSnippet = description.slice(0, 120);
+          }
+          if (!failureReason) failureReason = "empty-result";
+          log(`Image caption failed (${failureReason})${failureSnippet ? `: ${failureSnippet}` : ""}`);
+          logCaptionFailure({
+            chatJid: jid,
+            mimetype,
+            reason: failureReason,
+            snippet: failureSnippet,
+          });
           // Caption failed (vision unavailable, refusal, error). Keep a neutral
           // marker so downstream reasoning sees an image arrived without
           // ingesting fabricated/refusal content as if the sender wrote it.
