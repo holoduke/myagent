@@ -673,6 +673,7 @@ export interface ThinkContext {
     maxPerWeek: number;
     completedThisWeek: number;
     pendingInQueue: number;
+    proposedToday: number;
     autoApprove: boolean;
   };
 }
@@ -1030,6 +1031,7 @@ export interface ReflectContext {
     maxPerWeek: number;
     completedThisWeek: number;
     pendingInQueue: number;
+    proposedToday: number;
     autoApprove: boolean;
   };
   /** Recent outgoing Moltbook posts/comments for commitment detection */
@@ -1076,10 +1078,11 @@ export function buildReflectPrompt(ctx: ReflectContext): string {
     : "";
 
   const siStats = ctx.selfImproveStats;
-  const dailyNudgeActive = (ctx.wm.shortTermTracking ?? []).some(t => t.startsWith("daily self-improve nudge"));
-  const dailyNudgeBlock = dailyNudgeActive
+  // Nudge is derived from the improve queue (ground truth), not working-memory tracking strings
+  const proposedToday = siStats?.proposedToday ?? 0;
+  const dailyNudgeBlock = proposedToday === 0
     ? `\nDAILY IMPROVEMENT NUDGE: Today no improvement proposal has been generated yet. The weekly budget has room. Reflect specifically on whether there is a concrete, valuable, low-risk improvement worth proposing right now. If yes, include it in improvementProposals[]. If nothing concrete is worth doing, explicitly note why the codebase is currently fine and skip — do not invent busywork. Quality over quota.\n`
-    : "";
+    : `\nToday ${proposedToday} proposal(s) already submitted — only propose again if you found something concrete and non-overlapping.\n`;
   const selfImproveBlock = siStats?.enabled ? `
 ═══ SELF-IMPROVEMENT STATUS ═══
 Enabled: YES | Budget: ${siStats.completedThisWeek}/${siStats.maxPerWeek} used this week (${siStats.maxPerWeek - siStats.completedThisWeek} remaining)
