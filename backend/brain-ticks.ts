@@ -27,10 +27,11 @@ import { scanAndProcessCommitments } from "./accountability.js";
 import { verify, rotateAuditLog } from "./action-verifier.js";
 import { runDriftAudit, getLatestDriftReport, pruneBaselines } from "./drift-audit.js";
 import { BrainError, wrapError } from "./brain-errors.js";
-import { getBrainConfig, getActivePreset, getOwnerLocalTime } from "./brain-config.js";
+import { getBrainConfig, getActivePreset, getOwnerLocalTime, getOwnerLocalDate } from "./brain-config.js";
 import type { BrainConfig } from "./brain-config.js";
 import {
   loadQueue,
+  loadHistory,
   enqueueApproved,
   getWeeklyCompletedCount,
 } from "./self-improve-queue.js";
@@ -227,6 +228,7 @@ export async function thinkTick(
     maxPerWeek: cfg.selfImproveMaxPerWeek,
     completedThisWeek: getWeeklyCompletedCount(),
     pendingInQueue: improveQueueThink.items.filter(i => i.status === "pending" || i.status === "approved").length,
+    proposedToday: countProposedToday(cfg.ownerTimezone),
     autoApprove: cfg.selfImproveAutoApprove,
   } : undefined;
 
@@ -840,6 +842,20 @@ function getRecentMoltbookActivity(): string[] {
   return activity;
 }
 
+/**
+ * Proposals created today (owner-local day), any status. Completed/failed/rejected
+ * items are moved from the queue to history, so both must be counted — the queue
+ * alone would under-report and re-trigger the daily nudge after items finish.
+ */
+function countProposedToday(timezone: string): number {
+  const today = getOwnerLocalDate(timezone);
+  const ids = new Set<string>();
+  for (const item of [...loadQueue().items, ...loadHistory().entries]) {
+    if (getOwnerLocalDate(timezone, new Date(item.createdAt)) === today) ids.add(item.id);
+  }
+  return ids.size;
+}
+
 // ── Reflect Tick (Claude call) ──
 
 export async function reflectTick(
@@ -868,6 +884,7 @@ export async function reflectTick(
     maxPerWeek: cfg.selfImproveMaxPerWeek,
     completedThisWeek: getWeeklyCompletedCount(),
     pendingInQueue: improveQueue.items.filter(i => i.status === "pending" || i.status === "approved").length,
+    proposedToday: countProposedToday(cfg.ownerTimezone),
     autoApprove: cfg.selfImproveAutoApprove,
   };
 
