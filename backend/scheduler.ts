@@ -14,6 +14,7 @@ const IN_FLIGHT_FILE = `${BRAIN_DIR}/scheduled-messages-inflight.json`;
 const DELIVERY_LOG_FILE = `${BRAIN_DIR}/delivery-log.json`;
 export const DEDUP_WINDOW_MS = 3 * 60 * 60 * 1000; // 3 hours — must cover scheduler max backoff (2h) + buffer
 const DELIVERY_LOG_MAX_AGE_MS = 13 * 60 * 60 * 1000; // 13 hours – must exceed DEDUP_WINDOW_MS (3h) and the reflect tick's 12h commitment lookback (ARIA-origin matching)
+const MAX_DELIVERY_LOG_ENTRIES = 500; // hard cap — all outbound sends log here, so bound the file size
 
 export interface ScheduledMessage {
   id: string;
@@ -309,6 +310,7 @@ export interface DeliveryRecord {
   source: string;
   timestamp: number;
   messageSnippet: string;
+  status?: string; // "sent" — optional for backward compat with pre-status entries
 }
 
 // Write-through in-memory cache for delivery log
@@ -321,7 +323,8 @@ function isDeliveryRecord(entry: unknown): entry is DeliveryRecord {
     typeof e.jid === "string" &&
     typeof e.source === "string" &&
     typeof e.timestamp === "number" &&
-    typeof e.messageSnippet === "string"
+    typeof e.messageSnippet === "string" &&
+    (e.status === undefined || typeof e.status === "string")
   );
 }
 
@@ -361,13 +364,16 @@ function saveDeliveryLog(entries: DeliveryRecord[]): void {
   }
 }
 
-/** Log a successful delivery for dedup tracking. */
-export function logDelivery(jid: string, source: string, message: string): void {
+/** Log a successful delivery for dedup tracking and delivery verification. */
+export function logDelivery(jid: string, source: string, message: string, status: string = "sent"): void {
   const entries = loadDeliveryLog();
   const cutoff = Date.now() - DELIVERY_LOG_MAX_AGE_MS;
   // Prune old entries while adding new one
-  const pruned = entries.filter(e => e.timestamp > cutoff);
-  pruned.push({ jid, source, timestamp: Date.now(), messageSnippet: message.slice(0, 120) });
+  let pruned = entries.filter(e => e.timestamp > cutoff);
+  pruned.push({ jid, source, timestamp: Date.now(), messageSnippet: message.slice(0, 120), status });
+  if (pruned.length > MAX_DELIVERY_LOG_ENTRIES) {
+    pruned = pruned.slice(-MAX_DELIVERY_LOG_ENTRIES);
+  }
   saveDeliveryLog(pruned);
 }
 
