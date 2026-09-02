@@ -24,6 +24,7 @@ import {
   type CaptionFailureReason,
 } from "../utils/vision.js";
 import { normalizeJid, invalidateJidAliasMap } from "./jid-alias.js";
+import { logDelivery } from "../scheduler.js";
 
 // Emits 'logout' when WhatsApp session is logged out.
 // Listeners can perform cleanup before the process exits.
@@ -507,7 +508,7 @@ export async function syncContacts(): Promise<void> {
   log.info("Contact sync triggered, waiting for events...");
 }
 
-export async function sendMessage(jid: string, text: string): Promise<void> {
+export async function sendMessage(jid: string, text: string, source: string = "chat"): Promise<void> {
   if (!isConnected) {
     log.warn("Cannot send message — not connected");
     throw new Error("WhatsApp not connected");
@@ -525,6 +526,14 @@ export async function sendMessage(jid: string, text: string): Promise<void> {
   // Only record dedup AFTER a successful send — recording before meant a failed
   // send silently blocked retries for 5 minutes while callers assumed delivery.
   sentMessages.set(dedupKey, Date.now());
+  // Every successful outbound send lands in delivery-log.json — the brain's
+  // ground truth for delivery verification. A log failure must not mask a
+  // delivery that already happened.
+  try {
+    logDelivery(jid, source, text);
+  } catch (err) {
+    log.warn(`Failed to record delivery in log (message WAS sent to ${jid}): ${err}`);
+  }
 }
 
 export async function sendImage(

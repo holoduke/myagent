@@ -845,7 +845,7 @@ function getRecentMoltbookActivity(): string[] {
 export async function reflectTick(
   state: BrainState,
   queue: MessageQueue,
-  sendMessage: (jid: string, text: string) => Promise<void>,
+  sendMessage: (jid: string, text: string, source?: string) => Promise<void>,
   ownerJid: string,
   graph: MemoryGraph,
   initiativeSignals: import("./initiative.js").InitiativeSignal[] = [],
@@ -930,7 +930,7 @@ export async function reflectTick(
       log(`Drift audit completed: surprise=${driftReport.surpriseLevel}`);
       if ((driftReport.surpriseLevel === "medium" || driftReport.surpriseLevel === "high") && ownerJid) {
         const alertMsg = `🔍 Weekly drift audit (surprise: ${driftReport.surpriseLevel})\n\n${driftReport.directionSummary}\n\n${driftReport.driftCharacterization}\n\nRecommendation: ${driftReport.recommendation}`;
-        try { await sendMessage(ownerJid, alertMsg); } catch (err) { log(`Failed to send drift alert: ${err}`); }
+        try { await sendMessage(ownerJid, alertMsg, "drift-audit"); } catch (err) { log(`Failed to send drift alert: ${err}`); }
       }
       pruneBaselines();
     } else {

@@ -4,7 +4,7 @@
  */
 
 import { createLogger } from "./logger.js";
-import { getDueMessages, getScheduledMessages, markDelivered, markFailed, logDelivery, getRecentDeliveries, DEDUP_WINDOW_MS } from "./scheduler.js";
+import { getDueMessages, getScheduledMessages, markDelivered, markFailed, getRecentDeliveries, DEDUP_WINDOW_MS } from "./scheduler.js";
 import { isWhatsAppConnected } from "./integrations/whatsapp.js";
 import { verify } from "./action-verifier.js";
 import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
@@ -15,13 +15,19 @@ const log = createLogger("brain-delivery");
 
 const SEND_TIMEOUT_MS = 30_000;
 
+// sendMessage is the whatsapp.ts wrapper, which records every successful send
+// in delivery-log.json under the given source. Callers must pass the real
+// source so the log stays accurate (dedup keys on source === "chat").
+type SendFn = (jid: string, text: string, source?: string) => Promise<void>;
+
 function sendWithTimeout(
-  sendMessage: (jid: string, text: string) => Promise<void>,
+  sendMessage: SendFn,
   jid: string,
   text: string,
+  source: string,
 ): Promise<void> {
   return Promise.race([
-    sendMessage(jid, text),
+    sendMessage(jid, text, source),
     new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error(`sendMessage timed out after ${SEND_TIMEOUT_MS / 1000}s`)), SEND_TIMEOUT_MS),
     ),
@@ -37,7 +43,7 @@ let schedulerPollStartTime: number | null = null;
 const SCHEDULER_POLL_TIMEOUT_MS = 60_000; // 60s timeout for stuck polls
 
 export async function pollScheduledMessages(
-  sendMessage: (jid: string, text: string) => Promise<void>,
+  sendMessage: SendFn,
   ownerJid: string,
   loadState: () => BrainState,
   saveState: (s: BrainState) => void,
@@ -78,7 +84,7 @@ export async function pollScheduledMessages(
 
 async function deliverScheduledMessages(
   state: BrainState,
-  sendMessage: (jid: string, text: string) => Promise<void>,
+  sendMessage: SendFn,
   ownerJid: string,
   saveState: (s: BrainState) => void,
   brainDir: string,
@@ -127,12 +133,11 @@ async function deliverScheduledMessages(
         deliveredIds.push(msg.id);
         continue;
       }
-      await sendWithTimeout(sendMessage, jid, msg.message);
+      await sendWithTimeout(sendMessage, jid, msg.message, msg.source);
       state.lastMessageTime = Date.now();
       state.messagesToday++;
       anyDelivered = true;
       deliveredIds.push(msg.id);
-      logDelivery(jid, msg.source, msg.message);
       log(`Delivered scheduled message ${msg.id} to ${jid} (${msg.message.length} chars, source: ${msg.source})`);
     } catch (err) {
       log(`Failed to deliver scheduled message ${msg.id}: ${err}`);
@@ -170,7 +175,7 @@ export function isQuietHour(hour: number, quietStart: number, quietEnd: number):
 
 export async function trySendMessage(
   state: BrainState,
-  sendMessage: (jid: string, text: string) => Promise<void>,
+  sendMessage: SendFn,
   ownerJid: string,
   message: string,
   options?: { bypassLimits?: boolean; targetJid?: string | null; isDirectReply?: boolean },
@@ -227,10 +232,9 @@ export async function trySendMessage(
     try {
       if (bypass) log("Briefing message — bypassing rate limits");
       if (isDirectReply) log("Direct reply — exempt from interval/daily throttle");
-      await sendMessage(recipientJid, message);
+      await sendMessage(recipientJid, message, bypass ? "digest" : "think");
       state.lastMessageTime = now;
       if (!isDirectReply) state.messagesToday++;
-      logDelivery(recipientJid, bypass ? "digest" : "think", message);
       log(`Sent proactive message to ${recipientJid} (${message.length} chars, #${state.messagesToday} today)`);
       return { status: "sent" };
     } catch (err) {

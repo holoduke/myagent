@@ -983,7 +983,7 @@ function observeTick(state: BrainState, observations: Observation[]): void {
 async function handleRecurringTasks(
   state: BrainState,
   queue: MessageQueue,
-  sendMessage: (jid: string, text: string) => Promise<void>,
+  sendMessage: (jid: string, text: string, source?: string) => Promise<void>,
   ownerJid: string,
   _currentObs: Observation[],
 ): Promise<void> {
@@ -1007,7 +1007,7 @@ async function handleRecurringTasks(
             // Mark as executed even when blocked to prevent retry loop every tick
             markExecuted(task.id);
           } else {
-            await sendMessage(action.targetJid, action.template);
+            await sendMessage(action.targetJid, action.template, "recurring");
             state.lastMessageTime = Date.now();
             state.messagesToday++;
             markExecuted(task.id);

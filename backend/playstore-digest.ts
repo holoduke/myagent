@@ -126,7 +126,7 @@ export interface PlayStoreDigestResult {
  * endangered. The caller only stamps the day's slot when `sent` is true.
  */
 export async function runPlayStoreDigest(
-  sendMessage: (jid: string, text: string) => Promise<void>,
+  sendMessage: (jid: string, text: string, source?: string) => Promise<void>,
   ownerJid: string,
 ): Promise<PlayStoreDigestResult> {
   if (!isIntegrationEnabled("playstore")) {
@@ -164,7 +164,7 @@ export async function runPlayStoreDigest(
   }
 
   try {
-    await sendMessage(ownerJid, text);
+    await sendMessage(ownerJid, text, "digest");
   } catch (err) {
     log(`Play Store report send failed: ${err}`);
     return { consumed: false, delivered: false, reason: `send failed: ${err}` };
