@@ -5,7 +5,8 @@
  * Cost: ~$0.0004/image via Haiku.
  */
 
-import { writeFileSync, unlinkSync, existsSync, mkdirSync } from "fs";
+import { writeFileSync, unlinkSync, existsSync, mkdirSync, appendFileSync } from "fs";
+import { dirname } from "path";
 import { randomBytes } from "crypto";
 import { LlmRunner } from "../providers/llm-runner.js";
 import { getBrainConfig } from "../brain-config.js";
@@ -15,6 +16,53 @@ const log = createLogger("vision");
 
 const TEMP_DIR = "/tmp/aria-vision";
 const MAX_IMAGE_SIZE_MB = 10;
+const CAPTION_FAILURE_LOG = "/data/brain/caption-failures.jsonl";
+
+/**
+ * Classified reason a caption attempt failed. Used both by describeImage's
+ * internal checks and by the whatsapp.ts image branch (download errors,
+ * late refusal re-check).
+ */
+export type CaptionFailureReason =
+  | "download-error"   // downloadMediaMessage threw before we had a buffer
+  | "vision-disabled"  // brain/vision disabled in config
+  | "empty-buffer"     // downloaded media was 0 bytes
+  | "image-too-large"  // over MAX_IMAGE_SIZE_MB
+  | "empty-result"     // vision LLM returned nothing
+  | "refusal"          // isVisionRefusal caught it inside describeImage
+  | "late-refusal"     // slipped past describeImage, caught by caller's re-check
+  | "exception";       // describeImage (or the runner) threw
+
+export interface DescribeImageResult {
+  description: string | null;
+  failureReason?: CaptionFailureReason;
+  /** First ~120 chars of the refusal/error text, for diagnostics. */
+  failureSnippet?: string;
+}
+
+/**
+ * Append a structured caption-failure entry to the diagnostics JSONL.
+ * Best-effort: a logging failure must never break message processing.
+ */
+export function logCaptionFailure(entry: {
+  chatJid: string;
+  mimetype: string;
+  reason: CaptionFailureReason;
+  snippet?: string;
+}): void {
+  try {
+    const dir = dirname(CAPTION_FAILURE_LOG);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    appendFileSync(
+      CAPTION_FAILURE_LOG,
+      JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n",
+    );
+  } catch (err) {
+    log(`Failed to write caption-failure log: ${err}`);
+  }
+}
 
 /**
  * Detect refusal/error preambles emitted by the vision LLM when it cannot
@@ -59,23 +107,26 @@ function getRunner(): LlmRunner {
 
 /**
  * Describe an image using Claude CLI's built-in vision capability.
- * Returns a text description, or null on failure.
+ * Like describeImage, but also reports WHY captioning failed so callers
+ * can log diagnostics instead of dropping the reason silently.
  */
-export async function describeImage(
+export async function describeImageDetailed(
   buffer: Buffer,
   mimetype: string,
   caption?: string,
-): Promise<string | null> {
-  if (!getBrainConfig().enabled) return null;
+): Promise<DescribeImageResult> {
+  if (!getBrainConfig().enabled) {
+    return { description: null, failureReason: "vision-disabled" };
+  }
 
   if (buffer.length === 0) {
     log("Empty image buffer — skipping");
-    return null;
+    return { description: null, failureReason: "empty-buffer" };
   }
 
   if (buffer.length > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
     log(`Image too large (${(buffer.length / 1024 / 1024).toFixed(1)}MB) — skipping`);
-    return null;
+    return { description: null, failureReason: "image-too-large" };
   }
 
   // Map mimetypes to file extensions
@@ -107,19 +158,27 @@ export async function describeImage(
 
     if (!result || result.trim().length === 0) {
       log("Vision returned empty description");
-      return null;
+      return { description: null, failureReason: "empty-result" };
     }
 
     const description = result.trim();
     if (isVisionRefusal(description)) {
       log(`Vision returned refusal-style text (dropping): ${description.slice(0, 120)}`);
-      return null;
+      return {
+        description: null,
+        failureReason: "refusal",
+        failureSnippet: description.slice(0, 120),
+      };
     }
     log(`Described image (${(buffer.length / 1024).toFixed(0)}KB ${ext}) → ${description.length} chars`);
-    return description;
+    return { description };
   } catch (err) {
     log(`Image description failed: ${err}`);
-    return null;
+    return {
+      description: null,
+      failureReason: "exception",
+      failureSnippet: String(err).slice(0, 120),
+    };
   } finally {
     // Clean up temp file
     try {
@@ -130,4 +189,17 @@ export async function describeImage(
       // Non-critical cleanup failure
     }
   }
+}
+
+/**
+ * Describe an image using Claude CLI's built-in vision capability.
+ * Returns a text description, or null on failure.
+ */
+export async function describeImage(
+  buffer: Buffer,
+  mimetype: string,
+  caption?: string,
+): Promise<string | null> {
+  const result = await describeImageDetailed(buffer, mimetype, caption);
+  return result.description;
 }
