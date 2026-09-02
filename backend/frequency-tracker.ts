@@ -7,6 +7,7 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { BRAIN_DIR } from "./config.js";
 import { createLogger } from "./logger.js";
+import { canonicalJid } from "./integrations/jid-alias.js";
 import {
   downtimeOverlapMs,
   lastMajorDowntimeEnd,
@@ -55,6 +56,60 @@ interface ContactBaseline {
 }
 
 type BaselineStore = Record<string, ContactBaseline>;
+
+/** A baseline view with all JID aliases of one contact merged together. */
+interface MergedBaseline {
+  /** Display name of the most recently active alias */
+  name: string;
+  isGroup: boolean;
+  /** Daily counts summed across aliases */
+  dailyCounts: Record<string, number>;
+  /** Max across aliases */
+  lastMessageAt: number;
+  /** Contributing store entries (length 1 = no aliasing) */
+  aliases: ContactBaseline[];
+}
+
+/**
+ * Canonical identity for a baseline key. WhatsApp JIDs resolve aliases
+ * (@lid ↔ @s.whatsapp.net, device suffixes) via the contact store;
+ * non-WhatsApp keys (gmail:…, slack:…) pass through unchanged.
+ */
+function canonicalKey(jid: string): string {
+  if (!jid.includes("@")) return jid;
+  try {
+    return canonicalJid(jid);
+  } catch {
+    return jid;
+  }
+}
+
+/**
+ * Merge baseline entries that belong to the same canonical contact. After the
+ * Baileys phone-JID→LID migration one person can hold entries under both
+ * aliases: the superseded alias accumulates zero messages and reads as "quiet
+ * for N days" while the person is actively messaging under the sibling JID.
+ */
+function mergeAliasedBaselines(store: BaselineStore): Map<string, MergedBaseline> {
+  const merged = new Map<string, MergedBaseline>();
+  for (const [jid, baseline] of Object.entries(store)) {
+    const key = canonicalKey(jid);
+    let m = merged.get(key);
+    if (!m) {
+      m = { name: baseline.name, isGroup: key.endsWith("@g.us"), dailyCounts: {}, lastMessageAt: 0, aliases: [] };
+      merged.set(key, m);
+    }
+    for (const [date, count] of Object.entries(baseline.dailyCounts)) {
+      m.dailyCounts[date] = (m.dailyCounts[date] || 0) + count;
+    }
+    if (baseline.lastMessageAt >= m.lastMessageAt) {
+      m.lastMessageAt = baseline.lastMessageAt;
+      m.name = baseline.name;
+    }
+    m.aliases.push(baseline);
+  }
+  return merged;
+}
 
 // ── In-memory cache ──
 
@@ -106,16 +161,20 @@ export function updateFrequency(senderJid: string, senderName: string, timestamp
   const store = loadBaselines();
   const dateStr = new Date(timestamp).toISOString().slice(0, 10);
 
-  if (!store[senderJid]) {
-    store[senderJid] = {
-      jid: senderJid,
+  // Key on the canonical contact identity so a person whose chats flip between
+  // JID aliases (@lid vs @s.whatsapp.net) accumulates one baseline, not two.
+  // Pre-existing entries under a superseded alias are merged at read time.
+  const key = canonicalKey(senderJid);
+  if (!store[key]) {
+    store[key] = {
+      jid: key,
       name: senderName,
       dailyCounts: {},
       lastMessageAt: timestamp,
     };
   }
 
-  const baseline = store[senderJid];
+  const baseline = store[key];
   baseline.name = senderName; // Update name in case it changed
   baseline.lastMessageAt = Math.max(baseline.lastMessageAt, timestamp);
   baseline.dailyCounts[dateStr] = (baseline.dailyCounts[dateStr] || 0) + 1;
@@ -148,6 +207,13 @@ export function lastMessageAtForName(name: string): number | null {
   const query = name.trim().toLowerCase();
   if (!query) return null;
   const store = loadBaselines();
+  // Alias-aware: a name match on a superseded JID alias must not report that
+  // alias's frozen timestamp — use the canonical contact's max across aliases.
+  const maxByKey = new Map<string, number>();
+  for (const [jid, baseline] of Object.entries(store)) {
+    const key = canonicalKey(jid);
+    maxByKey.set(key, Math.max(maxByKey.get(key) ?? 0, baseline.lastMessageAt));
+  }
   let best: number | null = null;
   for (const [jid, baseline] of Object.entries(store)) {
     if (jid.endsWith("@g.us")) continue;
@@ -156,8 +222,9 @@ export function lastMessageAtForName(name: string): number | null {
     const escaped = bName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const wholeWord = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, "u");
     if (bName !== query && !wholeWord.test(query)) continue;
-    if (best === null || baseline.lastMessageAt > best) {
-      best = baseline.lastMessageAt;
+    const at = maxByKey.get(canonicalKey(jid)) ?? baseline.lastMessageAt;
+    if (best === null || at > best) {
+      best = at;
     }
   }
   return best;
@@ -193,8 +260,10 @@ export function detectAnomalies(): FrequencyAnomaly[] {
     }
   }
 
-  for (const [jid, baseline] of Object.entries(store)) {
-    const isGroup = jid.endsWith("@g.us");
+  // Detect on the alias-merged view: a per-JID view reads a superseded alias
+  // (zero messages since the chat flipped to the sibling JID) as real silence.
+  for (const [jid, baseline] of mergeAliasedBaselines(store)) {
+    const isGroup = baseline.isGroup;
     const counts = observedDates.map(d => baseline.dailyCounts[d] || 0);
     const activeDays = counts.filter(c => c > 0).length;
     if (activeDays < MIN_BASELINE_DAYS) continue; // Not enough (fresh) history
@@ -215,13 +284,12 @@ export function detectAnomalies(): FrequencyAnomaly[] {
     // messaging today under a different JID. Never flag these.
     if (daysSinceLast > BASELINE_DAYS) continue;
 
-    // Silence is a per-person property, not a per-JID one: after the Baileys
-    // phone-JID→LID migration one person can hold multiple entries with the
-    // same display name, and the stale alias reads as "quiet for N days" while
-    // the person is actively messaging under the new JID. Aggregate
+    // Silence is a per-person property, not a per-JID one. The alias merge
+    // above handles JID pairs the contact store links; aliases with no stored
+    // pairing (e.g. two LIDs for one person) can still split. Aggregate
     // lastMessageAt across same-name individual entries (same matching logic
     // as lastMessageAtForName) and use the max as the silence basis. Names too
-    // short to match reliably (<3 chars) keep the per-JID basis, as do groups.
+    // short to match reliably (<3 chars) keep the per-contact basis, as do groups.
     let silenceBasisAt = baseline.lastMessageAt;
     if (!isGroup && daysSinceLast > 3 && (baseline.name || "").trim().length >= 3) {
       const aggregatedAt = lastMessageAtForName(baseline.name);
@@ -237,9 +305,12 @@ export function detectAnomalies(): FrequencyAnomaly[] {
     const silenceMs = now - silenceBasisAt;
     const downMs = downtimeOverlapMs(silenceBasisAt, now);
     const downFraction = silenceMs > 0 ? downMs / silenceMs : 0;
-    const effectiveSilenceDays = Math.max(0, silenceMs - downMs) / 86400000;
     const expectedDaysOfSilence = mean > 0 ? 1 / mean : Infinity; // avg days between messages
-    if (effectiveSilenceDays > expectedDaysOfSilence * ANOMALY_THRESHOLD_STDDEV && effectiveSilenceDays > 3) {
+    const silenceFires = (basisAt: number): boolean => {
+      const effDays = Math.max(0, (now - basisAt) - downtimeOverlapMs(basisAt, now)) / 86400000;
+      return effDays > expectedDaysOfSilence * ANOMALY_THRESHOLD_STDDEV && effDays > 3;
+    };
+    if (silenceFires(silenceBasisAt)) {
       const downDays = Math.round(downMs / 86400000);
       if (downFraction >= DOWNTIME_SUPPRESS_FRACTION) {
         // Mostly deafness, not silence — suppress rather than surface a poisoned signal.
@@ -258,6 +329,15 @@ export function detectAnomalies(): FrequencyAnomaly[] {
           isGroup,
           description: `${isGroup ? `The "${baseline.name}" group chat` : baseline.name} has been unusually quiet — no messages in ${Math.floor(silenceBasisDays)} days (normally ~${mean.toFixed(1)} msgs/day)${downDays >= 1 ? ` (window overlaps ${downDays}d system downtime — low confidence)` : ""}`,
         });
+      }
+    } else if (baseline.aliases.length > 1) {
+      // Debug visibility: a superseded alias (zero messages on that JID while
+      // the sibling alias is active) would have fired on its own — the alias
+      // merge is what suppressed the false silence signal.
+      for (const alias of baseline.aliases) {
+        if (alias.lastMessageAt < baseline.lastMessageAt && silenceFires(alias.lastMessageAt)) {
+          log(`Alias merge suppressed silence signal for ${baseline.name} (${alias.jid}): alias quiet ${Math.floor((now - alias.lastMessageAt) / 86400000)}d, sibling alias active ${((now - baseline.lastMessageAt) / 3600000).toFixed(0)}h ago`);
+        }
       }
     }
 
