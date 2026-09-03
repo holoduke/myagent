@@ -14,7 +14,7 @@ import type { MessageQueue } from "./queue.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, ImprovementProposal } from "./memory/types.js";
 import { createFlaggedRequest } from "./actionable-tracker.js";
-import { getRecentDeliveries, scheduleMessage, cancelScheduledMessages, DEDUP_WINDOW_MS } from "./scheduler.js";
+import { getRecentDeliveries, getRecentDeliveryLog, getScheduledMessages, scheduleMessage, cancelScheduledMessages, DEDUP_WINDOW_MS } from "./scheduler.js";
 import { getNextDigestSlot } from "./recurring.js";
 import { runConsolidation, detectGistClusters } from "./memory/decay.js";
 import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory, populateTemporalContext } from "./memory/working-memory.js";
@@ -58,6 +58,10 @@ const log = createLogger("brain-ticks");
 // ── Config ──
 
 const BRAIN_TOOLS = process.env.BRAIN_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch";
+
+// Window for the IN-FLIGHT & RECENT DELIVERIES prompt section — must stay
+// within the delivery log's retention (25h in scheduler.ts)
+const DELIVERY_SECTION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 // Sleep consolidation runs at most once per 6 hours (expensive O(n²) pass)
 let lastSleepConsolidationAt = 0;
@@ -252,6 +256,8 @@ export async function thinkTick(
     responsivenessPreset: getActivePreset(cfg),
     recentChatDeliveries,
     lastBrainMessage: state.lastBrainMessage,
+    queuedMessages: getScheduledMessages(),
+    recentDeliveryLog: getRecentDeliveryLog(DELIVERY_SECTION_WINDOW_MS),
     selfImproveStats: selfImproveStatsThink,
   });
 
@@ -467,7 +473,7 @@ export async function thinkTick(
       // the owner's message was consumed by an earlier tick and is no longer in
       // this batch. A suppressed reply to a direct question actively damages
       // trust, the opposite of what the autonomy gate is for.
-      const DIRECT_REPLY_MAX_AGE_MS = 12 * 60 * 60 * 1000; // stays within the delivery log's 13h retention
+      const DIRECT_REPLY_MAX_AGE_MS = 12 * 60 * 60 * 1000; // stays within the delivery log's 25h retention
       const ownerMsgAt = state.lastOwnerMessageTime ?? 0;
       const lastDeliveryToOwner = getRecentDeliveries()
         .filter(d => d.jid === ownerJid)
@@ -1013,6 +1019,8 @@ export async function reflectTick(
     driftSummary,
     personProfilesSection,
     lastBrainMessage: state.lastBrainMessage,
+    queuedMessages: getScheduledMessages(),
+    recentDeliveryLog: getRecentDeliveryLog(DELIVERY_SECTION_WINDOW_MS),
   });
 
   const reflectPromptChars = prompt.length;

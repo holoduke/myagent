@@ -4,7 +4,7 @@
  */
 
 import { createLogger } from "./logger.js";
-import { getDueMessages, getScheduledMessages, markDelivered, markFailed, getRecentDeliveries, DEDUP_WINDOW_MS } from "./scheduler.js";
+import { getDueMessages, getScheduledMessages, markDelivered, markFailed, getRecentDeliveries, logDelivery, DEDUP_WINDOW_MS } from "./scheduler.js";
 import { isWhatsAppConnected } from "./integrations/whatsapp.js";
 import { verify } from "./action-verifier.js";
 import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
@@ -123,6 +123,7 @@ async function deliverScheduledMessages(
       });
       if (verifyResult.verdict === "blocked") {
         log(`Verifier blocked scheduled message ${msg.id}: ${verifyResult.reasons.join("; ")}`);
+        logDelivery(jid, msg.source, msg.message, "suppressed");
         deliveredIds.push(msg.id);
         continue;
       }
@@ -130,6 +131,7 @@ async function deliverScheduledMessages(
       // Dedup: skip brain-sourced messages to JIDs that already received a chat-sourced message recently
       if (msg.source === "brain" && recentChatJids.has(jid)) {
         log(`Dedup: skipping brain-sourced message ${msg.id} to ${jid} — chat-sourced message already delivered in last ${DEDUP_WINDOW_MS / 60000}m`);
+        logDelivery(jid, msg.source, msg.message, "suppressed");
         deliveredIds.push(msg.id);
         continue;
       }

@@ -1,5 +1,6 @@
 import type { Observation } from "./observer.js";
 import type { MemoryNode, WorkingMemory, BrainMessageDelivery } from "./memory/types.js";
+import type { ScheduledMessage, DeliveryRecord } from "./scheduler.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import { serializeNodesForPrompt, collectRelevantRejectedEdges, formatRejectedEdgesForPrompt } from "./memory/activation.js";
 import { ariaPersonality } from "./aria-identity.js";
@@ -626,10 +627,9 @@ export interface RecentChatDelivery {
 }
 
 /**
- * LAST MESSAGE DELIVERY section — the actual delivery status of the previous
- * brain-returned message, cross-checked against delivery-log.json. This keeps
- * the brain honest: it must not record a message as sent unless delivery is
- * confirmed here.
+ * The actual delivery status of the previous brain-returned message,
+ * cross-checked against delivery-log.json. This keeps the brain honest: it
+ * must not record a message as sent unless delivery is confirmed here.
  */
 function formatLastBrainMessage(d: BrainMessageDelivery): string {
   const when = `${formatTime(d.at)} (${timeAgo(d.at)})`;
@@ -647,6 +647,67 @@ function formatLastBrainMessage(d: BrainMessageDelivery): string {
     return `Status: SUPPRESSED — NOT delivered (${d.detail || "unknown reason"})\n${ref}\nThe recipient never received this. Do NOT record it as sent/VERSTUURD in working memory. If it still matters, decide consciously whether to try again.`;
   }
   return `Status: FAILED — NOT delivered${d.detail ? ` (${d.detail})` : ""}\n${ref}\nThe recipient NEVER received this message. Do NOT record it as sent/VERSTUURD in working memory or build on it as if contact happened. If it still matters, send it again.`;
+}
+
+const MAX_DELIVERY_LOG_LINES = 40;
+
+function firstMessageLine(text: string): string {
+  const line = (text.split("\n").find(l => l.trim().length > 0) || "").trim();
+  return line.length > 100 ? `${line.slice(0, 100)}…` : line;
+}
+
+function formatDeliveryLogStatus(status?: string): string {
+  if (!status || status === "sent") return "DELIVERED";
+  return status.toUpperCase();
+}
+
+/**
+ * IN-FLIGHT & RECENT DELIVERIES section — full delivery ground truth from the
+ * scheduler: (1) ALL currently queued scheduled messages (not just the last
+ * brain one — multiple messages can be in flight at once, e.g. two digests),
+ * (2) the last 24h of delivery-log outcomes, (3) the last brain-returned
+ * message's verified status. Makes delivery verification a single prompt-read
+ * instead of ad-hoc Bash digging in /data/brain/*.json, and makes duplicate
+ * queued briefings immediately visible.
+ */
+function formatDeliverySection(
+  queued: ScheduledMessage[] | undefined,
+  deliveryLog: DeliveryRecord[] | undefined,
+  lastBrainMessage: BrainMessageDelivery | undefined,
+): string {
+  const parts: string[] = [];
+
+  const q = [...(queued ?? [])].sort((a, b) => a.deliverAt - b.deliverAt);
+  if (q.length > 0) {
+    const lines = q.map(m => {
+      const due = m.deliverAt <= Date.now()
+        ? `due ${timeAgo(m.deliverAt)} (delivering)`
+        : `delivers at ${formatTime(m.deliverAt)}`;
+      const retry = m.retryCount ? `, retry ${m.retryCount}` : "";
+      return `  [${m.id}] ${due} → ${m.targetJid} (source=${m.source}${retry}): "${firstMessageLine(m.message)}"`;
+    });
+    parts.push(`QUEUED — ${q.length} message(s) currently in the scheduled-messages queue. The scheduled channel delivers these automatically with retries: do NOT resend or re-queue them, and do NOT record them as sent/VERSTUURD until they appear below as DELIVERED. If two queued messages cover the same briefing/topic, that is a duplicate — cancel or flag it.\n${lines.join("\n")}`);
+  } else {
+    parts.push(`QUEUED: none — the scheduled-messages queue is empty.`);
+  }
+
+  const logEntries = [...(deliveryLog ?? [])].sort((a, b) => b.timestamp - a.timestamp);
+  if (logEntries.length > 0) {
+    const shown = logEntries.slice(0, MAX_DELIVERY_LOG_LINES);
+    const omitted = logEntries.length - shown.length;
+    const lines = shown.map(e =>
+      `  [${formatTime(e.timestamp)} · ${timeAgo(e.timestamp)}] ${formatDeliveryLogStatus(e.status)} → ${e.jid} (source=${e.source}): "${e.messageSnippet}"`,
+    );
+    parts.push(`RECENT OUTCOMES (delivery log, last 24h — final status per outbound message; SUPPRESSED/FAILED means the recipient NEVER received it):\n${lines.join("\n")}${omitted > 0 ? `\n  (+${omitted} older entries omitted)` : ""}`);
+  } else {
+    parts.push(`RECENT OUTCOMES: no delivery-log entries in the last 24h.`);
+  }
+
+  if (lastBrainMessage) {
+    parts.push(`LAST BRAIN-RETURNED MESSAGE:\n${formatLastBrainMessage(lastBrainMessage)}`);
+  }
+
+  return parts.join("\n\n");
 }
 
 export interface ThinkContext {
@@ -668,6 +729,10 @@ export interface ThinkContext {
   responsivenessPreset?: string | null;
   recentChatDeliveries?: RecentChatDelivery[];
   lastBrainMessage?: BrainMessageDelivery;
+  /** ALL currently queued scheduled messages (in-flight deliveries) */
+  queuedMessages?: ScheduledMessage[];
+  /** Last 24h of delivery-log entries including suppressed/failed outcomes */
+  recentDeliveryLog?: DeliveryRecord[];
   selfImproveStats?: {
     enabled: boolean;
     maxPerWeek: number;
@@ -702,9 +767,7 @@ export function buildThinkPrompt(ctx: ThinkContext): string {
       }).join("\n\n")}\n`
     : "";
 
-  const lastDeliveryBlock = ctx.lastBrainMessage
-    ? `\n═══ LAST MESSAGE DELIVERY ═══\n\nThe real delivery status of the last message you returned from a brain tick (from the delivery log — this is the ground truth, not your memory of it):\n\n${formatLastBrainMessage(ctx.lastBrainMessage)}\n`
-    : "";
+  const lastDeliveryBlock = `\n═══ IN-FLIGHT & RECENT DELIVERIES ═══\n\nGround truth from the scheduler (scheduled-messages.json + delivery-log.json) — trust this over your memory of what you sent. NEVER record a message as sent/VERSTUURD unless it shows as DELIVERED here:\n\n${formatDeliverySection(ctx.queuedMessages, ctx.recentDeliveryLog, ctx.lastBrainMessage)}\n`;
 
   const chatDeliveryBlock = ctx.recentChatDeliveries && ctx.recentChatDeliveries.length > 0
     ? `\n═══ RECENTLY SENT (chat session / other) ═══\n\nThese messages and emails were already sent recently. Do NOT send duplicate messages or emails to the same contacts/recipients about the same topics.\n\n${ctx.recentChatDeliveries.map(d => `  [${formatTime(d.timestamp)}] → ${d.jid}: "${d.messageSnippet}"`).join("\n")}\n`
@@ -1046,6 +1109,10 @@ export interface ReflectContext {
   personProfilesSection?: string;
   /** Real delivery status of the last brain-returned message (ground truth) */
   lastBrainMessage?: BrainMessageDelivery;
+  /** ALL currently queued scheduled messages (in-flight deliveries) */
+  queuedMessages?: ScheduledMessage[];
+  /** Last 24h of delivery-log entries including suppressed/failed outcomes */
+  recentDeliveryLog?: DeliveryRecord[];
 }
 
 export function buildReflectPrompt(ctx: ReflectContext): string {
@@ -1073,9 +1140,7 @@ export function buildReflectPrompt(ctx: ReflectContext): string {
     ? `\n═══ DRIFT AUDIT ═══\n${ctx.driftSummary}\nFull reports: /data/brain/drift-reports/\n`
     : "";
 
-  const lastDeliveryBlock = ctx.lastBrainMessage
-    ? `\n═══ LAST MESSAGE DELIVERY ═══\n\nThe real delivery status of the last message you returned from a brain tick (from the delivery log — this is the ground truth, not your memory of it):\n\n${formatLastBrainMessage(ctx.lastBrainMessage)}\n`
-    : "";
+  const lastDeliveryBlock = `\n═══ IN-FLIGHT & RECENT DELIVERIES ═══\n\nGround truth from the scheduler (scheduled-messages.json + delivery-log.json) — trust this over your memory of what you sent. NEVER record a message as sent/VERSTUURD unless it shows as DELIVERED here:\n\n${formatDeliverySection(ctx.queuedMessages, ctx.recentDeliveryLog, ctx.lastBrainMessage)}\n`;
 
   const siStats = ctx.selfImproveStats;
   // Nudge is derived from the improve queue (ground truth), not working-memory tracking strings
