@@ -13,7 +13,7 @@ const SCHEDULE_FILE = `${BRAIN_DIR}/scheduled-messages.json`;
 const IN_FLIGHT_FILE = `${BRAIN_DIR}/scheduled-messages-inflight.json`;
 const DELIVERY_LOG_FILE = `${BRAIN_DIR}/delivery-log.json`;
 export const DEDUP_WINDOW_MS = 3 * 60 * 60 * 1000; // 3 hours — must cover scheduler max backoff (2h) + buffer
-const DELIVERY_LOG_MAX_AGE_MS = 13 * 60 * 60 * 1000; // 13 hours – must exceed DEDUP_WINDOW_MS (3h) and the reflect tick's 12h commitment lookback (ARIA-origin matching)
+const DELIVERY_LOG_MAX_AGE_MS = 25 * 60 * 60 * 1000; // 25 hours – must exceed DEDUP_WINDOW_MS (3h), the reflect tick's 12h commitment lookback (ARIA-origin matching), and the prompt's 24h IN-FLIGHT & RECENT DELIVERIES window
 const MAX_DELIVERY_LOG_ENTRIES = 500; // hard cap — all outbound sends log here, so bound the file size
 
 export interface ScheduledMessage {
@@ -240,6 +240,8 @@ export function getDueMessages(): ScheduledMessage[] {
     // Release blocked messages from in-flight (they've been removed from schedule)
     for (const m of blocked) inFlightIds.delete(m.id);
     saveInFlight();
+    // Terminal outcome: record the suppression so the brain prompt shows it
+    for (const m of blocked) logDelivery(m.targetJid, m.source, m.message, "suppressed");
   }
 
   if (allowed.length === 0) {
@@ -295,12 +297,14 @@ export function markFailed(ids: string[]): string[] {
   const schedule = loadSchedule();
   const idSet = new Set(ids);
   const droppedIds: string[] = [];
+  const droppedMessages: ScheduledMessage[] = [];
 
   for (const msg of schedule) {
     if (idSet.has(msg.id)) {
       msg.retryCount = (msg.retryCount || 0) + 1;
       if (msg.retryCount > MAX_RETRIES) {
         droppedIds.push(msg.id);
+        droppedMessages.push(msg);
       } else {
         const baseMs = BACKOFF_DELAYS_MS[msg.retryCount - 1] || BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1];
         const backoffMs = Math.round(baseMs * (0.75 + Math.random() * 0.5));
@@ -319,6 +323,8 @@ export function markFailed(ids: string[]): string[] {
 
   if (droppedIds.length > 0) {
     log(`Dropped ${droppedIds.length} message(s) after exceeding ${MAX_RETRIES} retries`);
+    // Terminal outcome: record the permanent failure so the brain prompt shows it
+    for (const m of droppedMessages) logDelivery(m.targetJid, m.source, m.message, "failed");
   }
   return droppedIds;
 }
@@ -384,7 +390,11 @@ function saveDeliveryLog(entries: DeliveryRecord[]): void {
   }
 }
 
-/** Log a successful delivery for dedup tracking and delivery verification. */
+/**
+ * Log a delivery outcome for dedup tracking, delivery verification and prompt
+ * observability. status "sent" = actually delivered; "suppressed"/"failed" are
+ * terminal non-delivery outcomes (visible via getRecentDeliveryLog only).
+ */
 export function logDelivery(jid: string, source: string, message: string, status: string = "sent"): void {
   const entries = loadDeliveryLog();
   const cutoff = Date.now() - DELIVERY_LOG_MAX_AGE_MS;
@@ -397,8 +407,20 @@ export function logDelivery(jid: string, source: string, message: string, status
   saveDeliveryLog(pruned);
 }
 
-/** Get recent deliveries, optionally filtered by time window. */
+/**
+ * Get recent SUCCESSFUL deliveries, optionally filtered by time window.
+ * Excludes suppressed/failed outcomes so dedup, commitment matching and
+ * delivery verification never mistake a non-delivery for actual contact.
+ */
 export function getRecentDeliveries(windowMs: number = DELIVERY_LOG_MAX_AGE_MS): DeliveryRecord[] {
+  return getRecentDeliveryLog(windowMs).filter(e => e.status === undefined || e.status === "sent");
+}
+
+/**
+ * Get the raw recent delivery log INCLUDING suppressed/failed terminal
+ * outcomes — for the prompt's IN-FLIGHT & RECENT DELIVERIES section.
+ */
+export function getRecentDeliveryLog(windowMs: number = DELIVERY_LOG_MAX_AGE_MS): DeliveryRecord[] {
   const entries = loadDeliveryLog();
   const cutoff = Date.now() - windowMs;
   return entries.filter(e => e.timestamp > cutoff);
