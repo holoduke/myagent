@@ -816,6 +816,8 @@ Respond with ONLY a JSON object:
   "operations": [/* memory operations array */],
   "message": "message to send, or null",
   "messageTargetJid": "optional — JID to send the message to. Omit or null to send to ${ctx.ownerName}. Use group @g.us JID to reply in a group chat.",
+  "urgent": "optional boolean — ONLY for genuine emergencies (safety, health, hard time-critical situations where waiting causes real harm). Bypasses your autonomy gate, daily message quota and min-interval via the scheduled channel. Requires urgentReason; every use is audit-logged and capped at 2/day. Misuse erodes trust — never use it for routine proactive messages.",
+  "urgentReason": "MANDATORY when urgent=true — concrete motivation (min 20 chars) why this cannot wait for the normal channel. Without a valid reason the urgent flag is silently ignored.",
   "reasoning": "your internal thoughts (private, for logs only)",
   "workingMemory": {
     "currentContext": "brief summary of what's happening right now",

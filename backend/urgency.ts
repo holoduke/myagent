@@ -1,5 +1,8 @@
 import type { Observation } from "./observer.js";
 import { createLogger } from "./logger.js";
+import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
+import { BRAIN_DIR } from "./config.js";
+import { getBrainConfig, getOwnerLocalDate } from "./brain-config.js";
 
 const log = createLogger("urgency");
 
@@ -289,4 +292,88 @@ export function getPendingUrgency(): number {
 
 export function clearPendingUrgency(): void {
   pendingUrgency = 0;
+}
+
+// ── Brain Urgent Override (autonomy gate / quota bypass) ──
+// The brain may mark an outgoing message as genuinely urgent, with a mandatory
+// motivation. Such a message is rerouted onto the scheduled channel, passing
+// the autonomy gate, daily quota and min-interval — the contact whitelist and
+// the action verifier still gate the actual send. Every override is persisted
+// to an audit log and daily-capped, so quota discipline stays intact and each
+// exception is inspectable (the dashboard shows the count next to the
+// suppressed count). Replaces the fragile manual workaround of hand-writing
+// scheduled-messages.json, which was invisible to the gate and the audit trail.
+
+const URGENT_OVERRIDE_LOG_FILE = `${BRAIN_DIR}/urgency-override-log.json`;
+export const MAX_URGENT_OVERRIDES_PER_DAY = 2;
+const MIN_URGENT_REASON_LENGTH = 20;
+const MAX_URGENT_OVERRIDE_ENTRIES = 200;
+
+export interface UrgentOverrideRecord {
+  timestamp: number;
+  /** Owner-local date the override counts against (daily cap bookkeeping) */
+  ownerDate: string;
+  targetJid: string;
+  reason: string;
+  messageSnippet: string;
+}
+
+function isUrgentOverrideRecord(entry: unknown): entry is UrgentOverrideRecord {
+  if (typeof entry !== "object" || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    typeof e.timestamp === "number" &&
+    typeof e.ownerDate === "string" &&
+    typeof e.targetJid === "string" &&
+    typeof e.reason === "string" &&
+    typeof e.messageSnippet === "string"
+  );
+}
+
+function loadUrgentOverrideLog(): UrgentOverrideRecord[] {
+  const raw = safeReadJSON<unknown>(URGENT_OVERRIDE_LOG_FILE, []);
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isUrgentOverrideRecord);
+}
+
+/**
+ * The urgent flag requires a substantive motivation. Returns the trimmed
+ * reason, or null when missing/too short — in which case the flag is ignored
+ * and the message follows the normal gate path.
+ */
+export function validateUrgentReason(reason: unknown): string | null {
+  if (typeof reason !== "string") return null;
+  const trimmed = reason.trim();
+  return trimmed.length >= MIN_URGENT_REASON_LENGTH ? trimmed : null;
+}
+
+export function getUrgentOverridesToday(): number {
+  const today = getOwnerLocalDate(getBrainConfig().ownerTimezone);
+  return loadUrgentOverrideLog().filter(e => e.ownerDate === today).length;
+}
+
+export function canUseUrgentOverride(): boolean {
+  return getUrgentOverridesToday() < MAX_URGENT_OVERRIDES_PER_DAY;
+}
+
+export function recordUrgentOverride(targetJid: string, reason: string, message: string): void {
+  const entries = loadUrgentOverrideLog();
+  entries.push({
+    timestamp: Date.now(),
+    ownerDate: getOwnerLocalDate(getBrainConfig().ownerTimezone),
+    targetJid,
+    reason,
+    messageSnippet: message.slice(0, 120),
+  });
+  const bounded = entries.length > MAX_URGENT_OVERRIDE_ENTRIES
+    ? entries.slice(-MAX_URGENT_OVERRIDE_ENTRIES)
+    : entries;
+  ensureDir(BRAIN_DIR);
+  atomicWriteJSON(URGENT_OVERRIDE_LOG_FILE, bounded);
+  log(`Urgent override recorded (${getUrgentOverridesToday()}/${MAX_URGENT_OVERRIDES_PER_DAY} today) → ${targetJid}: ${reason}`);
+}
+
+/** Most recent overrides, newest first (for dashboard/audit display). */
+export function getRecentUrgentOverrides(limit = 20): UrgentOverrideRecord[] {
+  return loadUrgentOverrideLog().slice(-limit).reverse();
 }
