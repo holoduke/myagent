@@ -37,7 +37,7 @@ import { loadConsciousness } from "./consciousness.js";
 // ── Extracted modules ──
 import { thinkTick, consolidateTick, reflectTick } from "./brain-ticks.js";
 import { pollScheduledMessages } from "./brain-delivery.js";
-import { getRecentDeliveries } from "./scheduler.js";
+import { getRecentDeliveries, cancelScheduledMessages } from "./scheduler.js";
 import {
   pickUpImproveResult,
   interceptDirectTask,
@@ -1041,6 +1041,15 @@ async function handleRecurringTasks(
           if (state.recurringThinksToday >= MAX_RECURRING_THINKS_PER_DAY) {
             log(`[recurring] Skipping digest "${task.label}": daily budget exhausted`);
             break;
+          }
+          // A fresh digest supersedes any older one still queued on the
+          // scheduled channel (e.g. rerouted by the autonomy gate and pushed
+          // past this slot by retry backoff) — cancel it so the owner never
+          // gets a stale briefing right after a fresh one.
+          const digestAction = task.action as { type: "digest"; targetJid: string };
+          const staleCount = cancelScheduledMessages(digestAction.targetJid, "digest");
+          if (staleCount > 0) {
+            log(`[recurring] Cancelled ${staleCount} stale queued digest(s) for ${digestAction.targetJid} — superseded by fresh "${task.label}"`);
           }
           const { hour } = getOwnerLocalTime(getBrainConfig().ownerTimezone);
           const isEvening = hour >= 17;

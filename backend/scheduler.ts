@@ -252,6 +252,26 @@ export function getDueMessages(): ScheduledMessage[] {
 }
 
 /**
+ * Cancel pending scheduled messages for a target/source that have been
+ * superseded (e.g. a queued digest made stale by a newer one). Skips
+ * messages currently in-flight. Returns the number cancelled.
+ */
+export function cancelScheduledMessages(targetJid: string, source: string): number {
+  const canonicalJid = resolveCanonicalJid(targetJid);
+  const schedule = loadSchedule();
+  const cancelled = schedule.filter(
+    m => m.source === source && resolveCanonicalJid(m.targetJid) === canonicalJid && !inFlightIds.has(m.id),
+  );
+  if (cancelled.length === 0) return 0;
+  const cancelledIds = new Set(cancelled.map(m => m.id));
+  saveSchedule(schedule.filter(m => !cancelledIds.has(m.id)));
+  for (const m of cancelled) {
+    log(`Cancelled superseded scheduled message ${m.id} (source=${source}, was due ${new Date(m.deliverAt).toISOString()}): "${m.message.slice(0, 60)}..."`);
+  }
+  return cancelled.length;
+}
+
+/**
  * Remove successfully delivered messages from the schedule file.
  */
 export function markDelivered(ids: string[]): void {

@@ -157,6 +157,34 @@ export function isDue(task: RecurringTask, now: Date): boolean {
   return true;
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * Timestamp (ms) of the next moment an enabled digest-type recurring task
+ * will fire, strictly after `nowMs`. Digest tasks fire when a brain tick
+ * lands inside a matching owner-local hour, so hour boundaries are the
+ * candidate slots. Returns null when no enabled digest task exists.
+ */
+export function getNextDigestSlot(nowMs: number): number | null {
+  const digestTasks = loadTasks().filter(t => t.enabled && t.action.type === "digest");
+  if (digestTasks.length === 0) return null;
+
+  const cfg = getBrainConfig();
+  const horizon = nowMs + 8 * 24 * HOUR_MS; // covers weekly daysOfWeek patterns
+  for (let t = (Math.floor(nowMs / HOUR_MS) + 1) * HOUR_MS; t <= horizon; t += HOUR_MS) {
+    const { hour, dayOfWeek } = getOwnerLocalTime(cfg.ownerTimezone, new Date(t));
+    for (const task of digestTasks) {
+      if (
+        task.pattern.hours.includes(hour) &&
+        (!task.pattern.daysOfWeek || task.pattern.daysOfWeek.includes(dayOfWeek))
+      ) {
+        return t;
+      }
+    }
+  }
+  return null;
+}
+
 export function getDueRecurringTasks(ownerJid: string): RecurringTask[] {
   let tasks = loadTasks();
 
