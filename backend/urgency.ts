@@ -131,6 +131,72 @@ const ACTION_REQUIRED_PATTERNS: RegExp[] = [
   /\b\d+[.,]\d{2}\s*(?:euro|EUR|€)/i,
 ];
 
+// ── Promotional / bulk email gate ──
+// Marketing mail routinely uses urgency vocabulary ("laatste kans", "act now",
+// exclamation marks) purely as a sales tactic. If such mail can produce an
+// URGENT flag (e.g. Adobe Creative Cloud promo, 2026-09-03), every urgent flag
+// needs manual verification and the signal loses its value for genuinely
+// time-critical messages. Gate BEFORE urgency scoring: mail from a known
+// marketing domain, mail carrying a List-Unsubscribe header, or mail with a
+// promo-style subject gets urgency 0, unconditionally — action/deadline
+// language in a promo body (prices, "betaal nu") must not override this.
+
+const MARKETING_EMAIL_DOMAIN_PATTERNS: RegExp[] = [
+  // Known marketing sender domains
+  /@(?:[\w.-]+\.)?mail\.adobe\.com$/i,
+  /@(?:[\w.-]+\.)?adobesystems\.com$/i,
+  // Bulk-mail / ESP infrastructure domains (only ever send campaign mail)
+  /@(?:[\w.-]+\.)?mailchimp(?:app)?\.com$/i,
+  /@(?:[\w.-]+\.)?mcsv\.net$/i,
+  /@(?:[\w.-]+\.)?sendgrid\.net$/i,
+  /@(?:[\w.-]+\.)?mailgun\.(?:com|org)$/i,
+  /@(?:[\w.-]+\.)?braze\.com$/i,
+  /@(?:[\w.-]+\.)?exacttarget\.com$/i,
+  /@(?:[\w.-]+\.)?hubspotemail\.net$/i,
+  // Conventional marketing subdomains: mail.x.com, news.x.com, email.x.com, …
+  /@(?:mail|e?mail(?:ing)?|news(?:letter)?s?|marketing|promo(?:tions?)?|offers|deals|updates)\.[\w.-]+\.[a-z]{2,}$/i,
+];
+
+// Promo-style subject lines (Dutch + English). Matched against the subject
+// only — body text is too noisy for these patterns.
+const PROMO_SUBJECT_PATTERNS: RegExp[] = [
+  // Dutch
+  /\bkorting\b/i,
+  /\baanbieding(?:en)?\b/i,
+  /\bactieprijs\b/i,
+  /\blaatste\s+kans\b/i,
+  /\balleen\s+vandaag\b/i,
+  /\bmis\s+het\s+niet\b/i,
+  /\bnieuwsbrief\b/i,
+  /\bgratis\s+(?:verzending|proefperiode|maand)\b/i,
+  // English
+  /\d+\s*%\s*(?:off|korting|discount)/i,
+  /\bsale\b/i,
+  /\bdeal(?:s)?\b/i,
+  /\blimited\s+time\b/i,
+  /\blast\s+chance\b/i,
+  /\bdon'?t\s+miss\b/i,
+  /\bblack\s+friday\b/i,
+  /\bcyber\s+monday\b/i,
+  /\bnewsletter\b/i,
+  /\bfree\s+trial\b/i,
+  /\bupgrade\s+(?:now|today)\b/i,
+  /\bexclusive\s+offer\b/i,
+];
+
+/**
+ * Promotional/bulk email that must never receive an urgent flag: known
+ * marketing domain, List-Unsubscribe header, or promo-style subject.
+ */
+export function isPromotionalEmail(obs: Observation): boolean {
+  if (obs.source !== "gmail" || obs.isFromMe) return false;
+  const addr = getEmailSenderAddress(obs);
+  if (MARKETING_EMAIL_DOMAIN_PATTERNS.some(re => re.test(addr))) return true;
+  if (obs.emailMeta?.hasListUnsubscribe) return true;
+  const subject = obs.emailMeta?.subject ?? "";
+  return PROMO_SUBJECT_PATTERNS.some(re => re.test(subject));
+}
+
 function getEmailSenderAddress(obs: Observation): string {
   const raw = obs.emailMeta?.from || obs.sender || "";
   const match = /<([^>]+)>/.exec(raw);
@@ -168,6 +234,14 @@ const URGENCY_HALF_LIFE_MS = 60 * 60 * 1000; // 1 hour
 
 export function scoreUrgency(obs: Observation): number {
   if (obs.isFromMe) return 0; // Own messages have no urgency
+
+  // Promo/noise gate: promotional bulk mail never gets an urgent flag,
+  // regardless of urgency vocabulary or deadline language in the body.
+  if (isPromotionalEmail(obs)) {
+    obs.promotionalEmail = true;
+    log(`Promotional email from ${getEmailSenderAddress(obs)} — urgency forced to 0 ("${(obs.emailMeta?.subject ?? "").slice(0, 60)}")`);
+    return 0;
+  }
 
   let score = 0;
   const text = obs.text;

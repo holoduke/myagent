@@ -49,6 +49,8 @@ export interface EmailMeta {
   accountId: string;
   accountEmail: string;
   messageId: string;
+  /** Message carried a List-Unsubscribe header — bulk/marketing mail marker */
+  hasListUnsubscribe?: boolean;
 }
 
 export interface CalendarMeta {
@@ -87,6 +89,8 @@ export interface Observation {
   urgency?: number;
   /** Email from a high-signal domain (gov, banking) but with no action/deadline language in the body. */
   routineNotification?: boolean;
+  /** Promotional/bulk email (marketing domain, List-Unsubscribe, or promo subject) — urgency is forced to 0. */
+  promotionalEmail?: boolean;
   /** Trust classification — set at intake, used for prompt sanitization */
   trustLevel?: "owner" | "trusted" | "untrusted";
   /** Detected commitments in outgoing messages (isFromMe=true only) */

@@ -294,6 +294,7 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
 
       const to = getHeader(headers, "To");
       const subject = getHeader(headers, "Subject");
+      const hasListUnsubscribe = getHeader(headers, "List-Unsubscribe") !== "";
       const body = msg.payload ? extractBody(msg.payload) : "";
       const snippet = msg.snippet || "";
 
@@ -320,6 +321,7 @@ async function fetchNewEmails(account: GmailAccount, state: GmailState): Promise
           accountId: account.id,
           accountEmail: account.email,
           messageId: msgRef.id!,
+          hasListUnsubscribe,
         },
       });
 
