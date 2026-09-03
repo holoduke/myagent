@@ -14,7 +14,8 @@ import type { MessageQueue } from "./queue.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, ImprovementProposal } from "./memory/types.js";
 import { createFlaggedRequest } from "./actionable-tracker.js";
-import { getRecentDeliveries, scheduleMessage, DEDUP_WINDOW_MS } from "./scheduler.js";
+import { getRecentDeliveries, scheduleMessage, cancelScheduledMessages, DEDUP_WINDOW_MS } from "./scheduler.js";
+import { getNextDigestSlot } from "./recurring.js";
 import { runConsolidation, detectGistClusters } from "./memory/decay.js";
 import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory, populateTemporalContext } from "./memory/working-memory.js";
 import {
@@ -492,11 +493,26 @@ export async function thinkTick(
           // defers past quiet hours when we're inside them. No gate bypass for
           // any other message type — only [DIGEST REQUEST:]-triggered output.
           const deliverAt = digestRerouteDeliverAt(now, cfg);
-          const schedId = scheduleMessage(messageTarget, response.message, deliverAt, "digest");
-          log(`Digest blocked by autonomy level — rerouted via scheduled channel (${schedId}, deliverAt ${new Date(deliverAt).toISOString()})`);
-          recordBrainDelivery(state, response.message, messageTarget, "queued",
-            `autonomy gate active — digest rerouted to scheduled channel (${schedId}), delivery at ${new Date(deliverAt).toISOString()}`);
-          scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+          // Stale-digest guard: if the deferred delivery would land after the
+          // next scheduled digest is generated, the owner would get two
+          // briefings back-to-back with this one already outdated. Drop it —
+          // the next digest covers the same ground with fresher content.
+          const nextDigestSlot = getNextDigestSlot(now);
+          if (nextDigestSlot !== null && deliverAt >= nextDigestSlot) {
+            log(`Digest blocked by autonomy level — dropped as stale: reroute deliverAt ${new Date(deliverAt).toISOString()} falls after next digest slot ${new Date(nextDigestSlot).toISOString()}`);
+            recordBrainDelivery(state, response.message, messageTarget, "suppressed",
+              `stale digest — rerouted delivery at ${new Date(deliverAt).toISOString()} would land after next digest slot ${new Date(nextDigestSlot).toISOString()}`);
+          } else {
+            // A newer digest supersedes any still-queued older one for the same
+            // target — never deliver two briefings back-to-back.
+            const superseded = cancelScheduledMessages(messageTarget, "digest");
+            if (superseded > 0) log(`Superseded ${superseded} previously queued digest(s) for ${messageTarget}`);
+            const schedId = scheduleMessage(messageTarget, response.message, deliverAt, "digest");
+            log(`Digest blocked by autonomy level — rerouted via scheduled channel (${schedId}, deliverAt ${new Date(deliverAt).toISOString()})`);
+            recordBrainDelivery(state, response.message, messageTarget, "queued",
+              `autonomy gate active — digest rerouted to scheduled channel (${schedId}), delivery at ${new Date(deliverAt).toISOString()}`);
+            scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+          }
         } else {
           log(`Proactive message blocked by autonomy level (${response.message.slice(0, 60)}...)`);
           recordGateSuppression();
