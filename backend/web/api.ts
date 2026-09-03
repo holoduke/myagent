@@ -9,6 +9,7 @@ import { handleSkillRoutes } from "./skills-api.js";
 import { isAuthenticated } from "./auth.js";
 import { respondJson } from "../utils/api-helpers.js";
 import { getAutonomyState, getSuppressedToday, LEVEL_DESCRIPTIONS, PROMOTE_THRESHOLDS } from "../autonomy.js";
+import { getUrgentOverridesToday, getRecentUrgentOverrides } from "../urgency.js";
 import { BRAIN_DIR } from "../config.js";
 
 function handleAutonomyGet(res: ServerResponse): void {
@@ -32,6 +33,8 @@ function handleAutonomyGet(res: ServerResponse): void {
     levelDescriptions: LEVEL_DESCRIPTIONS,
     nextLevelThreshold: PROMOTE_THRESHOLDS[s.level] ?? null,
     suppressedToday: getSuppressedToday(),
+    urgentOverridesToday: getUrgentOverridesToday(),
+    recentUrgentOverrides: getRecentUrgentOverrides(10),
     lastBrainMessage,
     history: s.history.slice(-10),
   });

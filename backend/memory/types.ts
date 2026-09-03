@@ -301,6 +301,12 @@ export interface BrainResponse {
   message: string | null;
   /** Optional: JID to send the message to. Defaults to owner. Use group @g.us JID to reply in a group. */
   messageTargetJid?: string | null;
+  /** Optional: genuine-emergency flag. Reroutes the message via the scheduled
+   *  channel, passing the autonomy gate, daily quota and min-interval.
+   *  Ignored without a valid urgentReason; audit-logged and daily-capped. */
+  urgent?: boolean;
+  /** Mandatory motivation when urgent=true — why this cannot wait. */
+  urgentReason?: string;
   reasoning: string;
   workingMemory?: {
     currentContext?: string;

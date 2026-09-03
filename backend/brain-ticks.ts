@@ -45,6 +45,7 @@ import { extractEmotionSignals, recordEmotionSignals } from "./emotion-tracker.j
 import { trackSentMessage, resolveReflections, createReflectionNodes } from "./reflection-tracker.js";
 import { detectCausalLinks, recordCausalLinks } from "./causal-tracker.js";
 import { isActionPermitted, recordSuccess, recordFailure, recordShadowSuccess, recordGateSuppression } from "./autonomy.js";
+import { validateUrgentReason, canUseUrgentOverride, recordUrgentOverride, getUrgentOverridesToday, MAX_URGENT_OVERRIDES_PER_DAY } from "./urgency.js";
 import { probeMemoryHealth, circuitSuccess, circuitFailure, isCircuitClosed } from "./health-monitor.js";
 import { runSleepConsolidation } from "./sleep-consolidation.js";
 import { detectStaleBeliefs } from "./belief-tracker.js";
@@ -81,6 +82,8 @@ export function parseBrainResponse(raw: string): BrainResponse | null {
       operations: Array.isArray(parsed.operations) ? parsed.operations : [],
       message: parsed.message ?? null,
       messageTargetJid: typeof parsed.messageTargetJid === "string" ? parsed.messageTargetJid : undefined,
+      urgent: parsed.urgent === true,
+      urgentReason: typeof parsed.urgentReason === "string" ? parsed.urgentReason : undefined,
       reasoning: parsed.reasoning ?? "",
       workingMemory: parsed.workingMemory ?? undefined,
       goalOps: Array.isArray(parsed.goalOps) ? parsed.goalOps : undefined,
@@ -487,10 +490,37 @@ export async function thinkTick(
         log(`Autonomy gate exemption (reason=direct-reply): owner message at ${new Date(ownerMsgAt).toISOString()} is newer than last delivery to owner — treating brain message as a reply, skipping suppress-check`);
       }
 
+      // Urgency override: the brain may mark a message as genuinely urgent
+      // (mandatory motivation) so it passes the autonomy gate, daily quota and
+      // min-interval via the scheduled channel (10s delivery loop, retries,
+      // delivery-log verified). The contact whitelist and action verifier still
+      // gate the actual send; every override is audit-logged (urgency.ts) and
+      // daily-capped so quota discipline stays intact. Direct replies are
+      // already exempt from throttles and never need this path.
+      let urgentOverrideHandled = false;
+      if (!isDirectReply && response.urgent === true) {
+        const urgentReason = validateUrgentReason(response.urgentReason);
+        if (!urgentReason) {
+          log("Urgent flag ignored: missing or too-short urgentReason — message follows the normal gate path");
+        } else if (!canUseUrgentOverride()) {
+          log(`Urgent override DENIED: daily cap reached (${getUrgentOverridesToday()}/${MAX_URGENT_OVERRIDES_PER_DAY}) — message follows the normal gate path`);
+        } else {
+          const schedId = scheduleMessage(messageTarget, response.message, now, "urgent");
+          recordUrgentOverride(messageTarget, urgentReason, response.message);
+          log(`URGENCY OVERRIDE: message rerouted via scheduled channel (${schedId}) — ${urgentReason}`);
+          recordBrainDelivery(state, response.message, messageTarget, "queued",
+            `urgency override (${schedId}): ${urgentReason}`);
+          scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
+          urgentOverrideHandled = true;
+        }
+      }
+
       // Autonomy gating: check if proactive messaging is permitted at current level.
       // A policy-level block is not a judgment failure, so it must not decrement trust —
       // otherwise the demote-spiral drags the agent down from its own gating.
-      if (!isDirectReply && initiativeSignals.length > 0 && !isActionPermitted("send_proactive")) {
+      if (urgentOverrideHandled) {
+        // Delivered via the scheduled channel — skip the gate and send paths.
+      } else if (!isDirectReply && initiativeSignals.length > 0 && !isActionPermitted("send_proactive")) {
         if (isDigestTriggered) {
           // Owner-contracted digest: the gate exists to hold back unsolicited
           // proactive sends, not briefings the owner explicitly scheduled.
