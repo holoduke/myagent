@@ -1,8 +1,8 @@
 /**
  * Premium voice for the house — server-side speech synthesis.
  *
- * Home Assistant's own TTS engines are fine but not "HAL". With an ElevenLabs
- * or OpenAI key, ARIA synthesizes the audio herself, stores the MP3 under
+ * Home Assistant's own TTS engines are fine but not "HAL". With a Grok (xAI),
+ * ElevenLabs or OpenAI key, ARIA synthesizes the audio herself, stores the MP3 under
  * /data/homeassistant/tts and hands Home Assistant a public URL to play on
  * the speaker (Google Cast fetches it straight from the agent). When no key is
  * configured, or synthesis fails, everything falls back to Home Assistant's
@@ -32,7 +32,7 @@ const SYNTH_TIMEOUT_MS = 20_000;
 const MAX_TEXT_CHARS = 1500;
 const ID_RE = /^[a-f0-9]{32}$/;
 
-export type VoiceProvider = "homeassistant" | "elevenlabs" | "openai";
+export type VoiceProvider = "homeassistant" | "elevenlabs" | "openai" | "grok";
 
 export interface SynthesizedAudio {
   id: string;
@@ -48,6 +48,7 @@ export function resolveApiKey(speech: HASpeechConfig, env: NodeJS.ProcessEnv = p
   if (speech.apiKey) return speech.apiKey;
   if (speech.provider === "elevenlabs") return env.ELEVENLABS_API_KEY || "";
   if (speech.provider === "openai") return env.OPENAI_API_KEY || "";
+  if (speech.provider === "grok") return env.XAI_API_KEY || env.GROK_API_KEY || "";
   return "";
 }
 
@@ -101,9 +102,26 @@ export function buildOpenAIRequest(speech: HASpeechConfig, text: string, apiKey:
   };
 }
 
+/** xAI text-to-speech: raw MP3 back, BCP-47 language, voice ids like eve/ara/rex/sal/leo. */
+export function buildGrokRequest(speech: HASpeechConfig, text: string, apiKey: string): SynthRequest {
+  // speech.language may be an Edge voice name ("nl-NL-FennaNeural"); xAI wants the language itself.
+  const primary = (speech.language || "").split("-")[0].toLowerCase();
+  return {
+    url: "https://api.x.ai/v1/tts",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      voice_id: speech.voiceId || "eve",
+      language: /^[a-z]{2}$/.test(primary) ? primary : "auto",
+      output_format: { codec: "mp3", sample_rate: 24000, bit_rate: 128000 },
+    }),
+  };
+}
+
 export function buildSynthRequest(speech: HASpeechConfig, text: string, apiKey: string): SynthRequest {
   if (speech.provider === "elevenlabs") return buildElevenLabsRequest(speech, text, apiKey);
   if (speech.provider === "openai") return buildOpenAIRequest(speech, text, apiKey);
+  if (speech.provider === "grok") return buildGrokRequest(speech, text, apiKey);
   throw new Error(`No synthesis for provider "${speech.provider}"`);
 }
 

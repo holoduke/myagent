@@ -140,7 +140,7 @@ export interface HASpeechConfig {
   ttsEngine: string
   language: string
   ttsVolume: number | null
-  provider: 'homeassistant' | 'elevenlabs' | 'openai'
+  provider: 'homeassistant' | 'grok' | 'elevenlabs' | 'openai'
   voiceId: string
   model: string
   style: string

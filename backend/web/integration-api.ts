@@ -5,7 +5,7 @@ import { getLatestQr } from "../integrations/whatsapp.js";
 import { getPublicKey, addTarget, removeTarget, testConnection } from "../integrations/ssh.js";
 import { getCalendarStatus, createEvent, listCalendars, loadCalendarConfig, saveCalendarConfig } from "../integrations/calendar.js";
 import type { CalendarConfigEntry } from "../integrations/calendar.js";
-import { getHAStatus, saveConfig, restartHAPolling, regenerateWebhookToken, DEFAULT_WEATHER_REFLEX, DEFAULT_MIND_REFLEX, loadConfig as loadHAConfig } from "../integrations/homeassistant.js";
+import { getHAStatus, saveConfig, restartHAPolling, regenerateWebhookToken, DEFAULT_WEATHER_REFLEX, DEFAULT_MIND_REFLEX, PROVIDER_VOICE_DEFAULTS, loadConfig as loadHAConfig } from "../integrations/homeassistant.js";
 import type { HAConfig, HAConnectionMode, HAWeatherReflexConfig, HAButtonRule, HASpeechConfig } from "../integrations/homeassistant.js";
 import { testHAConnection, buildVolumeCall } from "../integrations/ha-client.js";
 import { planSpeech } from "../ha-voice.js";
@@ -578,15 +578,17 @@ function parseSpeech(raw: unknown, current: HASpeechConfig): HASpeechConfig {
   const r = raw as Record<string, unknown>;
   const mediaPlayer = typeof r.mediaPlayer === "string" ? r.mediaPlayer.trim() : current.mediaPlayer;
   if (!ENTITY_ID_RE.test(mediaPlayer)) throw new ApiError(400, "speech mediaPlayer must be a media_player entity id");
+  const provider = r.provider === undefined ? current.provider : parseVoiceProvider(r.provider);
+  const providerChanged = provider !== current.provider;
   return {
     mediaPlayer,
     ttsEngine: typeof r.ttsEngine === "string" && /^[a-z0-9_.]+$/.test(r.ttsEngine) ? r.ttsEngine : current.ttsEngine,
     // "nl", "nl-NL" or a full voice name such as "nl-NL-FennaNeural" (Edge/Azure style engines take the voice as language).
     language: typeof r.language === "string" && /^[a-z]{2}(-[A-Za-z]{2})?(-[A-Za-z0-9]+)?$/.test(r.language) ? r.language : current.language,
     ttsVolume: parseTtsVolume(r.ttsVolume, current.ttsVolume),
-    provider: r.provider === undefined ? current.provider : parseVoiceProvider(r.provider),
-    voiceId: typeof r.voiceId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(r.voiceId.trim()) ? r.voiceId.trim() : current.voiceId,
-    model: typeof r.model === "string" && /^[A-Za-z0-9_.-]{0,64}$/.test(r.model.trim()) ? r.model.trim() : current.model,
+    provider,
+    voiceId: typeof r.voiceId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(r.voiceId.trim()) ? r.voiceId.trim() : (providerChanged ? PROVIDER_VOICE_DEFAULTS[provider].voiceId : current.voiceId),
+    model: typeof r.model === "string" && /^[A-Za-z0-9_.-]{0,64}$/.test(r.model.trim()) ? r.model.trim() : (providerChanged ? PROVIDER_VOICE_DEFAULTS[provider].model : current.model),
     style: typeof r.style === "string" ? r.style.slice(0, 300) : current.style,
     // "***" is the masked key echoed back by the status endpoint — keep the stored one; "" clears it.
     apiKey: typeof r.apiKey === "string" && r.apiKey !== "***" ? r.apiKey.trim() : current.apiKey,
@@ -594,8 +596,8 @@ function parseSpeech(raw: unknown, current: HASpeechConfig): HASpeechConfig {
 }
 
 function parseVoiceProvider(raw: unknown): HASpeechConfig["provider"] {
-  if (raw === "homeassistant" || raw === "elevenlabs" || raw === "openai") return raw;
-  throw new ApiError(400, "speech provider must be homeassistant, elevenlabs or openai");
+  if (raw === "homeassistant" || raw === "grok" || raw === "elevenlabs" || raw === "openai") return raw;
+  throw new ApiError(400, "speech provider must be homeassistant, grok, elevenlabs or openai");
 }
 
 function parseTtsVolume(raw: unknown, current: number | null): number | null {

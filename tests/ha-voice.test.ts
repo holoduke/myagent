@@ -20,7 +20,7 @@ vi.mock("../backend/integrations/homeassistant.js", () => ({
 }));
 
 import {
-  resolveApiKey, isPremiumVoiceConfigured, audioIdFor, buildElevenLabsRequest, buildOpenAIRequest,
+  resolveApiKey, isPremiumVoiceConfigured, audioIdFor, buildElevenLabsRequest, buildOpenAIRequest, buildGrokRequest,
   synthesizeSpeech, planSpeech, parseAudioId, handleTtsAudio, TTS_DIR,
 } from "../backend/ha-voice.js";
 import type { HASpeechConfig } from "../backend/integrations/homeassistant.js";
@@ -38,6 +38,7 @@ describe("configuration", () => {
     expect(resolveApiKey(base, {})).toBe("key-abc");
     expect(resolveApiKey({ ...base, apiKey: "" }, { ELEVENLABS_API_KEY: "env-el" })).toBe("env-el");
     expect(resolveApiKey({ ...base, apiKey: "", provider: "openai" }, { OPENAI_API_KEY: "env-oa" })).toBe("env-oa");
+    expect(resolveApiKey({ ...base, apiKey: "", provider: "grok" }, { GROK_API_KEY: "env-gk" })).toBe("env-gk");
     expect(resolveApiKey({ ...base, apiKey: "", provider: "homeassistant" }, { OPENAI_API_KEY: "x" })).toBe("");
   });
 
@@ -68,6 +69,16 @@ describe("provider requests", () => {
     const r = buildOpenAIRequest({ ...base, provider: "openai", voiceId: "onyx", model: "gpt-4o-mini-tts", style: "calm" }, "Hoi", "k");
     expect(r.headers.Authorization).toBe("Bearer k");
     expect(JSON.parse(r.body)).toEqual({ model: "gpt-4o-mini-tts", voice: "onyx", input: "Hoi", response_format: "mp3", instructions: "calm" });
+  });
+});
+
+describe("grok request", () => {
+  it("posts to xAI with the voice id and the language derived from an Edge voice name", () => {
+    const r = buildGrokRequest({ ...base, provider: "grok", voiceId: "eve", language: "nl-NL-FennaNeural" }, "Goedenavond", "k");
+    expect(r.url).toBe("https://api.x.ai/v1/tts");
+    expect(r.headers.Authorization).toBe("Bearer k");
+    expect(JSON.parse(r.body)).toMatchObject({ text: "Goedenavond", voice_id: "eve", language: "nl", output_format: { codec: "mp3" } });
+    expect(JSON.parse(buildGrokRequest({ ...base, provider: "grok", language: "" }, "x", "k").body).language).toBe("auto");
   });
 });
 

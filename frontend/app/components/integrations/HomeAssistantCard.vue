@@ -48,22 +48,23 @@
         <label class="intg-label">Voice provider
           <select v-model="speech.provider" class="intg-input">
             <option value="homeassistant">Home Assistant engine (above)</option>
+            <option value="grok">Grok / xAI (uses the existing Grok key)</option>
             <option value="elevenlabs">ElevenLabs (premium, synthesized by ARIA)</option>
             <option value="openai">OpenAI TTS (synthesized by ARIA)</option>
           </select>
         </label>
         <template v-if="speech.provider !== 'homeassistant'">
           <label class="intg-label">{{ speech.provider === 'elevenlabs' ? 'Voice id' : 'Voice name' }}
-            <input v-model="speech.voiceId" class="intg-input" :placeholder="speech.provider === 'elevenlabs' ? 'JBFqnCBsd6RMkjVDRZzb (George)' : 'onyx'" />
+            <input v-model="speech.voiceId" class="intg-input" :placeholder="speech.provider === 'elevenlabs' ? 'JBFqnCBsd6RMkjVDRZzb (George)' : speech.provider === 'grok' ? 'eve, ara, rex, sal or leo' : 'onyx'" />
           </label>
-          <label class="intg-label">Model
+          <label v-if="speech.provider !== 'grok'" class="intg-label">Model
             <input v-model="speech.model" class="intg-input" :placeholder="speech.provider === 'elevenlabs' ? 'eleven_multilingual_v2' : 'gpt-4o-mini-tts'" />
           </label>
-          <label class="intg-label">Style / instructions
+          <label v-if="speech.provider === 'openai'" class="intg-label">Style / instructions
             <input v-model="speech.style" class="intg-input" placeholder="calm, measured, like a ship's computer" />
           </label>
           <label class="intg-label">API key
-            <input v-model="speech.apiKey" type="password" class="intg-input" placeholder="leave *** to keep, empty to use env var" />
+            <input v-model="speech.apiKey" type="password" class="intg-input" placeholder="leave *** to keep, empty to use the server env var" />
           </label>
         </template>
       </div>

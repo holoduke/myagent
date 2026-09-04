@@ -118,10 +118,11 @@ Delivery: the automation sets the speaker volume (`media_player.volume_set`,
 volume + TTS calls itself; `ttsVolume` (0–1, or null to leave it) applies to
 every server-initiated announcement (reflex push, CLI `speak`, dashboard).
 
-### Premium voice (ElevenLabs / OpenAI)
+### Premium voice (Grok / ElevenLabs / OpenAI)
 
-Set `speech.provider` to `elevenlabs` or `openai` and give a key (dashboard
-field, or `ELEVENLABS_API_KEY` / `OPENAI_API_KEY` in the environment). ARIA
+Set `speech.provider` to `grok`, `elevenlabs` or `openai` and give a key
+(dashboard field, or `GROK_API_KEY` / `ELEVENLABS_API_KEY` / `OPENAI_API_KEY`
+in the environment; Grok reuses the key the brain already has). ARIA
 then synthesizes every announcement herself (`backend/ha-voice.ts`), stores the
 MP3 under `/data/homeassistant/tts/` and returns `reflex.audioUrl`
 (`GET /homeassistant/tts/<32-hex>.mp3`, public, expires after a day). The
@@ -129,7 +130,10 @@ automation plays that URL with `media_player.play_media`; the CLI and
 dashboard do the same. Any provider failure falls back to the Home Assistant
 engine, so the button still answers. Clips are cached per text+voice.
 
-Defaults: ElevenLabs voice "George" (`JBFqnCBsd6RMkjVDRZzb`, calm, mature; HAL
+**Grok (xAI, in production):** `POST https://api.x.ai/v1/tts`, voices `eve`
+(default, female), `ara`, `rex`, `sal`, `leo`; language derived from
+`speech.language` ("nl-NL-FennaNeural" → `nl`); ≈1 s per clip, $4.20 per
+million characters. Defaults: ElevenLabs voice "George" (`JBFqnCBsd6RMkjVDRZzb`, calm, mature; HAL
 territory with `eleven_multilingual_v2` in Dutch). OpenAI: `gpt-4o-mini-tts`,
 voice `onyx`, `style` becomes the delivery instructions ("calm, measured, like
 a ship's computer"). Costs: ElevenLabs free tier 10k chars/month (~25
