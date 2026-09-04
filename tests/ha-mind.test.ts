@@ -17,6 +17,20 @@ vi.mock("../backend/memory/working-memory.js", () => ({
     activatedNodeIds: [], lastUpdated: 0, temporal: {},
   }),
 }));
+vi.mock("../backend/memory/graph.js", () => ({
+  MemoryGraph: class {
+    load() {}
+    allNodes() {
+      const now = Date.now();
+      return [
+        { id: "p1", type: "person", content: "Ilse — partner van Gillis, houdt van wandelen", tags: [], strength: 0.9, pinned: true, createdAt: 1, lastAccessedAt: now, accessCount: 5 },
+        { id: "e1", type: "event", content: "Lucas heeft zaterdag een wedstrijd", tags: [], strength: 0.6, pinned: false, importance: 0.7, createdAt: 1, lastAccessedAt: now - 3_600_000, accessCount: 2 },
+        { id: "m1", type: "meta", content: "tick stats", tags: [], strength: 0.9, pinned: false, createdAt: 1, lastAccessedAt: now, accessCount: 1 },
+        { id: "w1", type: "fact", content: "weak old fact", tags: [], strength: 0.1, pinned: false, createdAt: 1, lastAccessedAt: 1, accessCount: 1 },
+      ];
+    }
+  },
+}));
 vi.mock("../backend/consciousness.js", () => ({
   getConsciousnessSummary: () => "ik merk dat Gillis vandaag veel aan het bouwen is.",
 }));
@@ -33,7 +47,7 @@ vi.mock("../backend/utils/file-store.js", () => ({
   ensureDir: () => {}, atomicWriteFile: () => {}, atomicWriteJSON: () => {},
 }));
 
-import { gatherMindContext, buildMindPrompt, buildMindTemplate, composeMindBriefing } from "../backend/ha-mind.js";
+import { gatherMindContext, buildMindPrompt, buildMindTemplate, composeMindBriefing, selectMemories } from "../backend/ha-mind.js";
 
 const NOW = new Date("2026-09-04T12:30:00Z");
 
@@ -51,6 +65,22 @@ describe("gatherMindContext", () => {
     expect(ctx.observations[0]).toContain("Ilse: Kom je vanavond");
     expect(ctx.observations[1]).toContain("Gillis in Koreman en Co: Gefeliciteerd");
     expect(ctx.lastMessage).toContain("die call");
+    // long-term memory: pinned first, meta and weak nodes excluded
+    expect(ctx.memories[0]).toBe("[person, vast] Ilse — partner van Gillis, houdt van wandelen");
+    expect(ctx.memories).toHaveLength(2);
+  });
+});
+
+describe("selectMemories", () => {
+  it("ranks pinned and important recent nodes first and caps the list", () => {
+    const now = Date.now();
+    const nodes = Array.from({ length: 50 }, (_, i) => ({
+      id: `n${i}`, type: "fact" as const, content: `feit ${i}`, tags: [], strength: 0.5, pinned: i === 49, importance: i / 100,
+      createdAt: 1, lastAccessedAt: now - i * 3_600_000, accessCount: 1,
+    }));
+    const out = selectMemories(nodes, now, 5);
+    expect(out).toHaveLength(5);
+    expect(out[0]).toBe("[fact, vast] feit 49");
   });
 });
 
@@ -62,6 +92,8 @@ describe("prompt and template", () => {
     expect(prompt).toContain("Niet het weer");
     expect(prompt).toContain("Heeft Rob al gereageerd");
     expect(prompt).toContain("Kom je vanavond");
+    expect(prompt).toContain("langetermijngeheugen");
+    expect(prompt).toContain("Ilse — partner");
   });
 
   it("template is honest and short", () => {

@@ -160,11 +160,22 @@ All state lives in `/data/` (Docker volume):
 
 ## Coolify Deployment
 
-Auto-deploys on push to `main` via `.github/workflows/deploy.yml`.
+Every push to `main` deploys both apps through Coolify's own GitHub webhook
+(repo webhook → `/webhooks/source/github/events/manual`; the backend and the
+frontend app share the webhook secret). No GitHub Actions minutes are used; the
+old workflow is kept as `.github/workflows/deploy.yml.disabled`.
 
-Required GitHub secrets: `COOLIFY_TOKEN`, `COOLIFY_URL`, `COOLIFY_APP_UUID`
+Manual (re)deploys from a laptop:
 
-Optional GitHub variable: `COOLIFY_FRONTEND_APP_UUID` (if frontend is deployed separately)
+```
+scripts/deploy.sh              # backend + frontend
+scripts/deploy.sh backend      # one app
+scripts/deploy.sh --force      # rebuild without cache
+```
+
+The script reads `~/.config/myagent/coolify.env` (`COOLIFY_URL`, `COOLIFY_TOKEN`,
+`COOLIFY_APP_UUID`, `COOLIFY_FRONTEND_APP_UUID`); the token is a Coolify API
+token (Keys & Tokens in the Coolify UI).
 
 ## How the Brain Works
 
