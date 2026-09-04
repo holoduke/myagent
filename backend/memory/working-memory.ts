@@ -288,6 +288,37 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
 const MAX_DAILY_SUMMARIES = 14;   // Keep 2 weeks of daily summaries
 const MAX_WEEKLY_SUMMARIES = 12;  // Keep 3 months of weekly summaries
 
+// Boundary must lie within this fraction of the budget; otherwise we'd risk
+// dropping most of the content for a stray early period.
+const TRUNCATE_BOUNDARY_FLOOR = 0.6;
+
+/**
+ * Truncate `text` to at most `maxLen` chars, preferring a clean cutoff:
+ *   1. last sentence terminator (. ! ?) within budget
+ *   2. last whitespace within budget
+ *   3. hard char cap
+ */
+function smartTruncate(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  const slice = text.slice(0, maxLen);
+  const floor = Math.floor(maxLen * TRUNCATE_BOUNDARY_FLOOR);
+
+  let lastSentence = -1;
+  for (let i = slice.length - 1; i >= 0; i--) {
+    const c = slice.charCodeAt(i);
+    if (c === 46 /* . */ || c === 33 /* ! */ || c === 63 /* ? */) {
+      lastSentence = i;
+      break;
+    }
+  }
+  if (lastSentence >= floor) return slice.slice(0, lastSentence + 1);
+
+  const lastSpace = slice.lastIndexOf(" ");
+  if (lastSpace >= floor) return slice.slice(0, lastSpace);
+
+  return slice;
+}
+
 /** Get the Monday of the week containing the given date (ISO week) */
 function getWeekStart(date: Date): string {
   const d = new Date(date);
@@ -307,9 +338,9 @@ export function updateDailySummary(wm: WorkingMemory): void {
   }
 
   const today = wm.temporal?.date || new Date().toISOString().slice(0, 10);
-  // Compress currentContext to a one-liner (first 200 chars)
+  // Compress currentContext to a one-liner, capped at 200 chars (prefer clean cutoff).
   if (wm.currentContext) {
-    wm.temporalSummaries.daily[today] = wm.currentContext.slice(0, 200);
+    wm.temporalSummaries.daily[today] = smartTruncate(wm.currentContext, 200);
   }
 
   // Prune old daily summaries beyond retention window
@@ -346,8 +377,8 @@ export function compileWeeklySummary(wm: WorkingMemory): void {
   // Create weekly summaries for completed weeks
   for (const [weekStart, dailies] of pastWeekDays) {
     if (wm.temporalSummaries.weekly[weekStart]) continue; // already compiled
-    // Combine daily summaries, truncate to 300 chars
-    wm.temporalSummaries.weekly[weekStart] = dailies.join(" | ").slice(0, 300);
+    // Combine daily summaries, capped at 300 chars (prefer clean cutoff).
+    wm.temporalSummaries.weekly[weekStart] = smartTruncate(dailies.join(" | "), 300);
   }
 
   // Prune old weekly summaries
