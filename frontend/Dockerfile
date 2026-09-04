@@ -5,11 +5,10 @@ ENV NUXT_API_URL=${NUXT_API_URL}
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-# The lock file is generated on macOS and lacks the linux-musl native binding
-# for oxc-parser (npm/cli#4828); install it explicitly before nuxt prepare runs.
-RUN npm ci --ignore-scripts \
-    && npm install --no-save --force "@oxc-parser/binding-linux-x64-musl@$(node -p "require('oxc-parser/package.json').version")" \
-    && npx nuxt prepare
+# package-lock.json must list the linux-x64-musl native bindings (oxc, rollup,
+# esbuild, parcel). If a lock generated on macOS drops them (npm/cli#4828),
+# regenerate it with `rm package-lock.json && npm install` before deploying.
+RUN npm ci
 
 COPY . .
 RUN npm run build
