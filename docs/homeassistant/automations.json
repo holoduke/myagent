@@ -2,7 +2,7 @@
   {
     "id": "aria_styrbar_silver_weather",
     "alias": "ARIA: silver STYRBAR → briefing",
-    "description": "Sends every short press of the silver IKEA STYRBAR to ARIA with the Buienradar forecast and speaks ARIA's reply on the WiiM (Edge TTS 'Fenna'). Top/bottom/left = weather, right arrow = what's on ARIA's mind. Falls back to a plain forecast (weather buttons) or a short notice if ARIA is unreachable.",
+    "description": "Sends every short press of the silver IKEA STYRBAR to ARIA with the Buienradar forecast and speaks ARIA's reply on the WiiM (Edge TTS 'Fenna'). Top/bottom/left = weather, right arrow = what's on ARIA's mind. Falls back to a plain forecast (weather buttons) or a short notice if ARIA is unreachable. Retries the ARIA request once after 4 s (deploy blips) before falling back.",
     "mode": "single",
     "max_exceeded": "silent",
     "triggers": [
@@ -62,6 +62,34 @@
         },
         "response_variable": "aria",
         "continue_on_error": true
+      },
+      {
+        "if": [
+          {
+            "condition": "template",
+            "value_template": "{{ aria is not defined or aria.status != 200 }}"
+          }
+        ],
+        "then": [
+          {
+            "delay": {
+              "seconds": 4
+            }
+          },
+          {
+            "action": "rest_command.aria_event",
+            "data": {
+              "type": "button_press",
+              "device": "Ikea switch 3 silver",
+              "action": "{{ trigger.id | default('on') }}",
+              "context": {
+                "forecast": "{{ fc['weather.buienradar'].forecast[:3] }}"
+              }
+            },
+            "response_variable": "aria",
+            "continue_on_error": true
+          }
+        ]
       },
       {
         "action": "media_player.volume_set",
