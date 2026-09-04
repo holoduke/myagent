@@ -9,7 +9,9 @@ import { askClaudeStreaming } from "./claude.js";
 import { getObservationsSince } from "./observer.js";
 import type { Observation } from "./observer.js";
 import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./brain-prompt.js";
-import type { OutgoingActivityGroup } from "./brain-prompt.js";
+import type { OutgoingActivityGroup, DigestCarryover } from "./brain-prompt.js";
+import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
+import { existsSync, unlinkSync } from "fs";
 import type { MessageQueue } from "./queue.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, ImprovementProposal } from "./memory/types.js";
@@ -38,7 +40,7 @@ import {
 } from "./self-improve-queue.js";
 import { loadSubAgents, loadSubAgentHistory } from "./sub-agents.js";
 import { trySendMessage, isQuietHour } from "./brain-delivery.js";
-import { OWNER_NAME, GITHUB_REPO } from "./config.js";
+import { OWNER_NAME, GITHUB_REPO, BRAIN_DIR } from "./config.js";
 import { critiqueResponse } from "./response-critique.js";
 import { extractPreferenceSignals, updatePreferences } from "./preference-learner.js";
 import { extractEmotionSignals, recordEmotionSignals } from "./emotion-tracker.js";
@@ -187,6 +189,63 @@ function digestRerouteDeliverAt(now: number, cfg: BrainConfig): number {
   return now + hoursUntilEnd * 3600_000;
 }
 
+// ── Digest carryover (stale-drop backstop) ──
+//
+// When the stale-digest guard drops a rerouted digest, the owner never sees
+// that content — the guard's premise is "the next digest covers the same
+// ground", but nothing enforced that. The carryover file persists the dropped
+// message so the next [DIGEST REQUEST:] prompt can fold it in, turning that
+// premise into a code-level guarantee instead of relying on working-memory
+// discipline.
+
+const DIGEST_CARRYOVER_FILE = `${BRAIN_DIR}/digest-carryover.json`;
+const DIGEST_CARRYOVER_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
+function saveDigestCarryover(carryover: DigestCarryover): void {
+  try {
+    ensureDir(BRAIN_DIR);
+    atomicWriteJSON(DIGEST_CARRYOVER_FILE, carryover);
+    log(`Digest carryover persisted for next digest tick (target ${carryover.targetJid}, ${carryover.text.length} chars)`);
+  } catch (err) {
+    log(`Failed to persist digest carryover (non-fatal): ${err}`);
+  }
+}
+
+export function clearDigestCarryover(): void {
+  try {
+    if (existsSync(DIGEST_CARRYOVER_FILE)) unlinkSync(DIGEST_CARRYOVER_FILE);
+  } catch (err) {
+    log(`Failed to clear digest carryover (non-fatal): ${err}`);
+  }
+}
+
+/**
+ * Load the pending digest carryover, or null if none. Entries older than 48h
+ * are deleted and not returned — stale zombie content must never resurface in
+ * a briefing two days later.
+ */
+function loadDigestCarryover(now: number): DigestCarryover | null {
+  try {
+    if (!existsSync(DIGEST_CARRYOVER_FILE)) return null;
+    const raw = safeReadJSON<Partial<DigestCarryover> | null>(DIGEST_CARRYOVER_FILE, null);
+    if (!raw || typeof raw.text !== "string" || typeof raw.droppedAt !== "number"
+      || typeof raw.targetJid !== "string" || typeof raw.reason !== "string") {
+      log("Digest carryover file invalid — discarding");
+      clearDigestCarryover();
+      return null;
+    }
+    if (now - raw.droppedAt > DIGEST_CARRYOVER_MAX_AGE_MS) {
+      log(`Digest carryover expired (dropped ${new Date(raw.droppedAt).toISOString()}, >48h old) — discarding`);
+      clearDigestCarryover();
+      return null;
+    }
+    return raw as DigestCarryover;
+  } catch (err) {
+    log(`Failed to load digest carryover (non-fatal): ${err}`);
+    return null;
+  }
+}
+
 // ── Think Tick (Claude call) ──
 
 export async function thinkTick(
@@ -240,6 +299,12 @@ export async function thinkTick(
     autoApprove: cfg.selfImproveAutoApprove,
   } : undefined;
 
+  // Digest-carryover backstop: if a previous digest was dropped by the
+  // stale-digest guard, inject its content into this digest prompt so it
+  // survives the drop. Consumed (cleared) once the brain has processed it.
+  const isDigestTick = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
+  const digestCarryover = isDigestTick ? loadDigestCarryover(now) : null;
+
   const prompt = buildThinkPrompt({
     ownerName: OWNER_NAME,
     githubRepo: GITHUB_REPO,
@@ -262,6 +327,7 @@ export async function thinkTick(
     queuedMessages: getScheduledMessages(),
     recentDeliveryLog: getRecentDeliveryLog(DELIVERY_SECTION_WINDOW_MS),
     selfImproveStats: selfImproveStatsThink,
+    digestCarryover: digestCarryover ?? undefined,
   });
 
   // Log prompt size for cost monitoring
@@ -305,6 +371,14 @@ export async function thinkTick(
       log(`Could not parse think response (raw length: ${responseText.length}), skipping — observations preserved for retry`);
       state.lastThinkTick = now;
       return false;
+    }
+
+    if (digestCarryover) {
+      // The carryover was injected into this prompt and the brain processed
+      // it — discard so it can't resurface in a later briefing. (Kept on
+      // parse failure above: the retried tick re-injects it.)
+      clearDigestCarryover();
+      log("Digest carryover injected into this digest tick and cleared");
     }
 
     log(`Think reasoning: ${response.reasoning?.slice(0, 200) || "(none)"}`);
@@ -535,9 +609,18 @@ export async function thinkTick(
           // the next digest covers the same ground with fresher content.
           const nextDigestSlot = getNextDigestSlot(now);
           if (nextDigestSlot !== null && deliverAt >= nextDigestSlot) {
+            const dropReason = `stale digest — rerouted delivery at ${new Date(deliverAt).toISOString()} would land after next digest slot ${new Date(nextDigestSlot).toISOString()}`;
             log(`Digest blocked by autonomy level — dropped as stale: reroute deliverAt ${new Date(deliverAt).toISOString()} falls after next digest slot ${new Date(nextDigestSlot).toISOString()}`);
-            recordBrainDelivery(state, response.message, messageTarget, "suppressed",
-              `stale digest — rerouted delivery at ${new Date(deliverAt).toISOString()} would land after next digest slot ${new Date(nextDigestSlot).toISOString()}`);
+            recordBrainDelivery(state, response.message, messageTarget, "suppressed", dropReason);
+            // Backstop: persist the dropped content so the next digest prompt
+            // can fold it in — "the next digest covers the same ground" must
+            // not depend on working-memory hygiene alone.
+            saveDigestCarryover({
+              targetJid: messageTarget,
+              text: response.message,
+              droppedAt: now,
+              reason: dropReason,
+            });
           } else {
             // A newer digest supersedes any still-queued older one for the same
             // target — never deliver two briefings back-to-back.

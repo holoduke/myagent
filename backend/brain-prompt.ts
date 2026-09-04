@@ -710,6 +710,18 @@ function formatDeliverySection(
   return parts.join("\n\n");
 }
 
+/**
+ * A digest dropped by the stale-digest guard in brain-ticks.ts, persisted to
+ * /data/brain/digest-carryover.json so the next digest tick can fold its
+ * content into the fresh briefing instead of losing it.
+ */
+export interface DigestCarryover {
+  targetJid: string;
+  text: string;
+  droppedAt: number;
+  reason: string;
+}
+
 export interface ThinkContext {
   ownerName: string;
   githubRepo?: string;
@@ -733,6 +745,8 @@ export interface ThinkContext {
   queuedMessages?: ScheduledMessage[];
   /** Last 24h of delivery-log entries including suppressed/failed outcomes */
   recentDeliveryLog?: DeliveryRecord[];
+  /** Digest dropped by the stale-digest guard, awaiting fold-in on this digest tick */
+  digestCarryover?: DigestCarryover;
   selfImproveStats?: {
     enabled: boolean;
     maxPerWeek: number;
@@ -773,6 +787,13 @@ export function buildThinkPrompt(ctx: ThinkContext): string {
     ? `\n═══ RECENTLY SENT (chat session / other) ═══\n\nThese messages and emails were already sent recently. Do NOT send duplicate messages or emails to the same contacts/recipients about the same topics.\n\n${ctx.recentChatDeliveries.map(d => `  [${formatTime(d.timestamp)}] → ${d.jid}: "${d.messageSnippet}"`).join("\n")}\n`
     : "";
 
+  // Digest-carryover backstop: a previously generated digest was dropped by
+  // the stale-digest guard before delivery. Surface it prominently on this
+  // digest tick so its content survives into the fresh briefing.
+  const digestCarryoverBlock = ctx.digestCarryover && hasDigestRequest
+    ? `\n═══ PREVIOUS DIGEST WAS SUPPRESSED AND NEVER DELIVERED ═══\n\nThe digest below was generated ${timeAgo(ctx.digestCarryover.droppedAt)} (target ${ctx.digestCarryover.targetJid}) but dropped before delivery (${ctx.digestCarryover.reason}). ${ctx.ownerName} NEVER received it. Fold anything still relevant into this briefing, then it is discarded — this is the only chance to recover its content. Skip anything now outdated or already covered by fresher observations.\n\n--- undelivered digest content ---\n${ctx.digestCarryover.text}\n--- end undelivered digest content ---\n`
+    : "";
+
   const rejectedEdges = collectRelevantRejectedEdges(ctx.graph, ctx.contextNodes);
   const rejectedBlock = rejectedEdges.length > 0
     ? `\n═══ PRIOR REJECTIONS ═══\n\nThese candidate edges were proposed before and refused. Do NOT re-propose them unless the reason no longer applies — strengthen the existing rejection (reject_edge again with the same from/to) instead of rederiving.\n\n${formatRejectedEdgesForPrompt(rejectedEdges, ctx.graph)}\n`
@@ -790,7 +811,7 @@ Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${effectivelyQuiet ? "AC
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
 ${formatWorkingMemory(ctx.wm)}
-${formatConsciousnessSection()}${goalsBlock}${initiativeBlock}${lastDeliveryBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}${formatEnhancedContextSections(ctx.graph)}${formatCognitiveLoadSection(ctx.wm, ctx.observations)}${formatDigestTemplate(ctx.wm, ctx.graph)}
+${formatConsciousnessSection()}${goalsBlock}${initiativeBlock}${lastDeliveryBlock}${chatDeliveryBlock}${formatPermissionRules(ctx.ownerName)}${formatActionableFlags(ctx.observations, ctx.ownerName)}${formatPreferencesSection(ctx.graph)}${formatEnhancedContextSections(ctx.graph)}${formatCognitiveLoadSection(ctx.wm, ctx.observations)}${formatDigestTemplate(ctx.wm, ctx.graph)}${digestCarryoverBlock}
 ═══ ACTIVATED MEMORIES ═══
 ${serializeNodesForPrompt(ctx.contextNodes, ctx.graph)}
 ${rejectedBlock}
