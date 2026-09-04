@@ -794,6 +794,14 @@ async function tick(
   freshState.recurringBudgetDate = state.recurringBudgetDate;
   freshState.lastBrainMessage = state.lastBrainMessage;
 
+  // Initiative signal snoozes & surfaced counts are mutated during ticks
+  // (applySignalOps / recordSignalsSurfaced / expiry purge in
+  // detectInitiativeSignals). They must be carried through this selective
+  // save — otherwise brain-issued snoozes are silently dropped on the final
+  // saveState(freshState) and the same signals re-fire every tick.
+  freshState.signalSnoozes = state.signalSnoozes;
+  freshState.signalSurfacedCounts = state.signalSurfacedCounts;
+
   freshState.nodeCount = graph.nodeCount;
   freshState.edgeCount = graph.edgeCount;
 
