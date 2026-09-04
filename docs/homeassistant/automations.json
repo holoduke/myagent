@@ -84,15 +84,41 @@
             ],
             "sequence": [
               {
-                "action": "tts.speak",
-                "target": {
-                  "entity_id": "tts.edge_tts_service_edge_tts"
-                },
-                "data": {
-                  "media_player_entity_id": "media_player.wiim_amp_ultra_3d72",
-                  "message": "{{ aria.content.reflex.speak }}",
-                  "language": "nl-NL-FennaNeural"
-                }
+                "choose": [
+                  {
+                    "conditions": [
+                      {
+                        "condition": "template",
+                        "value_template": "{{ (aria.content.reflex.audioUrl | default('') | length) > 0 }}"
+                      }
+                    ],
+                    "sequence": [
+                      {
+                        "action": "media_player.play_media",
+                        "target": {
+                          "entity_id": "media_player.wiim_amp_ultra_3d72"
+                        },
+                        "data": {
+                          "media_content_id": "{{ aria.content.reflex.audioUrl }}",
+                          "media_content_type": "music"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "default": [
+                  {
+                    "action": "tts.speak",
+                    "target": {
+                      "entity_id": "tts.edge_tts_service_edge_tts"
+                    },
+                    "data": {
+                      "media_player_entity_id": "media_player.wiim_amp_ultra_3d72",
+                      "message": "{{ aria.content.reflex.speak }}",
+                      "language": "nl-NL-FennaNeural"
+                    }
+                  }
+                ]
               }
             ]
           }

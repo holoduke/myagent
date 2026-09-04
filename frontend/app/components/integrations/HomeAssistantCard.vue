@@ -45,7 +45,29 @@
         <label class="intg-label">Announcement volume (0–1)
           <input v-model.number="speech.ttsVolume" type="number" min="0" max="1" step="0.05" class="intg-input intg-input-sm" />
         </label>
+        <label class="intg-label">Voice provider
+          <select v-model="speech.provider" class="intg-input">
+            <option value="homeassistant">Home Assistant engine (above)</option>
+            <option value="elevenlabs">ElevenLabs (premium, synthesized by ARIA)</option>
+            <option value="openai">OpenAI TTS (synthesized by ARIA)</option>
+          </select>
+        </label>
+        <template v-if="speech.provider !== 'homeassistant'">
+          <label class="intg-label">{{ speech.provider === 'elevenlabs' ? 'Voice id' : 'Voice name' }}
+            <input v-model="speech.voiceId" class="intg-input" :placeholder="speech.provider === 'elevenlabs' ? 'JBFqnCBsd6RMkjVDRZzb (George)' : 'onyx'" />
+          </label>
+          <label class="intg-label">Model
+            <input v-model="speech.model" class="intg-input" :placeholder="speech.provider === 'elevenlabs' ? 'eleven_multilingual_v2' : 'gpt-4o-mini-tts'" />
+          </label>
+          <label class="intg-label">Style / instructions
+            <input v-model="speech.style" class="intg-input" placeholder="calm, measured, like a ship's computer" />
+          </label>
+          <label class="intg-label">API key
+            <input v-model="speech.apiKey" type="password" class="intg-input" placeholder="leave *** to keep, empty to use env var" />
+          </label>
+        </template>
       </div>
+      <p class="ha-hint">Premium voices are generated on the server and streamed to the speaker from ARIA's URL; if the provider fails, the Home Assistant engine speaks instead.</p>
       <div class="btn-row">
         <button class="btn primary" :disabled="busy" @click="saveSpeech">Save speech</button>
       </div>
@@ -160,7 +182,7 @@ const busy = ref(false)
 const showToken = ref(false)
 const preview = ref('')
 
-const DEFAULT_SPEECH: HASpeechConfig = { mediaPlayer: 'media_player.wiim_amp_ultra_3d72', ttsEngine: 'google_translate', language: 'nl', ttsVolume: 0.3 }
+const DEFAULT_SPEECH: HASpeechConfig = { mediaPlayer: 'media_player.wiim_amp_ultra_3d72', ttsEngine: 'google_translate', language: 'nl', ttsVolume: 0.3, provider: 'homeassistant', voiceId: 'JBFqnCBsd6RMkjVDRZzb', model: 'eleven_multilingual_v2', style: '', apiKey: '' }
 const DEFAULT_WEATHER: HAWeatherReflexConfig = { enabled: true, device: 'Ikea switch 3 silver', actions: ['on', 'off', 'arrow_left_click'], eveningHour: 14, weatherEntity: 'weather.buienradar', pushTts: false }
 const DEFAULT_MIND: HAButtonRule = { enabled: true, device: 'Ikea switch 3 silver', actions: ['arrow_right_click'], pushTts: false }
 

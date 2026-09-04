@@ -58,6 +58,16 @@ export interface HASpeechConfig {
   language: string;
   /** Speaker volume (0–1) set right before ARIA speaks; null leaves the volume alone. */
   ttsVolume: number | null;
+  /** "homeassistant" uses ttsEngine; "elevenlabs"/"openai" synthesize on the server and stream a clip. */
+  provider: "homeassistant" | "elevenlabs" | "openai";
+  /** ElevenLabs voice id or OpenAI voice name. */
+  voiceId: string;
+  /** Provider model (eleven_multilingual_v2, gpt-4o-mini-tts, …). */
+  model: string;
+  /** Delivery instructions for providers that take them (OpenAI). */
+  style: string;
+  /** Provider API key; empty = use ELEVENLABS_API_KEY / OPENAI_API_KEY from the environment. */
+  apiKey: string;
 }
 
 /** Which button press fires a reflex. */
@@ -116,7 +126,15 @@ export const DEFAULT_SPEECH: HASpeechConfig = {
   ttsEngine: "google_translate",
   language: "nl",
   ttsVolume: 0.3,
+  provider: "homeassistant",
+  // ElevenLabs "George": calm, mature, works well in Dutch with the multilingual model.
+  voiceId: "JBFqnCBsd6RMkjVDRZzb",
+  model: "eleven_multilingual_v2",
+  style: "",
+  apiKey: "",
 };
+
+const VOICE_PROVIDERS = new Set<HASpeechConfig["provider"]>(["homeassistant", "elevenlabs", "openai"]);
 
 export const DEFAULT_WEATHER_REFLEX: HAWeatherReflexConfig = {
   enabled: true,
@@ -182,6 +200,11 @@ export function withDefaults(partial: Partial<HAConfig> | null | undefined): HAC
     ttsEngine: typeof speechRaw.ttsEngine === "string" && speechRaw.ttsEngine ? speechRaw.ttsEngine : DEFAULT_SPEECH.ttsEngine,
     language: typeof speechRaw.language === "string" && speechRaw.language ? speechRaw.language : DEFAULT_SPEECH.language,
     ttsVolume: speechRaw.ttsVolume === null ? null : clampNumber(speechRaw.ttsVolume, DEFAULT_SPEECH.ttsVolume ?? 0.3, 0, 1),
+    provider: speechRaw.provider && VOICE_PROVIDERS.has(speechRaw.provider) ? speechRaw.provider : DEFAULT_SPEECH.provider,
+    voiceId: typeof speechRaw.voiceId === "string" && speechRaw.voiceId ? speechRaw.voiceId : DEFAULT_SPEECH.voiceId,
+    model: typeof speechRaw.model === "string" ? speechRaw.model : DEFAULT_SPEECH.model,
+    style: typeof speechRaw.style === "string" ? speechRaw.style : DEFAULT_SPEECH.style,
+    apiKey: typeof speechRaw.apiKey === "string" ? speechRaw.apiKey : "",
   };
   const weather = normalizeRule(legacy, DEFAULT_WEATHER_REFLEX);
   return {
@@ -420,6 +443,7 @@ export function getHAStatus(): HAStatusResponse {
     recentEvents: recent.slice(0, 25),
     config: {
       ...config,
+      speech: { ...config.speech, apiKey: config.speech.apiKey ? "***" : "" },
       direct_api: config.direct_api ? { ...config.direct_api, token: config.direct_api.token ? "***" : "" } : undefined,
       cloud: config.cloud ? { ...config.cloud, token: config.cloud.token ? "***" : "" } : undefined,
     },

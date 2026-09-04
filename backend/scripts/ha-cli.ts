@@ -13,7 +13,8 @@
  * polling interval. Only allow-listed service domains are accepted.
  */
 
-import { getStates, buildTtsCall, buildVolumeCall } from "../integrations/ha-client.js";
+import { getStates, buildVolumeCall } from "../integrations/ha-client.js";
+import { planSpeech } from "../ha-voice.js";
 import { dispatchCommand } from "../integrations/ha-commands.js";
 import { getRecentEvents, describeEvent } from "../integrations/ha-events.js";
 import { loadConfig } from "../integrations/homeassistant.js";
@@ -107,9 +108,9 @@ async function main() {
     if (speech.ttsVolume !== null) {
       await dispatchCommand(buildVolumeCall(player, speech.ttsVolume), "cli", "announcement volume");
     }
-    const call = buildTtsCall(cmd.text, { player, engine: speech.ttsEngine, language: speech.language });
-    const result = await dispatchCommand(call, "cli", "spoken message");
-    console.log(result.mode === "direct" ? "Spoken via Home Assistant." : `Queued for the house (${result.command.id}).`);
+    const plan = await planSpeech(cmd.text, speech, player);
+    const result = await dispatchCommand(plan.call, "cli", "spoken message");
+    console.log(`${result.mode === "direct" ? "Spoken via Home Assistant" : `Queued for the house (${result.command.id})`} [voice: ${plan.provider}].`);
     return;
   }
 

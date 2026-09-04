@@ -140,6 +140,11 @@ export interface HASpeechConfig {
   ttsEngine: string
   language: string
   ttsVolume: number | null
+  provider: 'homeassistant' | 'elevenlabs' | 'openai'
+  voiceId: string
+  model: string
+  style: string
+  apiKey: string
 }
 
 export interface HAButtonRule {

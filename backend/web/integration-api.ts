@@ -7,7 +7,8 @@ import { getCalendarStatus, createEvent, listCalendars, loadCalendarConfig, save
 import type { CalendarConfigEntry } from "../integrations/calendar.js";
 import { getHAStatus, saveConfig, restartHAPolling, regenerateWebhookToken, DEFAULT_WEATHER_REFLEX, DEFAULT_MIND_REFLEX, loadConfig as loadHAConfig } from "../integrations/homeassistant.js";
 import type { HAConfig, HAConnectionMode, HAWeatherReflexConfig, HAButtonRule, HASpeechConfig } from "../integrations/homeassistant.js";
-import { testHAConnection, buildTtsCall, buildVolumeCall } from "../integrations/ha-client.js";
+import { testHAConnection, buildVolumeCall } from "../integrations/ha-client.js";
+import { planSpeech } from "../ha-voice.js";
 import { getRecentEvents } from "../integrations/ha-events.js";
 import { getCommandQueue, dispatchCommand } from "../integrations/ha-commands.js";
 import { testReflex } from "../ha-reflexes.js";
@@ -583,7 +584,18 @@ function parseSpeech(raw: unknown, current: HASpeechConfig): HASpeechConfig {
     // "nl", "nl-NL" or a full voice name such as "nl-NL-FennaNeural" (Edge/Azure style engines take the voice as language).
     language: typeof r.language === "string" && /^[a-z]{2}(-[A-Za-z]{2})?(-[A-Za-z0-9]+)?$/.test(r.language) ? r.language : current.language,
     ttsVolume: parseTtsVolume(r.ttsVolume, current.ttsVolume),
+    provider: r.provider === undefined ? current.provider : parseVoiceProvider(r.provider),
+    voiceId: typeof r.voiceId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(r.voiceId.trim()) ? r.voiceId.trim() : current.voiceId,
+    model: typeof r.model === "string" && /^[A-Za-z0-9_.-]{0,64}$/.test(r.model.trim()) ? r.model.trim() : current.model,
+    style: typeof r.style === "string" ? r.style.slice(0, 300) : current.style,
+    // "***" is the masked key echoed back by the status endpoint — keep the stored one; "" clears it.
+    apiKey: typeof r.apiKey === "string" && r.apiKey !== "***" ? r.apiKey.trim() : current.apiKey,
   };
+}
+
+function parseVoiceProvider(raw: unknown): HASpeechConfig["provider"] {
+  if (raw === "homeassistant" || raw === "elevenlabs" || raw === "openai") return raw;
+  throw new ApiError(400, "speech provider must be homeassistant, elevenlabs or openai");
 }
 
 function parseTtsVolume(raw: unknown, current: number | null): number | null {
@@ -657,9 +669,9 @@ const handleHASpeak = apiHandler(async (_req, _res, body: { text?: string; playe
   if (speech.ttsVolume !== null) {
     await dispatchCommand(buildVolumeCall(player, speech.ttsVolume), "api", "announcement volume");
   }
-  const call = buildTtsCall(text, { player, engine: speech.ttsEngine, language: speech.language });
-  const dispatched = await dispatchCommand(call, "api", "dashboard speak");
-  return { success: true, mode: dispatched.mode, command: dispatched.command };
+  const plan = await planSpeech(text, speech, player);
+  const dispatched = await dispatchCommand(plan.call, "api", "dashboard speak");
+  return { success: true, mode: dispatched.mode, voice: plan.provider, audioUrl: plan.audioUrl, command: dispatched.command };
 });
 
 // -- Twilio handlers --
