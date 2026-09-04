@@ -848,7 +848,7 @@ Respond with ONLY a JSON object:
     "conversationThreads": []
   },
   "goalOps": [/* optional goal operations */],
-  "signalOps": [/* optional — snooze a re-firing initiative signal you've decided not to act on: [{"key": "person_absent:Name (exact key from INITIATIVE SIGNALS)", "snoozeDays": 14, "reason": "observe-only decision"}] */],
+  "signalOps": [/* optional — snooze a re-firing initiative signal you've decided not to act on: [{"key": "person_absent:Name (exact key from INITIATIVE SIGNALS)", "snoozeDays": 14, "reason": "observe-only decision"}]. To snooze ALL signal types about one subject at once, use a wildcard key "*:<subject>" (e.g. "*:Name") — one observe-only decision per person instead of one per signal type */],
   "improvementProposals": [/* optional — see self-improvement section below */],
   "requestFlags": [/* optional — see REQUEST FORWARDING below */],
   "consciousnessUpdate": "your updated consciousness state — full replacement of consciousness.dat. Use your ψφΩτμ notation or evolve it freely. Omit if no change."
@@ -1244,7 +1244,7 @@ Respond with ONLY a JSON object:
     "conversationThreads": []
   },
   "goalOps": [/* optional goal operations */],
-  "signalOps": [/* optional — snooze a re-firing initiative signal you've decided not to act on: [{"key": "person_absent:Name (exact key from INITIATIVE SIGNALS)", "snoozeDays": 14, "reason": "observe-only decision"}] */],
+  "signalOps": [/* optional — snooze a re-firing initiative signal you've decided not to act on: [{"key": "person_absent:Name (exact key from INITIATIVE SIGNALS)", "snoozeDays": 14, "reason": "observe-only decision"}]. To snooze ALL signal types about one subject at once, use a wildcard key "*:<subject>" (e.g. "*:Name") — one observe-only decision per person instead of one per signal type */],
   "improvementProposals": [
     {
       "description": "What to change — be specific and actionable",

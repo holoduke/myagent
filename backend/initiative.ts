@@ -211,10 +211,13 @@ export function detectInitiativeSignals(
         if (!activeKeys.has(key)) delete state.signalSurfacedCounts[key];
       }
     }
-    // Skip snoozed signals entirely — the brain already made this decision
+    // Skip snoozed signals entirely — the brain already made this decision.
+    // Besides the exact key, a subject wildcard "*:<subject>" snoozes every
+    // signal type about that subject (one observe-only decision per person).
     if (state.signalSnoozes) {
       result = result.filter(s => {
-        const snooze = state.signalSnoozes![s.key];
+        const wildcardKey = "*:" + s.key.slice(s.key.indexOf(":") + 1);
+        const snooze = state.signalSnoozes![s.key] ?? state.signalSnoozes![wildcardKey];
         if (snooze && snooze.until > now) {
           log(`Signal snoozed, skipping: "${s.key}" (until ${new Date(snooze.until).toISOString()} — ${snooze.reason})`);
           return false;
