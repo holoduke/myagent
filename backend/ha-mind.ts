@@ -15,7 +15,8 @@ import type { Observation } from "./observer.js";
 import { safeReadJSON } from "./utils/file-store.js";
 import { BRAIN_DIR, OWNER_NAME } from "./config.js";
 import { getBrainConfig, getCharacterPreset, getOwnerLocalTime } from "./brain-config.js";
-import type { BrainState, WorkingMemory } from "./memory/types.js";
+import type { BrainState, WorkingMemory, MemoryNode } from "./memory/types.js";
+import { MemoryGraph } from "./memory/graph.js";
 import { greetingForHour, sanitizeSpokenText } from "./ha-weather.js";
 import { createLogger } from "./logger.js";
 
@@ -26,6 +27,9 @@ const MAX_OBS_CHARS = 140;
 const MAX_CONSCIOUSNESS_CHARS = 1500;
 const MAX_TRACKING = 8;
 const MAX_FOLLOWUPS = 6;
+const MAX_MEMORIES = 30;
+const MAX_MEMORY_CHARS = 150;
+const RECENT_MEMORY_WINDOW_MS = 48 * 60 * 60 * 1000;
 /** ~80 spoken words; longer answers are almost always the model rambling. */
 const MAX_SPOKEN_CHARS = 700;
 
@@ -42,6 +46,8 @@ export interface MindContext {
   observations: string[];
   observationCount: number;
   lastMessage: string | null;
+  /** Long-term memory: pinned, important and recently touched graph nodes. */
+  memories: string[];
 }
 
 function startOfOwnerDay(timezone: string, now: Date): number {
@@ -57,6 +63,35 @@ function formatObservation(obs: Observation, timezone: string, ownerName: string
   const where = obs.isGroup && obs.groupName ? ` in ${obs.groupName}` : "";
   const src = obs.source && obs.source !== "whatsapp" ? ` [${obs.source}]` : "";
   return `${time} ${who}${where}${src}: ${obs.text.replace(/\s+/g, " ").slice(0, MAX_OBS_CHARS)}`;
+}
+
+function memoryScore(node: MemoryNode, now: number): number {
+  const recency = Math.max(0, 1 - (now - node.lastAccessedAt) / RECENT_MEMORY_WINDOW_MS);
+  return (node.pinned ? 1 : 0) + (node.importance ?? 0.3) + node.strength * 0.5 + recency;
+}
+
+/**
+ * The slice of long-term memory worth having in mind today: pinned nodes,
+ * high-importance nodes and whatever the brain touched in the last two days.
+ * Reads the graph from disk; the reflex must stay fast, so this is bounded.
+ */
+export function selectMemories(nodes: MemoryNode[], now: number, limit: number = MAX_MEMORIES): string[] {
+  return nodes
+    .filter(n => n.type !== "meta" && n.content && n.strength > 0.15)
+    .sort((a, b) => memoryScore(b, now) - memoryScore(a, now))
+    .slice(0, limit)
+    .map(n => `[${n.type}${n.pinned ? ", vast" : ""}] ${n.content.split("\n")[0].replace(/\s+/g, " ").slice(0, MAX_MEMORY_CHARS)}`);
+}
+
+function loadMemories(now: number): string[] {
+  try {
+    const graph = new MemoryGraph();
+    graph.load();
+    return selectMemories(graph.allNodes(), now);
+  } catch (err) {
+    log(`Could not read memory graph: ${err}`);
+    return [];
+  }
 }
 
 /** Collect today's brain context (pure reads; never throws). */
@@ -94,6 +129,7 @@ export function gatherMindContext(now: Date = new Date(), ownerName: string = OW
     observations: recent.map(o => formatObservation(o, timezone, ownerName)),
     observationCount: meaningful.length,
     lastMessage,
+    memories: loadMemories(now.getTime()),
   };
 }
 
@@ -114,7 +150,7 @@ ${personaLines(ownerName)}
 Vertel in natuurlijk gesproken Nederlands wat er vandaag (${ctx.dateLabel}) door je hoofd gaat. Regels:
 - Begin met "${greetingForHour(ctx.hour)} ${ownerName}." en praat daarna als jezelf, niet als een nieuwslezer.
 - 3 tot 5 zinnen, maximaal ongeveer 80 woorden. Spreektaal, geen opsomming, geen emoji, geen markdown, geen cijfers met decimalen.
-- Kies wat echt de moeite waard is: iets dat je vandaag opviel, iets waar je mee bezig bent of over nadenkt, een open vraag of iets dat ${ownerName} nog moet doen. Eén eigen observatie of mening mag.
+- Kies wat echt de moeite waard is: iets dat je vandaag opviel, iets waar je mee bezig bent of over nadenkt, een open vraag of iets dat ${ownerName} nog moet doen. Eén eigen observatie of mening mag. Je mag ook een verband leggen met iets uit je langetermijngeheugen als dat nu relevant is.
 - Niet het weer (daar is een andere knop voor). Geen letterlijke citaten uit privéberichten van anderen; vat samen.
 - Verzin niets dat niet in de gegevens staat. Als er weinig gebeurd is, zeg dat eerlijk en kort.
 
@@ -128,6 +164,8 @@ LAATSTE BERICHT DAT JE ZELF STUURDE: ${ctx.lastMessage ?? "(vandaag niets)"}
 
 JE EIGEN NOTITIES (consciousness):
 ${ctx.consciousness || "(leeg)"}
+
+${section("WAT JE VERDER WEET (langetermijngeheugen, belangrijkste en recentste)", ctx.memories)}
 
 VANDAAG GEZIEN (${ctx.observationCount} berichten, de laatste ${ctx.observations.length}):
 ${ctx.observations.length ? ctx.observations.join("\n") : "(nog niets)"}

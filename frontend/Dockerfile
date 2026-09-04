@@ -5,7 +5,11 @@ ENV NUXT_API_URL=${NUXT_API_URL}
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm ci || (rm -rf node_modules package-lock.json && npm install)
+# The lock file is generated on macOS and lacks the linux-musl native binding
+# for oxc-parser (npm/cli#4828); install it explicitly before nuxt prepare runs.
+RUN npm ci --ignore-scripts \
+    && npm install --no-save --force "@oxc-parser/binding-linux-x64-musl@$(node -p "require('oxc-parser/package.json').version")" \
+    && npx nuxt prepare
 
 COPY . .
 RUN npm run build
