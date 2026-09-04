@@ -132,8 +132,12 @@ engine, so the button still answers. Clips are cached per text+voice.
 
 **Grok (xAI, in production):** `POST https://api.x.ai/v1/tts`, voices `eve`
 (default, female), `ara`, `rex`, `sal`, `leo`; language derived from
-`speech.language` ("nl-NL-FennaNeural" → `nl`); ≈1 s per clip, $4.20 per
-million characters. Defaults: ElevenLabs voice "George" (`JBFqnCBsd6RMkjVDRZzb`, calm, mature; HAL
+`speech.language` ("nl-NL-FennaNeural" → `nl`); `speech.speed` 0.7–1.5; ≈1 s
+per clip, $4.20 per million characters. `speech.effect` post-processes every
+synthesized clip with ffmpeg (in the image): `reverb` (small hall) or
+`computer` (band-limited, long soft tail — the ship's-computer treatment);
+filters live in `EFFECT_FILTERS` in `backend/ha-voice.ts`. If ffmpeg fails the
+dry clip is used. Defaults: ElevenLabs voice "George" (`JBFqnCBsd6RMkjVDRZzb`, calm, mature; HAL
 territory with `eleven_multilingual_v2` in Dutch). OpenAI: `gpt-4o-mini-tts`,
 voice `onyx`, `style` becomes the delivery instructions ("calm, measured, like
 a ship's computer"). Costs: ElevenLabs free tier 10k chars/month (~25

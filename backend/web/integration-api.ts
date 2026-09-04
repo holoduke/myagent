@@ -592,7 +592,20 @@ function parseSpeech(raw: unknown, current: HASpeechConfig): HASpeechConfig {
     style: typeof r.style === "string" ? r.style.slice(0, 300) : current.style,
     // "***" is the masked key echoed back by the status endpoint — keep the stored one; "" clears it.
     apiKey: typeof r.apiKey === "string" && r.apiKey !== "***" ? r.apiKey.trim() : current.apiKey,
+    effect: r.effect === undefined ? current.effect : parseVoiceEffect(r.effect),
+    speed: r.speed === undefined ? current.speed : parseSpeed(r.speed),
   };
+}
+
+function parseVoiceEffect(raw: unknown): HASpeechConfig["effect"] {
+  if (raw === "none" || raw === "reverb" || raw === "computer") return raw;
+  throw new ApiError(400, "speech effect must be none, reverb or computer");
+}
+
+function parseSpeed(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0.7 || n > 1.5) throw new ApiError(400, "speech speed must be between 0.7 and 1.5");
+  return n;
 }
 
 function parseVoiceProvider(raw: unknown): HASpeechConfig["provider"] {

@@ -145,6 +145,8 @@ export interface HASpeechConfig {
   model: string
   style: string
   apiKey: string
+  effect: 'none' | 'reverb' | 'computer'
+  speed: number
 }
 
 export interface HAButtonRule {
