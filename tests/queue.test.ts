@@ -109,3 +109,46 @@ describe("MessageQueue", () => {
     expect(q.isProcessing).toBe(false);
   });
 });
+
+describe("MessageQueue.offer / drain", () => {
+  it("offer reports 'full' instead of rejecting", () => {
+    const q = new MessageQueue(1);
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => { release = r; });
+    expect(q.offer(async () => { await gate; }).accepted).toBe(true);
+    expect(q.offer(async () => {}).accepted).toBe(true);
+    expect(q.offer(async () => {})).toEqual({ accepted: false, reason: "full" });
+    release();
+  });
+
+  it("drain waits for the in-flight task and rejects queued ones", async () => {
+    const q = new MessageQueue();
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => { release = r; });
+    const inFlight = q.add(async () => { await gate; return "done"; });
+    const queued = q.add(async () => "never");
+
+    const drainPromise = q.drain(1_000);
+    await expect(queued).rejects.toThrow("draining");
+    expect(q.offer(async () => {})).toEqual({ accepted: false, reason: "closed" });
+
+    release();
+    expect(await drainPromise).toBe(true);
+    expect(await inFlight).toBe("done");
+  });
+
+  it("drain returns false when the in-flight task outlives the deadline", async () => {
+    const q = new MessageQueue();
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => { release = r; });
+    q.add(async () => { await gate; }).catch(() => {});
+    expect(await q.drain(20)).toBe(false);
+    release();
+  });
+
+  it("drain on an idle queue resolves immediately", async () => {
+    const q = new MessageQueue();
+    expect(await q.drain(10)).toBe(true);
+    expect(q.isClosed).toBe(true);
+  });
+});
