@@ -41,13 +41,17 @@ vi.mock("../backend/observer.js", () => ({
     { timestamp: Date.parse("2026-09-04T10:00:00Z"), sender: "Gillis", senderJid: "me", isGroup: true, groupName: "Koreman en Co", isFromMe: true, text: "Gefeliciteerd Thea!", source: "whatsapp" },
   ],
 }));
+const history = vi.hoisted(() => ({ entries: [] as Array<{ at: number; text: string }> }));
 vi.mock("../backend/utils/file-store.js", () => ({
   safeReadJSON: () => ({ lastBrainMessage: { at: Date.parse("2026-09-04T11:00:00Z"), targetJid: "me", snippet: "je hebt om 14:00 die call", status: "sent", verified: true } }),
-  FileStore: class { load() { return null; } save() {} exists() { return false; } },
+  FileStore: class { load() { return history; } save(v: { entries: Array<{ at: number; text: string }> }) { history.entries = v.entries; } exists() { return false; } },
   ensureDir: () => {}, atomicWriteFile: () => {}, atomicWriteJSON: () => {},
 }));
 
-import { gatherMindContext, buildMindPrompt, buildMindTemplate, composeMindBriefing, selectMemories } from "../backend/ha-mind.js";
+import { gatherMindContext, buildMindPrompt, buildMindTemplate, composeMindBriefing, selectMemories, seededRandom, MIND_ANGLES, loadMindHistory } from "../backend/ha-mind.js";
+import { beforeEach } from "vitest";
+
+beforeEach(() => { history.entries = []; });
 
 const NOW = new Date("2026-09-04T12:30:00Z");
 
@@ -72,15 +76,30 @@ describe("gatherMindContext", () => {
 });
 
 describe("selectMemories", () => {
-  it("ranks pinned and important recent nodes first and caps the list", () => {
+  it("keeps pinned nodes, draws the rest from the top pool, and varies per seed", () => {
     const now = Date.now();
-    const nodes = Array.from({ length: 50 }, (_, i) => ({
-      id: `n${i}`, type: "fact" as const, content: `feit ${i}`, tags: [], strength: 0.5, pinned: i === 49, importance: i / 100,
+    const nodes = Array.from({ length: 120 }, (_, i) => ({
+      id: `n${i}`, type: "fact" as const, content: `feit ${i}`, tags: [], strength: 0.5, pinned: i === 119, importance: i / 200,
       createdAt: 1, lastAccessedAt: now - i * 3_600_000, accessCount: 1,
     }));
-    const out = selectMemories(nodes, now, 5);
-    expect(out).toHaveLength(5);
-    expect(out[0]).toBe("[fact, vast] feit 49");
+    const a = selectMemories(nodes, now, 6, seededRandom(1));
+    const b = selectMemories(nodes, now, 6, seededRandom(2));
+    expect(a).toHaveLength(6);
+    expect(a[0]).toBe("[fact, vast] feit 119");
+    expect(b[0]).toBe("[fact, vast] feit 119");
+    expect(a.join("|")).not.toBe(b.join("|"));
+  });
+
+  it("rotates the angle with the seed and includes previous briefings", () => {
+    const c1 = gatherMindContext(NOW, "Gillis", undefined, 1);
+    const c2 = gatherMindContext(NOW, "Gillis", undefined, 2);
+    expect(MIND_ANGLES).toContain(c1.angle);
+    expect(new Set(Array.from({ length: 20 }, (_, i) => gatherMindContext(NOW, "Gillis", undefined, i).angle)).size).toBeGreaterThan(2);
+    expect(c1.previous).toEqual([]);
+    history.entries = [{ at: 1, text: "Goedemiddag Gillis. De garage loste zichzelf op." }];
+    expect(gatherMindContext(NOW, "Gillis", undefined, 3).previous).toEqual(["Goedemiddag Gillis. De garage loste zichzelf op."]);
+    expect(buildMindPrompt(gatherMindContext(NOW, "Gillis", undefined, 3), "Gillis")).toContain("EERDER GEZEGD");
+    void c2;
   });
 });
 
@@ -108,6 +127,7 @@ describe("composeMindBriefing", () => {
     expect(good.usedLLM).toBe(true);
     expect(good.text).toContain("Ilse");
     expect(good.observationCount).toBe(2);
+    expect(loadMindHistory().map(e => e.text)).toEqual([good.text]);
 
     const bad = await composeMindBriefing({ now: NOW, ownerName: "Gillis", llm: { run: async () => null } });
     expect(bad.usedLLM).toBe(false);
