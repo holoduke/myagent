@@ -62,6 +62,8 @@ export interface HAWeatherReflexConfig {
   weatherEntity: string;
   /** Also push the TTS call from the server (in addition to the HTTP response). */
   pushTts: boolean;
+  /** Speaker volume (0–1) set right before ARIA speaks; null leaves the volume alone. */
+  ttsVolume: number | null;
 }
 
 export interface HAConfig {
@@ -103,6 +105,7 @@ export const DEFAULT_WEATHER_REFLEX: HAWeatherReflexConfig = {
   eveningHour: 14,
   weatherEntity: "weather.buienradar",
   pushTts: false,
+  ttsVolume: 0.3,
 };
 
 export function generateWebhookToken(): string {
@@ -133,6 +136,7 @@ export function withDefaults(partial: Partial<HAConfig> | null | undefined): HAC
         ...reflex,
         actions: Array.isArray(reflex.actions) ? reflex.actions.filter(a => typeof a === "string" && a) : DEFAULT_WEATHER_REFLEX.actions,
         eveningHour: clampNumber(reflex.eveningHour, DEFAULT_WEATHER_REFLEX.eveningHour, 0, 23),
+        ttsVolume: reflex.ttsVolume === null ? null : clampNumber(reflex.ttsVolume, DEFAULT_WEATHER_REFLEX.ttsVolume ?? 0.3, 0, 1),
       },
     },
   };

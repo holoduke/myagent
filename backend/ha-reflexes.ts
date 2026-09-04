@@ -18,13 +18,14 @@ import { composeWeatherBriefing } from "./ha-weather.js";
 import { loadConfig } from "./integrations/homeassistant.js";
 import type { HAConfig, HAWeatherReflexConfig } from "./integrations/homeassistant.js";
 import type { HAEvent } from "./integrations/ha-events.js";
-import { buildTtsCall, getDailyForecast, isHAReachableConfigured } from "./integrations/ha-client.js";
+import { buildTtsCall, buildVolumeCall, getDailyForecast, isHAReachableConfigured } from "./integrations/ha-client.js";
 import type { ServiceCall } from "./integrations/ha-client.js";
 import { dispatchCommand } from "./integrations/ha-commands.js";
 
 const log = createLogger("ha-reflexes");
 
-const REFLEX_LLM_TIMEOUT_MS = 20_000;
+/** The house waits for this response; past this the deterministic template speaks instead. */
+const REFLEX_LLM_TIMEOUT_MS = 12_000;
 /** Same reflex will not fire twice within this window (double taps, retries). */
 export const REFLEX_COOLDOWN_MS = 4_000;
 
@@ -99,6 +100,9 @@ export const weatherBriefingReflex: ReflexDefinition = {
     let delivery: ReflexResult["delivery"] = "response";
     if (cfg.pushTts) {
       try {
+        if (cfg.ttsVolume !== null) {
+          await dispatchCommand(buildVolumeCall(cfg.mediaPlayer, cfg.ttsVolume), "reflex", "announcement volume");
+        }
         const result = await dispatchCommand(tts, "reflex", "weather briefing");
         if (result.mode === "direct") delivery = "push";
       } catch (err) {

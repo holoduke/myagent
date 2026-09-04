@@ -46,16 +46,19 @@
           <input v-model="reflex.mediaPlayer" class="intg-input" placeholder="media_player.wiim_amp_ultra_3d72" />
         </label>
         <label class="intg-label">TTS engine
-          <input v-model="reflex.ttsEngine" class="intg-input" placeholder="google_translate, cloud or tts.xxx" />
+          <input v-model="reflex.ttsEngine" class="intg-input" placeholder="tts.edge_tts_service_edge_tts, google_translate, cloud" />
         </label>
-        <label class="intg-label">Language
-          <input v-model="reflex.language" class="intg-input intg-input-sm" placeholder="nl" />
+        <label class="intg-label">Language / voice
+          <input v-model="reflex.language" class="intg-input" placeholder="nl-NL-FennaNeural or nl" />
         </label>
         <label class="intg-label">Tomorrow from (hour)
           <input v-model.number="reflex.eveningHour" type="number" min="0" max="23" class="intg-input intg-input-sm" />
         </label>
         <label class="intg-label">Weather entity
           <input v-model="reflex.weatherEntity" class="intg-input" placeholder="weather.buienradar" />
+        </label>
+        <label class="intg-label">Announcement volume (0–1)
+          <input v-model.number="reflex.ttsVolume" type="number" min="0" max="1" step="0.05" class="intg-input intg-input-sm" />
         </label>
         <label class="intg-label">Also push TTS from server
           <input v-model="reflex.pushTts" type="checkbox" />
@@ -125,7 +128,7 @@ const preview = ref('')
 const DEFAULT_REFLEX: HAWeatherReflexConfig = {
   enabled: true, device: 'Ikea switch 3 silver', actions: ['on', 'off', 'arrow_left_click', 'arrow_right_click'],
   mediaPlayer: 'media_player.wiim_amp_ultra_3d72', ttsEngine: 'google_translate', language: 'nl',
-  eveningHour: 14, weatherEntity: 'weather.buienradar', pushTts: false,
+  eveningHour: 14, weatherEntity: 'weather.buienradar', pushTts: false, ttsVolume: 0.3,
 }
 
 const reflex = reactive<HAWeatherReflexConfig>({ ...DEFAULT_REFLEX })
