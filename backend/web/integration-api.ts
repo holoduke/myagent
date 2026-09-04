@@ -5,8 +5,8 @@ import { getLatestQr } from "../integrations/whatsapp.js";
 import { getPublicKey, addTarget, removeTarget, testConnection } from "../integrations/ssh.js";
 import { getCalendarStatus, createEvent, listCalendars, loadCalendarConfig, saveCalendarConfig } from "../integrations/calendar.js";
 import type { CalendarConfigEntry } from "../integrations/calendar.js";
-import { getHAStatus, saveConfig, restartHAPolling, regenerateWebhookToken, DEFAULT_WEATHER_REFLEX, loadConfig as loadHAConfig } from "../integrations/homeassistant.js";
-import type { HAConfig, HAConnectionMode, HAWeatherReflexConfig } from "../integrations/homeassistant.js";
+import { getHAStatus, saveConfig, restartHAPolling, regenerateWebhookToken, DEFAULT_WEATHER_REFLEX, DEFAULT_MIND_REFLEX, loadConfig as loadHAConfig } from "../integrations/homeassistant.js";
+import type { HAConfig, HAConnectionMode, HAWeatherReflexConfig, HAButtonRule, HASpeechConfig } from "../integrations/homeassistant.js";
 import { testHAConnection, buildTtsCall, buildVolumeCall } from "../integrations/ha-client.js";
 import { getRecentEvents } from "../integrations/ha-events.js";
 import { getCommandQueue, dispatchCommand } from "../integrations/ha-commands.js";
@@ -545,30 +545,43 @@ function parseConnection(raw: unknown, current: { url: string; token: string } |
   return url || token ? { url, token } : undefined;
 }
 
-function parseWeatherReflex(raw: unknown, current: HAWeatherReflexConfig): HAWeatherReflexConfig {
+function parseButtonRule<T extends HAButtonRule>(raw: unknown, current: T, label: string): T {
   if (!raw || typeof raw !== "object") return current;
   const r = raw as Record<string, unknown>;
-  const mediaPlayer = typeof r.mediaPlayer === "string" ? r.mediaPlayer.trim() : current.mediaPlayer;
-  if (!ENTITY_ID_RE.test(mediaPlayer)) throw new ApiError(400, "reflex mediaPlayer must be a media_player entity id");
-  const weatherEntity = typeof r.weatherEntity === "string" ? r.weatherEntity.trim() : current.weatherEntity;
-  if (!ENTITY_ID_RE.test(weatherEntity)) throw new ApiError(400, "reflex weatherEntity must be an entity id");
   const actions = Array.isArray(r.actions) ? r.actions.filter((a): a is string => typeof a === "string" && /^[a-z0-9_]+$/.test(a)) : current.actions;
-  if (actions.length === 0) throw new ApiError(400, "reflex needs at least one button action");
-  const eveningHour = typeof r.eveningHour === "number" ? r.eveningHour : current.eveningHour;
-  if (!Number.isInteger(eveningHour) || eveningHour < 0 || eveningHour > 23) throw new ApiError(400, "eveningHour must be 0-23");
+  if (actions.length === 0) throw new ApiError(400, `${label} needs at least one button action`);
   const device = typeof r.device === "string" ? r.device.trim() : current.device;
-  if (!device) throw new ApiError(400, "reflex device is required");
+  if (!device) throw new ApiError(400, `${label} device is required`);
   return {
+    ...current,
     enabled: typeof r.enabled === "boolean" ? r.enabled : current.enabled,
     device,
     actions,
+    pushTts: typeof r.pushTts === "boolean" ? r.pushTts : current.pushTts,
+  };
+}
+
+function parseWeatherReflex(raw: unknown, current: HAWeatherReflexConfig): HAWeatherReflexConfig {
+  const rule = parseButtonRule(raw, current, "weather reflex");
+  if (!raw || typeof raw !== "object") return rule;
+  const r = raw as Record<string, unknown>;
+  const weatherEntity = typeof r.weatherEntity === "string" ? r.weatherEntity.trim() : current.weatherEntity;
+  if (!ENTITY_ID_RE.test(weatherEntity)) throw new ApiError(400, "weatherEntity must be an entity id");
+  const eveningHour = typeof r.eveningHour === "number" ? r.eveningHour : current.eveningHour;
+  if (!Number.isInteger(eveningHour) || eveningHour < 0 || eveningHour > 23) throw new ApiError(400, "eveningHour must be 0-23");
+  return { ...rule, weatherEntity, eveningHour };
+}
+
+function parseSpeech(raw: unknown, current: HASpeechConfig): HASpeechConfig {
+  if (!raw || typeof raw !== "object") return current;
+  const r = raw as Record<string, unknown>;
+  const mediaPlayer = typeof r.mediaPlayer === "string" ? r.mediaPlayer.trim() : current.mediaPlayer;
+  if (!ENTITY_ID_RE.test(mediaPlayer)) throw new ApiError(400, "speech mediaPlayer must be a media_player entity id");
+  return {
     mediaPlayer,
     ttsEngine: typeof r.ttsEngine === "string" && /^[a-z0-9_.]+$/.test(r.ttsEngine) ? r.ttsEngine : current.ttsEngine,
     // "nl", "nl-NL" or a full voice name such as "nl-NL-FennaNeural" (Edge/Azure style engines take the voice as language).
     language: typeof r.language === "string" && /^[a-z]{2}(-[A-Za-z]{2})?(-[A-Za-z0-9]+)?$/.test(r.language) ? r.language : current.language,
-    eveningHour,
-    weatherEntity,
-    pushTts: typeof r.pushTts === "boolean" ? r.pushTts : current.pushTts,
     ttsVolume: parseTtsVolume(r.ttsVolume, current.ttsVolume),
   };
 }
@@ -595,7 +608,11 @@ const handleHASaveConfig = apiHandler(async (_req, _res, data: Record<string, un
     digestIntervalMs: typeof data.digestIntervalMs === "number" ? data.digestIntervalMs : existing.digestIntervalMs,
     direct_api: parseConnection(data.direct_api, existing.direct_api, "direct_api"),
     cloud: parseConnection(data.cloud, existing.cloud, "cloud"),
-    reflexes: { weatherBriefing: parseWeatherReflex((data.reflexes as Record<string, unknown> | undefined)?.weatherBriefing, existing.reflexes.weatherBriefing ?? DEFAULT_WEATHER_REFLEX) },
+    speech: parseSpeech(data.speech, existing.speech),
+    reflexes: {
+      weatherBriefing: parseWeatherReflex((data.reflexes as Record<string, unknown> | undefined)?.weatherBriefing, existing.reflexes.weatherBriefing ?? DEFAULT_WEATHER_REFLEX),
+      mindBriefing: parseButtonRule((data.reflexes as Record<string, unknown> | undefined)?.mindBriefing, existing.reflexes.mindBriefing ?? DEFAULT_MIND_REFLEX, "mind reflex"),
+    },
   };
   if (data.location && typeof data.location === "object") {
     const loc = data.location as Record<string, unknown>;
@@ -634,13 +651,13 @@ const handleHAReflexTest = apiHandler(async (_req, _res, body: { reflexId?: stri
 const handleHASpeak = apiHandler(async (_req, _res, body: { text?: string; player?: string }) => {
   const text = (body.text || "").trim();
   if (!text || text.length > 400) throw new ApiError(400, "text is required (max 400 chars)");
-  const reflex = getHAStatus().config.reflexes.weatherBriefing;
-  const player = body.player?.trim() || reflex.mediaPlayer;
+  const speech = getHAStatus().config.speech;
+  const player = body.player?.trim() || speech.mediaPlayer;
   if (!ENTITY_ID_RE.test(player)) throw new ApiError(400, "player must be a media_player entity id");
-  if (reflex.ttsVolume !== null) {
-    await dispatchCommand(buildVolumeCall(player, reflex.ttsVolume), "api", "announcement volume");
+  if (speech.ttsVolume !== null) {
+    await dispatchCommand(buildVolumeCall(player, speech.ttsVolume), "api", "announcement volume");
   }
-  const call = buildTtsCall(text, { player, engine: reflex.ttsEngine, language: reflex.language });
+  const call = buildTtsCall(text, { player, engine: speech.ttsEngine, language: speech.language });
   const dispatched = await dispatchCommand(call, "api", "dashboard speak");
   return { success: true, mode: dispatched.mode, command: dispatched.command };
 });

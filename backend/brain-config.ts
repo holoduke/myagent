@@ -48,6 +48,7 @@ export interface BrainConfig {
     newsDigest: string;     // daily news digest (cheap by design)
     haReflex: string;       // Home Assistant real-time reflexes (spoken weather etc.)
     haDigest: string;       // Home Assistant event batch summaries
+    haMind: string;         // "what's on your mind" spoken briefing from brain state
   };
 }
 
@@ -221,6 +222,7 @@ function envDefaults(): BrainConfig {
       newsDigest: "haiku",
       haReflex: "haiku",
       haDigest: "haiku",
+      haMind: "haiku",
     },
   };
 }

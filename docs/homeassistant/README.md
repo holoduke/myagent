@@ -68,21 +68,43 @@ Event body:
 `state`/`previous_state` describe state changes. Anything HA puts in `context`
 is available to reflexes (the weather reflex reads `context.forecast`).
 
-## Weather reflex
+## Reflexes on the silver STYRBAR
+
+| Button | Reflex | Says |
+|--------|--------|------|
+| top (`on`), bottom (`off`), left arrow | `weather_briefing` | today's/tomorrow's forecast |
+| right arrow (`arrow_right_click`) | `mind_briefing` | what ARIA has on her mind today |
 
 Config (dashboard → Home Assistant card, or `/data/homeassistant/config.json`):
 
 ```json
-"reflexes": { "weatherBriefing": {
-  "enabled": true,
-  "device": "Ikea switch 3 silver",
-  "actions": ["on", "off", "arrow_left_click", "arrow_right_click"],
-  "mediaPlayer": "media_player.wiim_amp_ultra_3d72",
-  "ttsEngine": "google_translate", "language": "nl",
-  "eveningHour": 14,
-  "weatherEntity": "weather.buienradar",
-  "pushTts": false } }
+"speech": { "mediaPlayer": "media_player.wiim_amp_ultra_3d72",
+            "ttsEngine": "tts.edge_tts_service_edge_tts", "language": "nl-NL-FennaNeural", "ttsVolume": 0.3 },
+"reflexes": {
+  "weatherBriefing": { "enabled": true, "device": "Ikea switch 3 silver",
+                       "actions": ["on", "off", "arrow_left_click"],
+                       "eveningHour": 14, "weatherEntity": "weather.buienradar", "pushTts": false },
+  "mindBriefing":    { "enabled": true, "device": "Ikea switch 3 silver",
+                       "actions": ["arrow_right_click"], "pushTts": false } }
 ```
+
+`speech` is shared by every reflex, the CLI `speak` command and the dashboard.
+(Older files with speaker/voice fields inside `weatherBriefing` are migrated on
+load.)
+
+### Mind briefing
+
+`backend/ha-mind.ts` reads, without loading the memory graph: working memory
+(current context, mood, short-term tracking, follow-ups, active goals, open
+conversation threads), the consciousness file, today's observations (digest
+lines excluded, quotes trimmed) and the last message ARIA sent. The prompt
+carries ARIA's character preset and asks for 3–5 spoken Dutch sentences: what
+stood out today, what she is working on or wondering about, something still
+open. No weather, no verbatim private quotes. Model `models.haMind` (haiku by
+default, `grok` in production for speed); template fallback ("Vandaag heb ik N
+berichten voorbij zien komen…") if the model is slow or empty.
+
+### Weather briefing
 
 Forecast source order: forecast in the event → Home Assistant API (when the
 agent can reach the house) → Open-Meteo for `location`. Before `eveningHour`

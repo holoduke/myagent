@@ -1,13 +1,15 @@
 /**
  * Home Assistant reflexes — the fast path.
  *
- * A reflex is a deterministic rule ("silver STYRBAR short-pressed") bound to a
+ * A reflex is a deterministic rule ("silver STYRBAR, right arrow") bound to a
  * handler that answers within seconds, using at most a cheap model. Reflexes
  * run inline in the webhook request so Home Assistant can act on the result
  * (speak it, switch something) straight from the HTTP response. The brain
  * learns about the event afterwards through the batched digest.
  *
- * First reflex: weather briefing on the IKEA STYRBAR.
+ * Reflexes:
+ *   weather_briefing — today's/tomorrow's forecast (top, bottom, left buttons)
+ *   mind_briefing    — what ARIA has on her mind today, from the brain (right arrow)
  */
 
 import { LlmRunner } from "./providers/llm-runner.js";
@@ -15,8 +17,9 @@ import { getBrainConfig } from "./brain-config.js";
 import { OWNER_NAME } from "./config.js";
 import { createLogger } from "./logger.js";
 import { composeWeatherBriefing } from "./ha-weather.js";
+import { composeMindBriefing } from "./ha-mind.js";
 import { loadConfig } from "./integrations/homeassistant.js";
-import type { HAConfig, HAWeatherReflexConfig } from "./integrations/homeassistant.js";
+import type { HAConfig, HAButtonRule, HASpeechConfig } from "./integrations/homeassistant.js";
 import type { HAEvent } from "./integrations/ha-events.js";
 import { buildTtsCall, buildVolumeCall, getDailyForecast, isHAReachableConfigured } from "./integrations/ha-client.js";
 import type { ServiceCall } from "./integrations/ha-client.js";
@@ -46,9 +49,11 @@ export interface ReflexResult {
 export interface ReflexDefinition {
   id: string;
   label: string;
-  matches(event: HAEvent, config: HAConfig): boolean;
+  rule(config: HAConfig): HAButtonRule;
   run(event: HAEvent, config: HAConfig, now: Date): Promise<ReflexResult>;
 }
+
+// ── Matching ──
 
 function normalizeName(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, " ");
@@ -61,26 +66,46 @@ export function eventMatchesDevice(event: HAEvent, configuredDevice: string): bo
   return [event.device, event.friendlyName, event.entityId].some(v => normalizeName(v) === target);
 }
 
-export function matchesWeatherReflex(event: HAEvent, cfg: HAWeatherReflexConfig): boolean {
-  if (!cfg.enabled) return false;
+/** Pure rule check: enabled, button press, right device, action in the rule's list. */
+export function matchesButtonRule(event: HAEvent, rule: HAButtonRule): boolean {
+  if (!rule.enabled) return false;
   if (event.type !== "button_press") return false;
-  if (!eventMatchesDevice(event, cfg.device)) return false;
+  if (!eventMatchesDevice(event, rule.device)) return false;
   const action = (event.action ?? "").toLowerCase();
-  return cfg.actions.some(a => a.toLowerCase() === action);
+  return rule.actions.some(a => a.toLowerCase() === action);
 }
 
-function reflexLlm(): LlmRunner {
-  return new LlmRunner({
-    name: "ha-reflex",
-    timeout: REFLEX_LLM_TIMEOUT_MS,
-    model: getBrainConfig().models?.haReflex ?? "haiku",
-  });
+// ── Speaking ──
+
+function runner(model: string | undefined): LlmRunner {
+  return new LlmRunner({ name: "ha-reflex", timeout: REFLEX_LLM_TIMEOUT_MS, model: model ?? "haiku" });
 }
+
+/**
+ * Build the TTS call for `text` and, when the rule asks for it, push volume +
+ * speech from the server. Returns how the house will end up hearing it.
+ */
+async function deliverSpeech(text: string, speech: HASpeechConfig, rule: HAButtonRule, reason: string): Promise<{ tts: ServiceCall; delivery: ReflexResult["delivery"] }> {
+  const tts = buildTtsCall(text, { player: speech.mediaPlayer, engine: speech.ttsEngine, language: speech.language });
+  if (!rule.pushTts) return { tts, delivery: "response" };
+  try {
+    if (speech.ttsVolume !== null) {
+      await dispatchCommand(buildVolumeCall(speech.mediaPlayer, speech.ttsVolume), "reflex", "announcement volume");
+    }
+    const result = await dispatchCommand(tts, "reflex", reason);
+    return { tts, delivery: result.mode === "direct" ? "push" : "response" };
+  } catch (err) {
+    log(`Push TTS failed (house will use the response instead): ${err}`);
+    return { tts, delivery: "response" };
+  }
+}
+
+// ── Reflexes ──
 
 export const weatherBriefingReflex: ReflexDefinition = {
   id: "weather_briefing",
-  label: "Weather briefing on button press",
-  matches: (event, config) => matchesWeatherReflex(event, config.reflexes.weatherBriefing),
+  label: "Weather briefing",
+  rule: config => config.reflexes.weatherBriefing,
   async run(event, config, now) {
     const started = Date.now();
     const cfg = config.reflexes.weatherBriefing;
@@ -93,23 +118,9 @@ export const weatherBriefingReflex: ReflexDefinition = {
       location: config.location,
       forecastFromEvent: event.context?.forecast,
       fetchFromHA: isHAReachableConfigured() ? () => getDailyForecast(cfg.weatherEntity) : undefined,
-      llm: reflexLlm(),
+      llm: runner(brain.models?.haReflex),
     });
-
-    const tts = buildTtsCall(briefing.text, { player: cfg.mediaPlayer, engine: cfg.ttsEngine, language: cfg.language });
-    let delivery: ReflexResult["delivery"] = "response";
-    if (cfg.pushTts) {
-      try {
-        if (cfg.ttsVolume !== null) {
-          await dispatchCommand(buildVolumeCall(cfg.mediaPlayer, cfg.ttsVolume), "reflex", "announcement volume");
-        }
-        const result = await dispatchCommand(tts, "reflex", "weather briefing");
-        if (result.mode === "direct") delivery = "push";
-      } catch (err) {
-        log(`Push TTS failed (house will use the response instead): ${err}`);
-      }
-    }
-
+    const { tts, delivery } = await deliverSpeech(briefing.text, config.speech, cfg, "weather briefing");
     return {
       reflexId: this.id,
       speak: briefing.text,
@@ -122,7 +133,28 @@ export const weatherBriefingReflex: ReflexDefinition = {
   },
 };
 
-export const REFLEXES: ReflexDefinition[] = [weatherBriefingReflex];
+export const mindBriefingReflex: ReflexDefinition = {
+  id: "mind_briefing",
+  label: "What's on ARIA's mind today",
+  rule: config => config.reflexes.mindBriefing,
+  async run(_event, config, now) {
+    const started = Date.now();
+    const brain = getBrainConfig();
+    const briefing = await composeMindBriefing({ now, ownerName: OWNER_NAME, llm: runner(brain.models?.haMind) });
+    const { tts, delivery } = await deliverSpeech(briefing.text, config.speech, config.reflexes.mindBriefing, "mind briefing");
+    return {
+      reflexId: this.id,
+      speak: briefing.text,
+      tts,
+      summary: `told what was on her mind (${briefing.observationCount} obs today${briefing.usedLLM ? ", llm" : ", template"}): "${briefing.text.slice(0, 120)}"`,
+      usedLLM: briefing.usedLLM,
+      durationMs: Date.now() - started,
+      delivery,
+    };
+  },
+};
+
+export const REFLEXES: ReflexDefinition[] = [weatherBriefingReflex, mindBriefingReflex];
 
 export function getReflex(id: string): ReflexDefinition | undefined {
   return REFLEXES.find(r => r.id === id);
@@ -130,7 +162,7 @@ export function getReflex(id: string): ReflexDefinition | undefined {
 
 /** Pure matcher: first reflex whose rule accepts the event. */
 export function findReflex(event: HAEvent, config: HAConfig): ReflexDefinition | null {
-  return REFLEXES.find(r => r.matches(event, config)) ?? null;
+  return REFLEXES.find(r => matchesButtonRule(event, r.rule(config))) ?? null;
 }
 
 const lastFiredAt = new Map<string, number>();
@@ -146,7 +178,6 @@ export function isOnCooldown(reflexId: string, now: number): boolean {
  */
 export async function runReflexForEvent(event: HAEvent, now: Date = new Date()): Promise<ReflexResult | null> {
   const config = loadConfig();
-  if (!config) return null;
   const reflex = findReflex(event, config);
   if (!reflex) return null;
   if (isOnCooldown(reflex.id, now.getTime())) {
@@ -167,17 +198,16 @@ export async function runReflexForEvent(event: HAEvent, now: Date = new Date()):
 /** Dashboard/test helper: run a reflex with a synthetic event, bypassing cooldown. */
 export async function testReflex(reflexId: string, now: Date = new Date()): Promise<ReflexResult> {
   const config = loadConfig();
-  if (!config) throw new Error("Home Assistant is not configured");
   const reflex = getReflex(reflexId);
   if (!reflex) throw new Error(`Unknown reflex "${reflexId}"`);
-  const cfg = config.reflexes.weatherBriefing;
+  const rule = reflex.rule(config);
   const event: HAEvent = {
     id: "hae_test",
     receivedAt: now.getTime(),
     ts: now.getTime(),
     type: "button_press",
-    device: cfg.device,
-    action: cfg.actions[0] ?? "on",
+    device: rule.device,
+    action: rule.actions[0] ?? "on",
   };
   return reflex.run(event, config, now);
 }
