@@ -89,7 +89,7 @@
                     "conditions": [
                       {
                         "condition": "template",
-                        "value_template": "{{ (aria.content.reflex.audioUrl | default('') | length) > 0 }}"
+                        "value_template": "{{ (aria.content.reflex.audioUrl | default('', true) | string | length) > 0 }}"
                       }
                     ],
                     "sequence": [
