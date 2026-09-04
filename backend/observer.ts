@@ -103,6 +103,8 @@ export interface Observation {
   intentClassification?: IntentClassification;
   /** Media type if message contains non-text media (voice, image, document) */
   mediaType?: "voice" | "image" | "document";
+  /** Channel message id (WhatsApp key.id) — stable dedup/reply key when present */
+  messageId?: string;
 }
 
 export interface CallMeta {
