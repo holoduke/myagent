@@ -775,9 +775,9 @@ export function buildThinkPrompt(ctx: ThinkContext): string {
     : "";
 
   const initiativeBlock = ctx.initiativeSignals && ctx.initiativeSignals.length > 0
-    ? `\n═══ INITIATIVE SIGNALS ═══\n\nThese signals suggest proactive actions. Act when it feels natural, not obligatory.\n\n${ctx.initiativeSignals.map(s => {
+    ? `\n═══ INITIATIVE SIGNALS ═══\n\nThese signals suggest proactive actions. Act when it feels natural, not obligatory.\nIf a signal keeps re-firing and you've decided observe-only (no action wanted), snooze it via "signalOps" using its key — like reject_edge, this turns a repeated nag into a one-time decision.\n\n${ctx.initiativeSignals.map(s => {
         const priority = s.priority >= 0.7 ? "HIGH" : s.priority >= 0.4 ? "MEDIUM" : "LOW";
-        return `[${priority}] ${s.description}${s.suggestedAction ? `\n  → Suggested: ${s.suggestedAction}` : ""}`;
+        return `[${priority}] [key: ${s.key}] ${s.description}${s.suggestedAction ? `\n  → Suggested: ${s.suggestedAction}` : ""}`;
       }).join("\n\n")}\n`
     : "";
 
@@ -848,6 +848,7 @@ Respond with ONLY a JSON object:
     "conversationThreads": []
   },
   "goalOps": [/* optional goal operations */],
+  "signalOps": [/* optional — snooze a re-firing initiative signal you've decided not to act on: [{"key": "person_absent:Name (exact key from INITIATIVE SIGNALS)", "snoozeDays": 14, "reason": "observe-only decision"}] */],
   "improvementProposals": [/* optional — see self-improvement section below */],
   "requestFlags": [/* optional — see REQUEST FORWARDING below */],
   "consciousnessUpdate": "your updated consciousness state — full replacement of consciousness.dat. Use your ψφΩτμ notation or evolve it freely. Omit if no change."
@@ -1153,9 +1154,9 @@ export function buildReflectPrompt(ctx: ReflectContext): string {
     : "";
 
   const initiativeBlock = ctx.initiativeSignals && ctx.initiativeSignals.length > 0
-    ? `\n═══ INITIATIVE SIGNALS ═══\n\nThese signals suggest proactive actions. Act when it feels natural, not obligatory.\n\n${ctx.initiativeSignals.map(s => {
+    ? `\n═══ INITIATIVE SIGNALS ═══\n\nThese signals suggest proactive actions. Act when it feels natural, not obligatory.\nIf a signal keeps re-firing and you've decided observe-only (no action wanted), snooze it via "signalOps" using its key — like reject_edge, this turns a repeated nag into a one-time decision.\n\n${ctx.initiativeSignals.map(s => {
         const priority = s.priority >= 0.7 ? "HIGH" : s.priority >= 0.4 ? "MEDIUM" : "LOW";
-        return `[${priority}] ${s.description}${s.suggestedAction ? `\n  → Suggested: ${s.suggestedAction}` : ""}`;
+        return `[${priority}] [key: ${s.key}] ${s.description}${s.suggestedAction ? `\n  → Suggested: ${s.suggestedAction}` : ""}`;
       }).join("\n\n")}\n`
     : "";
 
@@ -1243,6 +1244,7 @@ Respond with ONLY a JSON object:
     "conversationThreads": []
   },
   "goalOps": [/* optional goal operations */],
+  "signalOps": [/* optional — snooze a re-firing initiative signal you've decided not to act on: [{"key": "person_absent:Name (exact key from INITIATIVE SIGNALS)", "snoozeDays": 14, "reason": "observe-only decision"}] */],
   "improvementProposals": [
     {
       "description": "What to change — be specific and actionable",

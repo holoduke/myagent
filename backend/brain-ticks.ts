@@ -14,7 +14,8 @@ import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js"
 import { existsSync, unlinkSync } from "fs";
 import type { MessageQueue } from "./queue.js";
 import type { MemoryGraph } from "./memory/graph.js";
-import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, ImprovementProposal } from "./memory/types.js";
+import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, SignalOperation, ImprovementProposal } from "./memory/types.js";
+import { applySignalOps, recordSignalsSurfaced } from "./initiative.js";
 import { createFlaggedRequest } from "./actionable-tracker.js";
 import { getRecentDeliveries, getRecentDeliveryLog, getScheduledMessages, scheduleMessage, cancelScheduledMessages, DEDUP_WINDOW_MS } from "./scheduler.js";
 import { getNextDigestSlot } from "./recurring.js";
@@ -89,6 +90,7 @@ export function parseBrainResponse(raw: string): BrainResponse | null {
       reasoning: parsed.reasoning ?? "",
       workingMemory: parsed.workingMemory ?? undefined,
       goalOps: Array.isArray(parsed.goalOps) ? parsed.goalOps : undefined,
+      signalOps: Array.isArray(parsed.signalOps) ? parsed.signalOps : undefined,
       improvementProposals: Array.isArray(parsed.improvementProposals) ? parsed.improvementProposals : undefined,
       consciousnessUpdate: typeof parsed.consciousnessUpdate === "string" ? parsed.consciousnessUpdate : undefined,
     };
@@ -402,6 +404,14 @@ export async function thinkTick(
       const goalResult = goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
       log(`Goal ops: ${goalResult.applied} applied, ${goalResult.failed} failed${goalResult.errors.length > 0 ? ` — errors: ${goalResult.errors.join("; ")}` : ""}`);
       wm.activeGoals = goalTracker.getWorkingGoalRefs();
+    }
+
+    // Signal snoozes: count this surfacing first, then apply snoozes (which
+    // clear the count for the snoozed key). State is persisted by the caller.
+    recordSignalsSurfaced(state, initiativeSignals);
+    if (response.signalOps && response.signalOps.length > 0) {
+      const sigResult = applySignalOps(state, response.signalOps as SignalOperation[]);
+      log(`Signal ops: ${sigResult.applied} snoozed, ${sigResult.skipped} skipped`);
     }
 
     // Retrieval utility tracking: differential reinforcement based on whether
@@ -1190,6 +1200,12 @@ export async function reflectTick(
       const goalResult = goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
       log(`Reflect goal ops: ${goalResult.applied} applied, ${goalResult.failed} failed${goalResult.errors.length > 0 ? ` — errors: ${goalResult.errors.join("; ")}` : ""}`);
       wm.activeGoals = goalTracker.getWorkingGoalRefs();
+    }
+
+    recordSignalsSurfaced(state, initiativeSignals);
+    if (response.signalOps && response.signalOps.length > 0) {
+      const sigResult = applySignalOps(state, response.signalOps as SignalOperation[]);
+      log(`Reflect signal ops: ${sigResult.applied} snoozed, ${sigResult.skipped} skipped`);
     }
 
     if (response.improvementProposals?.length) {
