@@ -131,6 +131,16 @@ export function buildTtsCall(text: string, opts: { player: string; engine: strin
   };
 }
 
+/** media_player.volume_set call, sent right before speaking so announcements have a predictable level. */
+export function buildVolumeCall(player: string, volume: number): ServiceCall {
+  return {
+    domain: "media_player",
+    service: "volume_set",
+    entityId: player,
+    data: { volume_level: Math.min(1, Math.max(0, volume)) },
+  };
+}
+
 export async function testHAConnection(url: string, token: string): Promise<{ success: boolean; entityCount?: number; error?: string }> {
   try {
     const states = await getStates(undefined, { url: url.replace(/\/+$/, ""), token });

@@ -145,6 +145,7 @@ export interface HAWeatherReflexConfig {
   eveningHour: number
   weatherEntity: string
   pushTts: boolean
+  ttsVolume: number | null
 }
 
 export interface HomeAssistantConfig {

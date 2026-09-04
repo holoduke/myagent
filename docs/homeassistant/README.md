@@ -83,9 +83,19 @@ agent can reach the house) → Open-Meteo for `location`. Before `eveningHour`
 prompt in Dutch, deterministic Dutch template if the model fails, so the button
 always answers.
 
-Delivery: the automation speaks `reflex.speak` from the response with
-`tts.google_translate_say` on the WiiM (Google Cast). With `pushTts: true` and
-a reachable house, ARIA also pushes the TTS call itself.
+Delivery: the automation sets the speaker volume (`media_player.volume_set`,
+0.3) and speaks `reflex.speak` from the response with `tts.speak` on the WiiM
+(Google Cast). With `pushTts: true` and a reachable house, ARIA also pushes the
+volume + TTS calls itself; `ttsVolume` (0–1, or null to leave it) applies to
+every server-initiated announcement (reflex push, CLI `speak`, dashboard).
+
+Voice: the house runs the **Edge TTS** custom component
+(`custom_components/edge_tts`, Microsoft neural voices, no key) as
+`tts.edge_tts_service_edge_tts`; the voice is passed as `language`
+(`nl-NL-FennaNeural`, alternatives `nl-NL-ColetteNeural`, `nl-BE-DenaNeural`).
+`ttsEngine` also accepts the legacy engines `google_translate` / `cloud`
+(`tts.<engine>_say`). ElevenLabs (core integration, needs an API key) is the
+premium upgrade path: add it, set `ttsEngine` to its `tts.*` entity.
 
 ## Outbound: ARIA → house
 
@@ -106,11 +116,22 @@ npx tsx backend/scripts/ha-cli.ts events [--limit 20]
 
 The house has no inbound access by default. Options, safest first:
 
-1. **Firewall-scoped port forward** (what we use): UniFi forward WAN `:8123` →
-   `192.168.2.111:8123`, source restricted to the agent's IP only
-   (`46.224.74.85/32`). Home Assistant's own long-lived token still applies.
+1. **Port forward + host firewall** (what we use). The KPN Box 12 has no
+   source-IP filter and no UniFi gateway sits in front of it, so:
+   - the forward WAN `:8123` → `192.168.2.111:8123` is a UPnP mapping, re-asserted
+     every 10 min by cron `/usr/local/sbin/aria-upnp-8123.sh` on the HA host
+     (survives router reboots; a static rule in the KPN Box UI is optional);
+   - iptables/ip6tables on the HA host accept `:8123` only from RFC1918 ranges,
+     the LAN's IPv6 prefix and `46.224.74.85/32`, drop everything else
+     (persisted with `netfilter-persistent`). So only the agent can reach Home
+     Assistant from outside, and it still needs the long-lived token.
+   - Traffic is plain HTTP; the token is only exposed to the one allowed peer.
+     Upgrade to Tailscale/WireGuard if that ever matters.
 2. Tailscale/WireGuard between the server and the HA host.
 3. Nabu Casa remote URL (`cloud` mode).
+
+Public IPv4 is `77.162.147.112`; if KPN ever changes it, update `direct_api.url`
+on the dashboard (the pull queue keeps working meanwhile).
 
 Without any of these everything still works: reflexes answer in the HTTP
 response and commands are pulled by the house every 30 s.
@@ -127,6 +148,10 @@ Files in this folder:
   automation uses MQTT device triggers on device `505fe2c55f3e036b458f872f3a9654cf`.
 
 After editing YAML: Developer tools → YAML → "Rest commands" (or restart).
+
+Reflex model: `models.haReflex` is `grok-mini` in production (≈6 s from press
+to speech; the Claude CLI path takes ≈14 s because of process start-up). If the
+model exceeds 12 s the Dutch template speaks instead.
 
 WiiM: the players are currently exposed via Google Cast (`media_player.wiim_*`),
 which supports TTS. Home Assistant 2026.4+ also ships a native **WiiM**

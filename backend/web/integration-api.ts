@@ -7,7 +7,7 @@ import { getCalendarStatus, createEvent, listCalendars, loadCalendarConfig, save
 import type { CalendarConfigEntry } from "../integrations/calendar.js";
 import { getHAStatus, saveConfig, restartHAPolling, regenerateWebhookToken, DEFAULT_WEATHER_REFLEX, loadConfig as loadHAConfig } from "../integrations/homeassistant.js";
 import type { HAConfig, HAConnectionMode, HAWeatherReflexConfig } from "../integrations/homeassistant.js";
-import { testHAConnection, buildTtsCall } from "../integrations/ha-client.js";
+import { testHAConnection, buildTtsCall, buildVolumeCall } from "../integrations/ha-client.js";
 import { getRecentEvents } from "../integrations/ha-events.js";
 import { getCommandQueue, dispatchCommand } from "../integrations/ha-commands.js";
 import { testReflex } from "../ha-reflexes.js";
@@ -564,11 +564,21 @@ function parseWeatherReflex(raw: unknown, current: HAWeatherReflexConfig): HAWea
     actions,
     mediaPlayer,
     ttsEngine: typeof r.ttsEngine === "string" && /^[a-z0-9_.]+$/.test(r.ttsEngine) ? r.ttsEngine : current.ttsEngine,
-    language: typeof r.language === "string" && /^[a-z]{2}(-[A-Za-z]{2})?$/.test(r.language) ? r.language : current.language,
+    // "nl", "nl-NL" or a full voice name such as "nl-NL-FennaNeural" (Edge/Azure style engines take the voice as language).
+    language: typeof r.language === "string" && /^[a-z]{2}(-[A-Za-z]{2})?(-[A-Za-z0-9]+)?$/.test(r.language) ? r.language : current.language,
     eveningHour,
     weatherEntity,
     pushTts: typeof r.pushTts === "boolean" ? r.pushTts : current.pushTts,
+    ttsVolume: parseTtsVolume(r.ttsVolume, current.ttsVolume),
   };
+}
+
+function parseTtsVolume(raw: unknown, current: number | null): number | null {
+  if (raw === undefined) return current;
+  if (raw === null || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > 1) throw new ApiError(400, "ttsVolume must be between 0 and 1 (or empty to leave the volume alone)");
+  return n;
 }
 
 const handleHASaveConfig = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
@@ -627,6 +637,9 @@ const handleHASpeak = apiHandler(async (_req, _res, body: { text?: string; playe
   const reflex = getHAStatus().config.reflexes.weatherBriefing;
   const player = body.player?.trim() || reflex.mediaPlayer;
   if (!ENTITY_ID_RE.test(player)) throw new ApiError(400, "player must be a media_player entity id");
+  if (reflex.ttsVolume !== null) {
+    await dispatchCommand(buildVolumeCall(player, reflex.ttsVolume), "api", "announcement volume");
+  }
   const call = buildTtsCall(text, { player, engine: reflex.ttsEngine, language: reflex.language });
   const dispatched = await dispatchCommand(call, "api", "dashboard speak");
   return { success: true, mode: dispatched.mode, command: dispatched.command };

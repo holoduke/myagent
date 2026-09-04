@@ -13,7 +13,7 @@
  * polling interval. Only allow-listed service domains are accepted.
  */
 
-import { getStates, buildTtsCall } from "../integrations/ha-client.js";
+import { getStates, buildTtsCall, buildVolumeCall } from "../integrations/ha-client.js";
 import { dispatchCommand } from "../integrations/ha-commands.js";
 import { getRecentEvents, describeEvent } from "../integrations/ha-events.js";
 import { loadConfig } from "../integrations/homeassistant.js";
@@ -103,7 +103,11 @@ async function main() {
 
   if (cmd.command === "speak") {
     const reflex = config.reflexes.weatherBriefing;
-    const call = buildTtsCall(cmd.text, { player: cmd.player ?? reflex.mediaPlayer, engine: reflex.ttsEngine, language: reflex.language });
+    const player = cmd.player ?? reflex.mediaPlayer;
+    if (reflex.ttsVolume !== null) {
+      await dispatchCommand(buildVolumeCall(player, reflex.ttsVolume), "cli", "announcement volume");
+    }
+    const call = buildTtsCall(cmd.text, { player, engine: reflex.ttsEngine, language: reflex.language });
     const result = await dispatchCommand(call, "cli", "spoken message");
     console.log(result.mode === "direct" ? "Spoken via Home Assistant." : `Queued for the house (${result.command.id}).`);
     return;
