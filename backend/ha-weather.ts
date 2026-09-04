@@ -204,10 +204,10 @@ Antwoord met alleen de gesproken tekst.`;
 }
 
 /** Guard against a model returning markdown, quotes or something far too long to speak. */
-export function sanitizeSpokenText(raw: string | null | undefined): string | null {
+export function sanitizeSpokenText(raw: string | null | undefined, maxLength = 400): string | null {
   if (!raw) return null;
   const text = raw.replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim().replace(/^["']|["']$/g, "");
-  if (text.length < 15 || text.length > 400) return null;
+  if (text.length < 15 || text.length > maxLength) return null;
   return text;
 }
 

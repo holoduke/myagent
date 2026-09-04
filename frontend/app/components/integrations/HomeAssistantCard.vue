@@ -29,45 +29,80 @@
       </div>
     </div>
 
-    <!-- Weather reflex -->
+    <!-- Speech -->
     <div class="ha-section">
-      <div class="ha-section-title">Reflex: weather briefing on button press</div>
+      <div class="ha-section-title">Speech (how ARIA talks in the house)</div>
       <div class="ha-grid">
-        <label class="intg-label">Enabled
-          <input v-model="reflex.enabled" type="checkbox" />
-        </label>
-        <label class="intg-label">Button device
-          <input v-model="reflex.device" class="intg-input" placeholder="Ikea switch 3 silver" />
-        </label>
-        <label class="intg-label">Actions (comma separated)
-          <input v-model="actionsText" class="intg-input" placeholder="on, off, arrow_left_click" />
-        </label>
         <label class="intg-label">Speaker (media_player)
-          <input v-model="reflex.mediaPlayer" class="intg-input" placeholder="media_player.wiim_amp_ultra_3d72" />
+          <input v-model="speech.mediaPlayer" class="intg-input" placeholder="media_player.wiim_amp_ultra_3d72" />
         </label>
         <label class="intg-label">TTS engine
-          <input v-model="reflex.ttsEngine" class="intg-input" placeholder="tts.edge_tts_service_edge_tts, google_translate, cloud" />
+          <input v-model="speech.ttsEngine" class="intg-input" placeholder="tts.edge_tts_service_edge_tts, google_translate, cloud" />
         </label>
         <label class="intg-label">Language / voice
-          <input v-model="reflex.language" class="intg-input" placeholder="nl-NL-FennaNeural or nl" />
-        </label>
-        <label class="intg-label">Tomorrow from (hour)
-          <input v-model.number="reflex.eveningHour" type="number" min="0" max="23" class="intg-input intg-input-sm" />
-        </label>
-        <label class="intg-label">Weather entity
-          <input v-model="reflex.weatherEntity" class="intg-input" placeholder="weather.buienradar" />
+          <input v-model="speech.language" class="intg-input" placeholder="nl-NL-FennaNeural or nl" />
         </label>
         <label class="intg-label">Announcement volume (0–1)
-          <input v-model.number="reflex.ttsVolume" type="number" min="0" max="1" step="0.05" class="intg-input intg-input-sm" />
-        </label>
-        <label class="intg-label">Also push TTS from server
-          <input v-model="reflex.pushTts" type="checkbox" />
+          <input v-model.number="speech.ttsVolume" type="number" min="0" max="1" step="0.05" class="intg-input intg-input-sm" />
         </label>
       </div>
       <div class="btn-row">
-        <button class="btn primary" :disabled="busy" @click="saveReflex">Save reflex</button>
-        <button class="btn" :disabled="busy" @click="testReflex(false)">Preview briefing</button>
-        <button class="btn" :disabled="busy" @click="testReflex(true)">Speak on speaker</button>
+        <button class="btn primary" :disabled="busy" @click="saveSpeech">Save speech</button>
+      </div>
+    </div>
+
+    <!-- Weather reflex -->
+    <div class="ha-section">
+      <div class="ha-section-title">Reflex: weather briefing</div>
+      <div class="ha-grid">
+        <label class="intg-label">Enabled
+          <input v-model="weather.enabled" type="checkbox" />
+        </label>
+        <label class="intg-label">Button device
+          <input v-model="weather.device" class="intg-input" placeholder="Ikea switch 3 silver" />
+        </label>
+        <label class="intg-label">Actions (comma separated)
+          <input v-model="weatherActions" class="intg-input" placeholder="on, off, arrow_left_click" />
+        </label>
+        <label class="intg-label">Tomorrow from (hour)
+          <input v-model.number="weather.eveningHour" type="number" min="0" max="23" class="intg-input intg-input-sm" />
+        </label>
+        <label class="intg-label">Weather entity
+          <input v-model="weather.weatherEntity" class="intg-input" placeholder="weather.buienradar" />
+        </label>
+        <label class="intg-label">Also push TTS from server
+          <input v-model="weather.pushTts" type="checkbox" />
+        </label>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" :disabled="busy" @click="saveReflexes">Save reflexes</button>
+        <button class="btn" :disabled="busy" @click="testReflex('weather_briefing', false)">Preview</button>
+        <button class="btn" :disabled="busy" @click="testReflex('weather_briefing', true)">Speak on speaker</button>
+      </div>
+    </div>
+
+    <!-- Mind reflex -->
+    <div class="ha-section">
+      <div class="ha-section-title">Reflex: what's on ARIA's mind today</div>
+      <p class="ha-hint">Built from working memory, ARIA's own notes, today's observations and the last message she sent. No weather.</p>
+      <div class="ha-grid">
+        <label class="intg-label">Enabled
+          <input v-model="mind.enabled" type="checkbox" />
+        </label>
+        <label class="intg-label">Button device
+          <input v-model="mind.device" class="intg-input" placeholder="Ikea switch 3 silver" />
+        </label>
+        <label class="intg-label">Actions (comma separated)
+          <input v-model="mindActions" class="intg-input" placeholder="arrow_right_click" />
+        </label>
+        <label class="intg-label">Also push TTS from server
+          <input v-model="mind.pushTts" type="checkbox" />
+        </label>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" :disabled="busy" @click="saveReflexes">Save reflexes</button>
+        <button class="btn" :disabled="busy" @click="testReflex('mind_briefing', false)">Preview</button>
+        <button class="btn" :disabled="busy" @click="testReflex('mind_briefing', true)">Speak on speaker</button>
       </div>
       <p v-if="preview" class="ha-preview">“{{ preview }}”</p>
     </div>
@@ -113,7 +148,7 @@
 </template>
 
 <script setup lang="ts">
-import type { HomeAssistantStatus, HAEventRecord, HAWeatherReflexConfig } from '~/types/aria'
+import type { HomeAssistantStatus, HAEventRecord, HAWeatherReflexConfig, HAButtonRule, HASpeechConfig } from '~/types/aria'
 
 const props = defineProps<{ ha: HomeAssistantStatus }>()
 const emit = defineEmits<{ reload: []; error: [msg: string]; info: [msg: string] }>()
@@ -125,20 +160,24 @@ const busy = ref(false)
 const showToken = ref(false)
 const preview = ref('')
 
-const DEFAULT_REFLEX: HAWeatherReflexConfig = {
-  enabled: true, device: 'Ikea switch 3 silver', actions: ['on', 'off', 'arrow_left_click', 'arrow_right_click'],
-  mediaPlayer: 'media_player.wiim_amp_ultra_3d72', ttsEngine: 'google_translate', language: 'nl',
-  eveningHour: 14, weatherEntity: 'weather.buienradar', pushTts: false, ttsVolume: 0.3,
-}
+const DEFAULT_SPEECH: HASpeechConfig = { mediaPlayer: 'media_player.wiim_amp_ultra_3d72', ttsEngine: 'google_translate', language: 'nl', ttsVolume: 0.3 }
+const DEFAULT_WEATHER: HAWeatherReflexConfig = { enabled: true, device: 'Ikea switch 3 silver', actions: ['on', 'off', 'arrow_left_click'], eveningHour: 14, weatherEntity: 'weather.buienradar', pushTts: false }
+const DEFAULT_MIND: HAButtonRule = { enabled: true, device: 'Ikea switch 3 silver', actions: ['arrow_right_click'], pushTts: false }
 
-const reflex = reactive<HAWeatherReflexConfig>({ ...DEFAULT_REFLEX })
-const actionsText = ref(DEFAULT_REFLEX.actions.join(', '))
+const speech = reactive<HASpeechConfig>({ ...DEFAULT_SPEECH })
+const weather = reactive<HAWeatherReflexConfig>({ ...DEFAULT_WEATHER })
+const mind = reactive<HAButtonRule>({ ...DEFAULT_MIND })
+const weatherActions = ref(DEFAULT_WEATHER.actions.join(', '))
+const mindActions = ref(DEFAULT_MIND.actions.join(', '))
 const conn = reactive({ mode: 'webhook' as 'webhook' | 'direct_api' | 'cloud', url: '', token: '' })
 
 watch(() => props.ha.config, (cfg) => {
   if (!cfg) return
-  Object.assign(reflex, cfg.reflexes?.weatherBriefing ?? DEFAULT_REFLEX)
-  actionsText.value = reflex.actions.join(', ')
+  Object.assign(speech, cfg.speech ?? DEFAULT_SPEECH)
+  Object.assign(weather, cfg.reflexes?.weatherBriefing ?? DEFAULT_WEATHER)
+  Object.assign(mind, cfg.reflexes?.mindBriefing ?? DEFAULT_MIND)
+  weatherActions.value = weather.actions.join(', ')
+  mindActions.value = mind.actions.join(', ')
   conn.mode = cfg.mode
   conn.url = cfg.mode === 'cloud' ? (cfg.cloud?.url ?? '') : (cfg.direct_api?.url ?? '')
   conn.token = ''
@@ -176,18 +215,32 @@ async function run(label: string, fn: () => Promise<void>) {
   }
 }
 
-function saveReflex() {
-  return run('Save reflex', async () => {
-    const actions = actionsText.value.split(',').map(s => s.trim()).filter(Boolean)
-    await api('/api/homeassistant/config', { method: 'PUT', body: { reflexes: { weatherBriefing: { ...reflex, actions } } } })
-    emit('info', 'Reflex saved')
+function splitActions(text: string): string[] {
+  return text.split(',').map(s => s.trim()).filter(Boolean)
+}
+
+function saveSpeech() {
+  return run('Save speech', async () => {
+    await api('/api/homeassistant/config', { method: 'PUT', body: { speech: { ...speech } } })
+    emit('info', 'Speech settings saved')
     emit('reload')
   })
 }
 
-function testReflex(push: boolean) {
+function saveReflexes() {
+  return run('Save reflexes', async () => {
+    await api('/api/homeassistant/config', { method: 'PUT', body: { reflexes: {
+      weatherBriefing: { ...weather, actions: splitActions(weatherActions.value) },
+      mindBriefing: { ...mind, actions: splitActions(mindActions.value) },
+    } } })
+    emit('info', 'Reflexes saved')
+    emit('reload')
+  })
+}
+
+function testReflex(reflexId: string, push: boolean) {
   return run('Briefing', async () => {
-    const res = await api<{ result: { speak?: string }; pushed: string | null }>('/api/homeassistant/reflex/test', { method: 'POST', body: { reflexId: 'weather_briefing', push } })
+    const res = await api<{ result: { speak?: string }; pushed: string | null }>('/api/homeassistant/reflex/test', { method: 'POST', body: { reflexId, push } })
     preview.value = res.result.speak || '(no speech)'
     if (push) emit('info', res.pushed === 'direct' ? 'Spoken via Home Assistant' : 'Queued — the house will pull it')
   })

@@ -135,17 +135,23 @@ export interface CalendarConfig {
   calendars: CalendarConfigEntry[]
 }
 
-export interface HAWeatherReflexConfig {
-  enabled: boolean
-  device: string
-  actions: string[]
+export interface HASpeechConfig {
   mediaPlayer: string
   ttsEngine: string
   language: string
+  ttsVolume: number | null
+}
+
+export interface HAButtonRule {
+  enabled: boolean
+  device: string
+  actions: string[]
+  pushTts: boolean
+}
+
+export interface HAWeatherReflexConfig extends HAButtonRule {
   eveningHour: number
   weatherEntity: string
-  pushTts: boolean
-  ttsVolume: number | null
 }
 
 export interface HomeAssistantConfig {
@@ -157,7 +163,8 @@ export interface HomeAssistantConfig {
   webhookToken: string
   digestIntervalMs: number
   location: { lat: number; lon: number }
-  reflexes: { weatherBriefing: HAWeatherReflexConfig }
+  speech: HASpeechConfig
+  reflexes: { weatherBriefing: HAWeatherReflexConfig; mindBriefing: HAButtonRule }
 }
 
 export interface HAEventRecord {
@@ -448,6 +455,7 @@ export interface BrainConfig {
     newsDigest?: string
     haReflex?: string
     haDigest?: string
+    haMind?: string
   }
 }
 

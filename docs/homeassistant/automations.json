@@ -1,8 +1,8 @@
 [
   {
     "id": "aria_styrbar_silver_weather",
-    "alias": "ARIA: silver STYRBAR → weather briefing",
-    "description": "Sends every short press of the silver IKEA STYRBAR to ARIA with the Buienradar forecast, then speaks ARIA's reply on the WiiM with the Edge TTS 'Fenna' voice. Falls back to a plain forecast if ARIA is unreachable.",
+    "alias": "ARIA: silver STYRBAR → briefing",
+    "description": "Sends every short press of the silver IKEA STYRBAR to ARIA with the Buienradar forecast and speaks ARIA's reply on the WiiM (Edge TTS 'Fenna'). Top/bottom/left = weather, right arrow = what's on ARIA's mind. Falls back to a plain forecast (weather buttons) or a short notice if ARIA is unreachable.",
     "mode": "single",
     "max_exceeded": "silent",
     "triggers": [
@@ -99,21 +99,48 @@
         ],
         "default": [
           {
-            "variables": {
-              "day": "{{ fc['weather.buienradar'].forecast[0] if now().hour < 14 else fc['weather.buienradar'].forecast[1] }}",
-              "label": "{{ 'Vandaag' if now().hour < 14 else 'Morgen' }}"
-            }
-          },
-          {
-            "action": "tts.speak",
-            "target": {
-              "entity_id": "tts.edge_tts_service_edge_tts"
-            },
-            "data": {
-              "media_player_entity_id": "media_player.wiim_amp_ultra_3d72",
-              "message": "{{ label }} wordt het {{ day.condition }} met een maximum van {{ day.temperature | round }} graden en {{ day.precipitation_probability }} procent kans op regen. ARIA is even niet bereikbaar.",
-              "language": "nl-NL-FennaNeural"
-            }
+            "choose": [
+              {
+                "conditions": [
+                  {
+                    "condition": "template",
+                    "value_template": "{{ trigger.id | default('on') != 'arrow_right_click' }}"
+                  }
+                ],
+                "sequence": [
+                  {
+                    "variables": {
+                      "day": "{{ fc['weather.buienradar'].forecast[0] if now().hour < 14 else fc['weather.buienradar'].forecast[1] }}",
+                      "label": "{{ 'Vandaag' if now().hour < 14 else 'Morgen' }}"
+                    }
+                  },
+                  {
+                    "action": "tts.speak",
+                    "target": {
+                      "entity_id": "tts.edge_tts_service_edge_tts"
+                    },
+                    "data": {
+                      "media_player_entity_id": "media_player.wiim_amp_ultra_3d72",
+                      "message": "{{ label }} wordt het {{ day.condition }} met een maximum van {{ day.temperature | round }} graden en {{ day.precipitation_probability }} procent kans op regen. ARIA is even niet bereikbaar.",
+                      "language": "nl-NL-FennaNeural"
+                    }
+                  }
+                ]
+              }
+            ],
+            "default": [
+              {
+                "action": "tts.speak",
+                "target": {
+                  "entity_id": "tts.edge_tts_service_edge_tts"
+                },
+                "data": {
+                  "media_player_entity_id": "media_player.wiim_amp_ultra_3d72",
+                  "message": "Sorry, ik kan ARIA even niet bereiken.",
+                  "language": "nl-NL-FennaNeural"
+                }
+              }
+            ]
           }
         ]
       }

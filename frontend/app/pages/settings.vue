@@ -459,6 +459,7 @@ const brainForm = reactive<BrainConfig>({
     newsDigest: 'haiku',
     haReflex: 'haiku',
     haDigest: 'haiku',
+    haMind: 'haiku',
   },
 })
 const brainDirty = ref(false)
@@ -508,6 +509,7 @@ const modelLabels: Record<string, string> = {
   newsDigest: 'News Digest (daily headlines)',
   haReflex: 'Home Reflex (spoken weather etc.)',
   haDigest: 'Home Digest (house event batches)',
+  haMind: "Home Mind (spoken what's-on-my-mind)",
 }
 
 const modelSummary = computed(() => {

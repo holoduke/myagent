@@ -48,31 +48,43 @@ export interface HACloudConfig {
   token: string;
 }
 
-export interface HAWeatherReflexConfig {
-  enabled: boolean;
-  /** Device / friendly name / entity id of the button, as sent by Home Assistant. */
-  device: string;
-  /** Button actions that trigger the briefing (Zigbee2MQTT action names). */
-  actions: string[];
-  /** media_player entity that speaks the briefing. */
+/** How ARIA speaks in the house — shared by every reflex, the CLI and the dashboard. */
+export interface HASpeechConfig {
+  /** media_player entity that speaks. */
   mediaPlayer: string;
   /** "google_translate" | "cloud" (legacy *_say services) or a "tts.*" entity for tts.speak. */
   ttsEngine: string;
+  /** Language or full voice name (e.g. "nl-NL-FennaNeural" for Edge/Azure engines). */
   language: string;
+  /** Speaker volume (0–1) set right before ARIA speaks; null leaves the volume alone. */
+  ttsVolume: number | null;
+}
+
+/** Which button press fires a reflex. */
+export interface HAButtonRule {
+  enabled: boolean;
+  /** Device / friendly name / entity id of the button, as sent by Home Assistant. */
+  device: string;
+  /** Button actions that trigger it (Zigbee2MQTT action names). */
+  actions: string[];
+  /** Also push the TTS call from the server (in addition to the HTTP response). */
+  pushTts: boolean;
+}
+
+export interface HAWeatherReflexConfig extends HAButtonRule {
   /** Owner-local hour from which the briefing covers tomorrow instead of today. */
   eveningHour: number;
   /** Weather entity used when ARIA can reach Home Assistant directly. */
   weatherEntity: string;
-  /** Also push the TTS call from the server (in addition to the HTTP response). */
-  pushTts: boolean;
-  /** Speaker volume (0–1) set right before ARIA speaks; null leaves the volume alone. */
-  ttsVolume: number | null;
 }
+
+export type HAMindReflexConfig = HAButtonRule;
 
 export interface HAConfig {
   mode: HAConnectionMode;
   direct_api?: HADirectApiConfig;
   cloud?: HACloudConfig;
+  speech: HASpeechConfig;
   entities: string[];       // Entity domains to monitor when polling
   pollInterval: number;     // ms between polls
   /** Shared secret Home Assistant sends with every request. */
@@ -81,6 +93,7 @@ export interface HAConfig {
   location: { lat: number; lon: number };
   reflexes: {
     weatherBriefing: HAWeatherReflexConfig;
+    mindBriefing: HAMindReflexConfig;
   };
 }
 
@@ -98,18 +111,47 @@ interface HAState {
 
 // ── Defaults ──
 
-export const DEFAULT_WEATHER_REFLEX: HAWeatherReflexConfig = {
-  enabled: true,
-  device: "Ikea switch 3 silver",
-  actions: ["on", "off", "arrow_left_click", "arrow_right_click"],
+export const DEFAULT_SPEECH: HASpeechConfig = {
   mediaPlayer: "media_player.wiim_amp_ultra_3d72",
   ttsEngine: "google_translate",
   language: "nl",
+  ttsVolume: 0.3,
+};
+
+export const DEFAULT_WEATHER_REFLEX: HAWeatherReflexConfig = {
+  enabled: true,
+  device: "Ikea switch 3 silver",
+  actions: ["on", "off", "arrow_left_click"],
   eveningHour: 14,
   weatherEntity: "weather.buienradar",
   pushTts: false,
-  ttsVolume: 0.3,
 };
+
+export const DEFAULT_MIND_REFLEX: HAMindReflexConfig = {
+  enabled: true,
+  device: "Ikea switch 3 silver",
+  actions: ["arrow_right_click"],
+  pushTts: false,
+};
+
+/** Older config files carried the speech settings inside the weather reflex. */
+interface LegacyWeatherReflex extends Partial<HAWeatherReflexConfig> {
+  mediaPlayer?: string;
+  ttsEngine?: string;
+  language?: string;
+  ttsVolume?: number | null;
+}
+
+function normalizeRule<T extends HAButtonRule>(raw: Partial<T> | undefined, fallback: T): T {
+  const merged = { ...fallback, ...(raw ?? {}) };
+  return {
+    ...merged,
+    enabled: typeof merged.enabled === "boolean" ? merged.enabled : fallback.enabled,
+    device: typeof merged.device === "string" && merged.device.trim() ? merged.device : fallback.device,
+    actions: Array.isArray(merged.actions) ? merged.actions.filter(a => typeof a === "string" && a) : fallback.actions,
+    pushTts: typeof merged.pushTts === "boolean" ? merged.pushTts : fallback.pushTts,
+  };
+}
 
 export function generateWebhookToken(): string {
   return randomBytes(24).toString("base64url");
@@ -127,7 +169,21 @@ export function isMeaningfulStateChange(previous: string | undefined, next: stri
 
 /** Fill in defaults for older/partial config files so every field is present. */
 export function withDefaults(partial: Partial<HAConfig> | null | undefined): HAConfig {
-  const reflex = { ...DEFAULT_WEATHER_REFLEX, ...(partial?.reflexes?.weatherBriefing ?? {}) };
+  const legacy = (partial?.reflexes?.weatherBriefing ?? {}) as LegacyWeatherReflex;
+  const speechRaw: Partial<HASpeechConfig> = {
+    mediaPlayer: legacy.mediaPlayer,
+    ttsEngine: legacy.ttsEngine,
+    language: legacy.language,
+    ttsVolume: legacy.ttsVolume,
+    ...(partial?.speech ?? {}),
+  };
+  const speech: HASpeechConfig = {
+    mediaPlayer: typeof speechRaw.mediaPlayer === "string" && speechRaw.mediaPlayer ? speechRaw.mediaPlayer : DEFAULT_SPEECH.mediaPlayer,
+    ttsEngine: typeof speechRaw.ttsEngine === "string" && speechRaw.ttsEngine ? speechRaw.ttsEngine : DEFAULT_SPEECH.ttsEngine,
+    language: typeof speechRaw.language === "string" && speechRaw.language ? speechRaw.language : DEFAULT_SPEECH.language,
+    ttsVolume: speechRaw.ttsVolume === null ? null : clampNumber(speechRaw.ttsVolume, DEFAULT_SPEECH.ttsVolume ?? 0.3, 0, 1),
+  };
+  const weather = normalizeRule(legacy, DEFAULT_WEATHER_REFLEX);
   return {
     mode: partial?.mode ?? "webhook",
     direct_api: partial?.direct_api,
@@ -141,13 +197,17 @@ export function withDefaults(partial: Partial<HAConfig> | null | undefined): HAC
       lat: clampNumber(partial?.location?.lat, DEFAULT_LOCATION.lat, -90, 90),
       lon: clampNumber(partial?.location?.lon, DEFAULT_LOCATION.lon, -180, 180),
     },
+    speech,
     reflexes: {
       weatherBriefing: {
-        ...reflex,
-        actions: Array.isArray(reflex.actions) ? reflex.actions.filter(a => typeof a === "string" && a) : DEFAULT_WEATHER_REFLEX.actions,
-        eveningHour: clampNumber(reflex.eveningHour, DEFAULT_WEATHER_REFLEX.eveningHour, 0, 23),
-        ttsVolume: reflex.ttsVolume === null ? null : clampNumber(reflex.ttsVolume, DEFAULT_WEATHER_REFLEX.ttsVolume ?? 0.3, 0, 1),
+        enabled: weather.enabled,
+        device: weather.device,
+        actions: weather.actions,
+        pushTts: weather.pushTts,
+        eveningHour: clampNumber(weather.eveningHour, DEFAULT_WEATHER_REFLEX.eveningHour, 0, 23),
+        weatherEntity: typeof weather.weatherEntity === "string" && weather.weatherEntity ? weather.weatherEntity : DEFAULT_WEATHER_REFLEX.weatherEntity,
       },
+      mindBriefing: normalizeRule(partial?.reflexes?.mindBriefing, DEFAULT_MIND_REFLEX),
     },
   };
 }
