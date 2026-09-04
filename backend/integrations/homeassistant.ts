@@ -68,6 +68,10 @@ export interface HASpeechConfig {
   style: string;
   /** Provider API key; empty = use GROK_API_KEY / ELEVENLABS_API_KEY / OPENAI_API_KEY from the environment. */
   apiKey: string;
+  /** Post-processing applied to synthesized clips with ffmpeg. */
+  effect: "none" | "reverb" | "computer";
+  /** Speaking rate for providers that support it (0.7–1.5, 1 = normal). */
+  speed: number;
 }
 
 /** Which button press fires a reflex. */
@@ -132,8 +136,11 @@ export const DEFAULT_SPEECH: HASpeechConfig = {
   model: "eleven_multilingual_v2",
   style: "",
   apiKey: "",
+  effect: "none",
+  speed: 1,
 };
 
+const VOICE_EFFECTS = new Set<HASpeechConfig["effect"]>(["none", "reverb", "computer"]);
 const VOICE_PROVIDERS = new Set<HASpeechConfig["provider"]>(["homeassistant", "grok", "elevenlabs", "openai"]);
 
 /** Sensible voice/model per provider, used when the provider changes without an explicit voice. */
@@ -213,6 +220,8 @@ export function withDefaults(partial: Partial<HAConfig> | null | undefined): HAC
     model: typeof speechRaw.model === "string" ? speechRaw.model : DEFAULT_SPEECH.model,
     style: typeof speechRaw.style === "string" ? speechRaw.style : DEFAULT_SPEECH.style,
     apiKey: typeof speechRaw.apiKey === "string" ? speechRaw.apiKey : "",
+    effect: speechRaw.effect && VOICE_EFFECTS.has(speechRaw.effect) ? speechRaw.effect : DEFAULT_SPEECH.effect,
+    speed: clampNumber(speechRaw.speed, DEFAULT_SPEECH.speed, 0.7, 1.5),
   };
   const weather = normalizeRule(legacy, DEFAULT_WEATHER_REFLEX);
   return {

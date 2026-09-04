@@ -12,7 +12,8 @@
  * send headers): ids are 32 random hex chars and files expire after a day.
  */
 
-import { createHash, randomBytes } from "crypto";
+import { createHash } from "crypto";
+import { execFile } from "child_process";
 import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { IncomingMessage, ServerResponse } from "http";
 import { ensureDir } from "./utils/file-store.js";
@@ -33,6 +34,18 @@ const MAX_TEXT_CHARS = 1500;
 const ID_RE = /^[a-f0-9]{32}$/;
 
 export type VoiceProvider = "homeassistant" | "elevenlabs" | "openai" | "grok";
+export type VoiceEffect = "none" | "reverb" | "computer";
+
+/**
+ * ffmpeg audio filters per effect. "reverb": a small hall (multi-tap echo).
+ * "computer": band-limited, slightly darker, longer soft tail — the ship's
+ * computer treatment. Applied after synthesis, cached per effect.
+ */
+export const EFFECT_FILTERS: Record<Exclude<VoiceEffect, "none">, string> = {
+  reverb: "aecho=0.8:0.85:28|52|80:0.35|0.22|0.12,alimiter=limit=0.95",
+  computer: "highpass=f=180,lowpass=f=5200,aecho=0.75:0.8:35|70|110|160:0.4|0.28|0.18|0.1,alimiter=limit=0.95",
+};
+const FFMPEG_TIMEOUT_MS = 20_000;
 
 export interface SynthesizedAudio {
   id: string;
@@ -59,7 +72,7 @@ export function isPremiumVoiceConfigured(speech: HASpeechConfig, env: NodeJS.Pro
 /** Deterministic id per (provider, voice, model, text) so repeated phrases reuse the file. */
 export function audioIdFor(speech: HASpeechConfig, text: string): string {
   return createHash("sha256")
-    .update(`${speech.provider}|${speech.voiceId}|${speech.model}|${speech.style}|${text}`)
+    .update(`${speech.provider}|${speech.voiceId}|${speech.model}|${speech.style}|${speech.effect}|${speech.speed}|${text}`)
     .digest("hex")
     .slice(0, 32);
 }
@@ -113,6 +126,7 @@ export function buildGrokRequest(speech: HASpeechConfig, text: string, apiKey: s
       text,
       voice_id: speech.voiceId || "eve",
       language: /^[a-z]{2}$/.test(primary) ? primary : "auto",
+      speed: Math.min(1.5, Math.max(0.7, speech.speed || 1)),
       output_format: { codec: "mp3", sample_rate: 24000, bit_rate: 128000 },
     }),
   };
@@ -177,9 +191,43 @@ export async function synthesizeSpeech(
   const audio = Buffer.from(await res.arrayBuffer());
   if (audio.length < 1000) throw new Error(`${speech.provider} returned ${audio.length} bytes of audio`);
   writeFileSync(path, audio);
+  const effect = await applyEffect(path, speech.effect);
   pruneAudioDir();
-  log(`Synthesized ${audio.length} bytes with ${speech.provider}/${speech.voiceId} in ${Date.now() - started}ms`);
-  return { id, url: audioUrlFor(id), path, bytes: audio.length, provider: speech.provider, cached: false };
+  log(`Synthesized ${audio.length} bytes with ${speech.provider}/${speech.voiceId}${effect ? ` + ${effect}` : ""} in ${Date.now() - started}ms`);
+  return { id, url: audioUrlFor(id), path, bytes: statSync(path).size, provider: speech.provider, cached: false };
+}
+
+// ── Effects (ffmpeg) ──
+
+function runFfmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile("ffmpeg", args, { timeout: FFMPEG_TIMEOUT_MS }, (err, _stdout, stderr) => {
+      if (err) reject(new Error(`${err.message} ${String(stderr).slice(-200)}`));
+      else resolve();
+    });
+  });
+}
+
+/**
+ * Apply the configured effect to the clip in place. Returns the effect name
+ * when applied, null when there is nothing to do or ffmpeg is unavailable
+ * (the raw clip stays — a dry voice beats no voice).
+ */
+export async function applyEffect(path: string, effect: VoiceEffect, ffmpeg: (args: string[]) => Promise<void> = runFfmpeg): Promise<VoiceEffect | null> {
+  if (effect === "none" || !EFFECT_FILTERS[effect]) return null;
+  const tmp = `${path}.fx.mp3`;
+  try {
+    await ffmpeg(["-y", "-loglevel", "error", "-i", path, "-af", EFFECT_FILTERS[effect], "-codec:a", "libmp3lame", "-b:a", "128k", tmp]);
+    const processed = readFileSync(tmp);
+    if (processed.length < 1000) throw new Error(`ffmpeg produced ${processed.length} bytes`);
+    writeFileSync(path, processed);
+    return effect;
+  } catch (err) {
+    log(`Effect "${effect}" skipped: ${err}`);
+    return null;
+  } finally {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* ignore */ }
+  }
 }
 
 // ── Service calls ──

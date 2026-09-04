@@ -21,7 +21,7 @@ vi.mock("../backend/integrations/homeassistant.js", () => ({
 
 import {
   resolveApiKey, isPremiumVoiceConfigured, audioIdFor, buildElevenLabsRequest, buildOpenAIRequest, buildGrokRequest,
-  synthesizeSpeech, planSpeech, parseAudioId, handleTtsAudio, TTS_DIR,
+  synthesizeSpeech, planSpeech, parseAudioId, handleTtsAudio, TTS_DIR, applyEffect, EFFECT_FILTERS,
 } from "../backend/ha-voice.js";
 import type { HASpeechConfig } from "../backend/integrations/homeassistant.js";
 import type { IncomingMessage, ServerResponse } from "http";
@@ -29,6 +29,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 const base: HASpeechConfig = {
   mediaPlayer: "media_player.wiim", ttsEngine: "tts.edge", language: "nl-NL-FennaNeural", ttsVolume: 0.3,
   provider: "elevenlabs", voiceId: "voice123", model: "eleven_multilingual_v2", style: "", apiKey: "key-abc",
+  effect: "none", speed: 1,
 };
 
 beforeEach(() => disk.clear());
@@ -54,6 +55,7 @@ describe("configuration", () => {
     expect(audioIdFor(base, "Hallo")).toBe(a);
     expect(audioIdFor({ ...base, voiceId: "other" }, "Hallo")).not.toBe(a);
     expect(audioIdFor(base, "Hallo!")).not.toBe(a);
+    expect(audioIdFor({ ...base, effect: "reverb" }, "Hallo")).not.toBe(a);
   });
 });
 
@@ -77,8 +79,32 @@ describe("grok request", () => {
     const r = buildGrokRequest({ ...base, provider: "grok", voiceId: "eve", language: "nl-NL-FennaNeural" }, "Goedenavond", "k");
     expect(r.url).toBe("https://api.x.ai/v1/tts");
     expect(r.headers.Authorization).toBe("Bearer k");
-    expect(JSON.parse(r.body)).toMatchObject({ text: "Goedenavond", voice_id: "eve", language: "nl", output_format: { codec: "mp3" } });
+    expect(JSON.parse(r.body)).toMatchObject({ text: "Goedenavond", voice_id: "eve", language: "nl", speed: 1, output_format: { codec: "mp3" } });
     expect(JSON.parse(buildGrokRequest({ ...base, provider: "grok", language: "" }, "x", "k").body).language).toBe("auto");
+  });
+});
+
+describe("applyEffect", () => {
+  it("does nothing for 'none'", async () => {
+    const ff = vi.fn();
+    expect(await applyEffect("/x.mp3", "none", ff)).toBeNull();
+    expect(ff).not.toHaveBeenCalled();
+  });
+
+  it("runs ffmpeg with the effect filter and replaces the clip", async () => {
+    disk.set("/clip.mp3", Buffer.alloc(3000, 1));
+    const ff = vi.fn(async (args: string[]) => { disk.set(args[args.length - 1], Buffer.alloc(4000, 2)); });
+    expect(await applyEffect("/clip.mp3", "reverb", ff)).toBe("reverb");
+    expect(ff.mock.calls[0][0]).toContain(EFFECT_FILTERS.reverb);
+    expect(disk.get("/clip.mp3")!.length).toBe(4000);
+    expect(disk.has("/clip.mp3.fx.mp3")).toBe(false);
+  });
+
+  it("keeps the dry clip when ffmpeg fails", async () => {
+    disk.set("/clip.mp3", Buffer.alloc(3000, 1));
+    const ff = vi.fn(async () => { throw new Error("ffmpeg missing"); });
+    expect(await applyEffect("/clip.mp3", "computer", ff)).toBeNull();
+    expect(disk.get("/clip.mp3")!.length).toBe(3000);
   });
 });
 

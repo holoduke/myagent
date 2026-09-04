@@ -66,6 +66,16 @@
           <label class="intg-label">API key
             <input v-model="speech.apiKey" type="password" class="intg-input" placeholder="leave *** to keep, empty to use the server env var" />
           </label>
+          <label class="intg-label">Effect
+            <select v-model="speech.effect" class="intg-input">
+              <option value="none">None (dry)</option>
+              <option value="reverb">Reverb (small hall)</option>
+              <option value="computer">Computer (band-limited + long tail)</option>
+            </select>
+          </label>
+          <label class="intg-label">Speed (0.7–1.5)
+            <input v-model.number="speech.speed" type="number" min="0.7" max="1.5" step="0.05" class="intg-input intg-input-sm" />
+          </label>
         </template>
       </div>
       <p class="ha-hint">Premium voices are generated on the server and streamed to the speaker from ARIA's URL; if the provider fails, the Home Assistant engine speaks instead.</p>
@@ -183,7 +193,7 @@ const busy = ref(false)
 const showToken = ref(false)
 const preview = ref('')
 
-const DEFAULT_SPEECH: HASpeechConfig = { mediaPlayer: 'media_player.wiim_amp_ultra_3d72', ttsEngine: 'google_translate', language: 'nl', ttsVolume: 0.3, provider: 'homeassistant', voiceId: 'JBFqnCBsd6RMkjVDRZzb', model: 'eleven_multilingual_v2', style: '', apiKey: '' }
+const DEFAULT_SPEECH: HASpeechConfig = { mediaPlayer: 'media_player.wiim_amp_ultra_3d72', ttsEngine: 'google_translate', language: 'nl', ttsVolume: 0.3, provider: 'homeassistant', voiceId: 'JBFqnCBsd6RMkjVDRZzb', model: 'eleven_multilingual_v2', style: '', apiKey: '', effect: 'none', speed: 1 }
 const DEFAULT_WEATHER: HAWeatherReflexConfig = { enabled: true, device: 'Ikea switch 3 silver', actions: ['on', 'off', 'arrow_left_click'], eveningHour: 14, weatherEntity: 'weather.buienradar', pushTts: false }
 const DEFAULT_MIND: HAButtonRule = { enabled: true, device: 'Ikea switch 3 silver', actions: ['arrow_right_click'], pushTts: false }
 
