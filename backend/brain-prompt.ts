@@ -57,6 +57,40 @@ function timeAgo(ts: number): string {
   return `${days}d ago`;
 }
 
+// Promo / routine notification sender patterns. Used to drop noise participants
+// from the active-threads surface — many of these accumulate under a single
+// gmail:<account> thread key and crowd out real conversations. Raw observations
+// remain logged; only the prompt-side aggregation is filtered.
+const PROMO_LOCAL_PATTERNS: RegExp[] = [
+  /no-?reply@/i,
+  /do-?not-?reply@/i,
+  /newsletter@/i,
+  /notifications?@/i,
+  /savedsearches?@/i,
+  /jobalerts(?:-noreply)?@/i,
+  /best-message-notice@/i,
+];
+
+const PROMO_DOMAIN_KEYWORDS: string[] = [
+  "aliexpress",
+  "autoscout24",
+  "glassdoor",
+  "ferrari",
+  "mijn.overheid",
+  "marktplaats",
+  "quora",
+];
+
+function isPromoSender(sender: string): boolean {
+  if (!sender) return false;
+  const match = /<([^>]+)>/.exec(sender);
+  const addr = (match ? match[1] : sender).trim().toLowerCase();
+  if (PROMO_LOCAL_PATTERNS.some(re => re.test(addr))) return true;
+  const domain = addr.includes("@") ? addr.split("@")[1] || "" : addr;
+  if (PROMO_DOMAIN_KEYWORDS.some(kw => domain.includes(kw))) return true;
+  return false;
+}
+
 function formatSingleObservation(obs: Observation): string {
   const time = formatTime(obs.timestamp);
   const who = obs.isFromMe ? `${obs.sender || "Me"} (you/outgoing)` : obs.sender || "Unknown";
@@ -322,7 +356,19 @@ function formatWorkingMemory(wm: WorkingMemory): string {
 
   // Active conversation threads
   if (wm.conversationThreads && wm.conversationThreads.length > 0) {
-    const activeThreads = wm.conversationThreads.filter(t => t.status === "active").slice(0, 5);
+    const activeThreads = wm.conversationThreads
+      .filter(t => t.status === "active")
+      // Drop promo/notification senders from participants. If a thread is
+      // entirely promo (e.g. the gmail:<account> bucket where unrelated
+      // newsletters pile up), suppress it entirely.
+      .map(t => {
+        const filtered = Array.isArray(t.participants)
+          ? t.participants.filter(p => !isPromoSender(p))
+          : t.participants;
+        return { ...t, participants: filtered };
+      })
+      .filter(t => Array.isArray(t.participants) ? t.participants.length > 0 : !!t.participants)
+      .slice(0, 5);
     if (activeThreads.length > 0) {
       const threadLines = activeThreads.map(t => {
         const who = Array.isArray(t.participants) ? t.participants.join(", ") : (t.participants || "unknown");
