@@ -21,7 +21,9 @@ import { composeMindBriefing } from "./ha-mind.js";
 import { loadConfig } from "./integrations/homeassistant.js";
 import type { HAConfig, HAButtonRule, HASpeechConfig } from "./integrations/homeassistant.js";
 import type { HAEvent } from "./integrations/ha-events.js";
-import { buildTtsCall, buildVolumeCall, getDailyForecast, isHAReachableConfigured } from "./integrations/ha-client.js";
+import { buildVolumeCall, getDailyForecast, isHAReachableConfigured } from "./integrations/ha-client.js";
+import { planSpeech } from "./ha-voice.js";
+import type { VoiceProvider } from "./ha-voice.js";
 import type { ServiceCall } from "./integrations/ha-client.js";
 import { dispatchCommand } from "./integrations/ha-commands.js";
 
@@ -36,8 +38,11 @@ export interface ReflexResult {
   reflexId: string;
   /** Text for Home Assistant to speak (if the reflex produced speech). */
   speak?: string;
-  /** Ready-to-run TTS call for the configured player (informational for HA, executed on push). */
+  /** Ready-to-run call for the configured player: play_media (premium clip) or tts.* (HA engine). */
   tts?: ServiceCall;
+  /** Public URL of the synthesized clip when a premium voice produced one. */
+  audioUrl?: string | null;
+  voiceProvider?: VoiceProvider;
   /** One-line summary for the digest/dashboard. */
   summary: string;
   usedLLM: boolean;
@@ -82,21 +87,23 @@ function runner(model: string | undefined): LlmRunner {
 }
 
 /**
- * Build the TTS call for `text` and, when the rule asks for it, push volume +
- * speech from the server. Returns how the house will end up hearing it.
+ * Decide how `text` is spoken (premium clip or HA engine) and, when the rule
+ * asks for it, push volume + speech from the server. Returns how the house
+ * will end up hearing it.
  */
-async function deliverSpeech(text: string, speech: HASpeechConfig, rule: HAButtonRule, reason: string): Promise<{ tts: ServiceCall; delivery: ReflexResult["delivery"] }> {
-  const tts = buildTtsCall(text, { player: speech.mediaPlayer, engine: speech.ttsEngine, language: speech.language });
-  if (!rule.pushTts) return { tts, delivery: "response" };
+async function deliverSpeech(text: string, speech: HASpeechConfig, rule: HAButtonRule, reason: string): Promise<{ tts: ServiceCall; audioUrl: string | null; voiceProvider: VoiceProvider; delivery: ReflexResult["delivery"] }> {
+  const plan = await planSpeech(text, speech);
+  const base = { tts: plan.call, audioUrl: plan.audioUrl, voiceProvider: plan.provider };
+  if (!rule.pushTts) return { ...base, delivery: "response" };
   try {
     if (speech.ttsVolume !== null) {
       await dispatchCommand(buildVolumeCall(speech.mediaPlayer, speech.ttsVolume), "reflex", "announcement volume");
     }
-    const result = await dispatchCommand(tts, "reflex", reason);
-    return { tts, delivery: result.mode === "direct" ? "push" : "response" };
+    const result = await dispatchCommand(plan.call, "reflex", reason);
+    return { ...base, delivery: result.mode === "direct" ? "push" : "response" };
   } catch (err) {
-    log(`Push TTS failed (house will use the response instead): ${err}`);
-    return { tts, delivery: "response" };
+    log(`Push speech failed (house will use the response instead): ${err}`);
+    return { ...base, delivery: "response" };
   }
 }
 
@@ -120,11 +127,13 @@ export const weatherBriefingReflex: ReflexDefinition = {
       fetchFromHA: isHAReachableConfigured() ? () => getDailyForecast(cfg.weatherEntity) : undefined,
       llm: runner(brain.models?.haReflex),
     });
-    const { tts, delivery } = await deliverSpeech(briefing.text, config.speech, cfg, "weather briefing");
+    const { tts, audioUrl, voiceProvider, delivery } = await deliverSpeech(briefing.text, config.speech, cfg, "weather briefing");
     return {
       reflexId: this.id,
       speak: briefing.text,
       tts,
+      audioUrl,
+      voiceProvider,
       summary: `spoke the weather for ${briefing.label} (${briefing.source}${briefing.usedLLM ? ", llm" : ", template"}): "${briefing.text.slice(0, 120)}"`,
       usedLLM: briefing.usedLLM,
       durationMs: Date.now() - started,
@@ -141,11 +150,13 @@ export const mindBriefingReflex: ReflexDefinition = {
     const started = Date.now();
     const brain = getBrainConfig();
     const briefing = await composeMindBriefing({ now, ownerName: OWNER_NAME, llm: runner(brain.models?.haMind) });
-    const { tts, delivery } = await deliverSpeech(briefing.text, config.speech, config.reflexes.mindBriefing, "mind briefing");
+    const { tts, audioUrl, voiceProvider, delivery } = await deliverSpeech(briefing.text, config.speech, config.reflexes.mindBriefing, "mind briefing");
     return {
       reflexId: this.id,
       speak: briefing.text,
       tts,
+      audioUrl,
+      voiceProvider,
       summary: `told what was on her mind (${briefing.observationCount} obs today${briefing.usedLLM ? ", llm" : ", template"}): "${briefing.text.slice(0, 120)}"`,
       usedLLM: briefing.usedLLM,
       durationMs: Date.now() - started,

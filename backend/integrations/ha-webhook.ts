@@ -121,6 +121,8 @@ export interface EventResponse {
     id: string;
     speak?: string;
     tts?: ReflexResult["tts"];
+    audioUrl?: string | null;
+    voiceProvider?: ReflexResult["voiceProvider"];
     delivery: ReflexResult["delivery"];
     durationMs: number;
   };
@@ -135,7 +137,7 @@ export async function processInboundEvent(event: HAEvent, now: Date = new Date()
     eventId: event.id,
     buffered: outcome,
     reflex: reflex
-      ? { id: reflex.reflexId, speak: reflex.speak, tts: reflex.tts, delivery: reflex.delivery, durationMs: reflex.durationMs }
+      ? { id: reflex.reflexId, speak: reflex.speak, tts: reflex.tts, audioUrl: reflex.audioUrl ?? null, voiceProvider: reflex.voiceProvider, delivery: reflex.delivery, durationMs: reflex.durationMs }
       : null,
   };
 }

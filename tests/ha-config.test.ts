@@ -35,7 +35,7 @@ describe("withDefaults", () => {
       },
     } as unknown as Partial<HAConfig>;
     const cfg = withDefaults(legacy);
-    expect(cfg.speech).toEqual({ mediaPlayer: "media_player.keuken", ttsEngine: "tts.edge", language: "nl-NL-FennaNeural", ttsVolume: 0.5 });
+    expect(cfg.speech).toMatchObject({ mediaPlayer: "media_player.keuken", ttsEngine: "tts.edge", language: "nl-NL-FennaNeural", ttsVolume: 0.5, provider: "homeassistant" });
     expect(cfg.reflexes.weatherBriefing.actions).toEqual(["on"]);
     expect("mediaPlayer" in cfg.reflexes.weatherBriefing).toBe(false);
     expect(cfg.reflexes.mindBriefing).toEqual(DEFAULT_MIND_REFLEX);
