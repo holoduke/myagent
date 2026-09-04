@@ -304,6 +304,11 @@ function bootstrapIdentity(g: MemoryGraph): void {
 
 let brainInterval: ReturnType<typeof setInterval> | null = null;
 let schedulerPollInterval: ReturnType<typeof setInterval> | null = null;
+let initialTickTimer: ReturnType<typeof setTimeout> | null = null;
+// True between startBrainLoop() and stopBrainLoop(). A passive deploy
+// instance never starts the loop, so its stop must NOT save the (unloaded,
+// empty) graph over the active instance's data on the shared volume.
+let brainLoopActive = false;
 let lastPruneDate = "";
 let firstSuccessfulTickDone = false;
 const graph = new MemoryGraph();
@@ -322,6 +327,11 @@ export function startBrainLoop(
     log("Brain is disabled (BRAIN_ENABLED=false)");
     return;
   }
+  if (brainLoopActive) {
+    log.warn("startBrainLoop called while already running — ignoring");
+    return;
+  }
+  brainLoopActive = true;
 
   ensureBrainDir();
   ensureSSHKey();
@@ -367,7 +377,8 @@ export function startBrainLoop(
     });
   }, SCHEDULER_POLL_INTERVAL);
 
-  setTimeout(() => {
+  initialTickTimer = setTimeout(() => {
+    initialTickTimer = null;
     tick(queue, sendMessage, ownerJid).catch((err) => {
       log(`Initial tick error: ${err}`);
     });
@@ -383,7 +394,17 @@ export function startBrainLoop(
   });
 }
 
+export function isBrainLoopActive(): boolean {
+  return brainLoopActive;
+}
+
 export function stopBrainLoop(): void {
+  if (!brainLoopActive) {
+    log.debug("stopBrainLoop: loop was never started — nothing to stop");
+    return;
+  }
+  brainLoopActive = false;
+
   try {
     graph.save();
     log("Graph saved on shutdown");
@@ -398,6 +419,10 @@ export function stopBrainLoop(): void {
   if (schedulerPollInterval) {
     clearInterval(schedulerPollInterval);
     schedulerPollInterval = null;
+  }
+  if (initialTickTimer) {
+    clearTimeout(initialTickTimer);
+    initialTickTimer = null;
   }
   stopWatchdog();
   log("Brain loop stopped");

@@ -25,10 +25,18 @@ import {
 } from "../utils/vision.js";
 import { normalizeJid, invalidateJidAliasMap } from "./jid-alias.js";
 import { logDelivery } from "../scheduler.js";
+import { OutboundBuffer } from "./outbound-buffer.js";
 
-// Emits 'logout' when WhatsApp session is logged out.
-// Listeners can perform cleanup before the process exits.
+// Emits 'logout' when WhatsApp session is logged out and 'replaced' when
+// another client took over the session (Baileys code 440 — during a rolling
+// deploy that is the new container). Listeners decide what to do next.
 export const whatsappEvents = new EventEmitter();
+
+export interface SendResult {
+  /** sent: delivered to the socket; buffered: socket down, queued for the
+   *  next `open`; deduped: identical text sent to this JID within 5 min. */
+  status: "sent" | "buffered" | "deduped";
+}
 
 export type MessageHandler = (
   jid: string,
@@ -57,8 +65,24 @@ let sock: ReturnType<typeof makeWASocket>;
 let latestQr: string | null = null;
 let isConnected = false;
 let reconnectAttempt = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+// Set by stopWhatsApp() (shutdown / demotion) and on connectionReplaced so the
+// close handler never schedules a reconnect that would fight the other side.
+let stopping = false;
 const MAX_RECONNECT_DELAY = 60_000; // 60s max
 const BASE_RECONNECT_DELAY = 5_000; // 5s base
+// Owner-bound messages that arrive while the socket is down wait here and
+// are flushed, in order, on the next `connection === "open"`.
+const outbound = new OutboundBuffer();
+// Owner-DM stub/undecryptable fallback, throttled so a burst of bad-MAC
+// retries doesn't spam the owner.
+const STUB_FALLBACK_TEXT = "Ik kon je laatste bericht niet lezen, stuur het nog eens";
+const STUB_FALLBACK_INTERVAL_MS = 5 * 60 * 1000;
+let lastStubFallbackAt = 0;
+
+function getOwnerJid(): string {
+  return `${process.env.OWNER_PHONE}@s.whatsapp.net`;
+}
 // Message dedup caches with TTL (timestamp-tracked Maps + periodic sweep)
 const MESSAGE_DEDUP_TTL = 5 * 60 * 1000; // 5 minutes
 const MAX_DEDUP_CACHE_SIZE = 10_000;
@@ -150,11 +174,120 @@ export function isWhatsAppConnected(): boolean {
   return isConnected && !!sock;
 }
 
+/**
+ * Close the socket and suppress reconnects. Used on SIGTERM and when this
+ * instance is demoted to passive. `startWhatsApp` re-arms everything.
+ */
+export function stopWhatsApp(): void {
+  stopping = true;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  isConnected = false;
+  if (sock) {
+    try {
+      sock.end(undefined);
+    } catch (err) {
+      log(`Failed to close socket on stop: ${err}`);
+    }
+  }
+  log.info("WhatsApp stopped");
+}
+
+// ── Connection lifecycle helpers ──
+
+function scheduleReconnect(onMessage: MessageHandler, onObservation?: ObservationHandler): void {
+  // Exponential backoff: 5s, 10s, 20s, 40s, 60s (max)
+  const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempt), MAX_RECONNECT_DELAY);
+  reconnectAttempt++;
+  log.warn(`Reconnecting in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempt})`);
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    startWhatsApp(onMessage, onObservation).catch((err) => log.error(`Reconnect failed: ${err}`));
+  }, delay);
+}
+
+function handleConnectionReplaced(): void {
+  // Another client (the replacement container during a rolling deploy) took
+  // the session. Reconnecting would only bounce it back and forth.
+  stopping = true;
+  log.warn("Connection REPLACED by another client (code 440) — not reconnecting; releasing to the replacement");
+  whatsappEvents.emit("replaced");
+}
+
+function handleLoggedOut(): void {
+  log.error("Logged out. Delete auth_state/ and restart to re-scan QR.");
+  log.info("Emitting logout event for graceful shutdown...");
+  whatsappEvents.emit("logout");
+  // Fallback: force exit after 5s if listeners haven't shut down
+  setTimeout(() => {
+    log.error("Graceful shutdown timeout (5s) — forcing exit.");
+    process.exit(1);
+  }, 5_000).unref();
+}
+
+function handleConnectionClose(
+  statusCode: number | undefined,
+  onMessage: MessageHandler,
+  onObservation?: ObservationHandler,
+): void {
+  isConnected = false;
+  log.warn(`Connection closed (code: ${statusCode ?? "unknown"})`);
+  if (stopping) {
+    log.info("Socket closed while stopping — no reconnect");
+    return;
+  }
+  if (statusCode === DisconnectReason.connectionReplaced) {
+    handleConnectionReplaced();
+    return;
+  }
+  if (statusCode === DisconnectReason.loggedOut) {
+    handleLoggedOut();
+    return;
+  }
+  scheduleReconnect(onMessage, onObservation);
+}
+
+/** Look up a friendly stub-type name for logs. */
+function stubTypeName(stubType: number): string {
+  const name = (proto.WebMessageInfo.StubType as Record<number, string | undefined>)[stubType];
+  return name ? `${name}(${stubType})` : `#${stubType}`;
+}
+
+/**
+ * A message without readable content but with a stub type — most often
+ * CIPHERTEXT, i.e. Baileys could not decrypt it (typical right after a
+ * session swap). Owner DMs get a short fallback so the owner can resend.
+ */
+async function handleStubMessage(msg: proto.IWebMessageInfo, jid: string, isOwnerDm: boolean): Promise<void> {
+  const stubType = msg.messageStubType as number;
+  const params = msg.messageStubParameters?.join(", ") || "";
+  const detail = `stub=${stubTypeName(stubType)} jid=${jid} id=${msg.key.id ?? "?"}${params ? ` params=${params}` : ""}`;
+  if (!isOwnerDm) {
+    log.warn(`Unreadable message: ${detail}`);
+    return;
+  }
+  log.warn(`Unreadable OWNER message: ${detail}`);
+  const now = Date.now();
+  if (now - lastStubFallbackAt < STUB_FALLBACK_INTERVAL_MS) {
+    log.debug("Stub fallback suppressed (sent within the last 5 min)");
+    return;
+  }
+  lastStubFallbackAt = now;
+  try {
+    await sendMessage(getOwnerJid(), STUB_FALLBACK_TEXT, "system");
+  } catch (err) {
+    log.error(`Failed to send stub fallback to owner: ${err}`);
+  }
+}
+
 export async function startWhatsApp(
   onMessage: MessageHandler,
   onObservation?: ObservationHandler,
 ): Promise<void> {
-  const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
+  const ownerJid = getOwnerJid();
   // Owner LID will be set from credentials after auth state is loaded
   let ownerLid: string | null = null;
 
@@ -167,6 +300,11 @@ export async function startWhatsApp(
     }
   }
   isConnected = false;
+  stopping = false;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
 
   const authDir = process.env.AUTH_STATE_DIR || "./auth_state";
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
@@ -242,37 +380,13 @@ export async function startWhatsApp(
     }
 
     if (connection === "close") {
-      isConnected = false;
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-
-      // Exponential backoff: 5s, 10s, 20s, 40s, 60s (max)
-      const delay = Math.min(
-        BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempt),
-        MAX_RECONNECT_DELAY,
-      );
-      reconnectAttempt++;
-
-      log.warn(
-        `Connection closed (code: ${statusCode}). Reconnecting: ${shouldReconnect} (attempt ${reconnectAttempt}, delay ${Math.round(delay / 1000)}s)`
-      );
-
-      if (shouldReconnect) {
-        setTimeout(() => startWhatsApp(onMessage, onObservation), delay);
-      } else {
-        log.error("Logged out. Delete auth_state/ and restart to re-scan QR.");
-        log.info("Emitting logout event for graceful shutdown...");
-        whatsappEvents.emit("logout");
-        // Fallback: force exit after 5s if listeners haven't shut down
-        setTimeout(() => {
-          log.error("Graceful shutdown timeout (5s) — forcing exit.");
-          process.exit(1);
-        }, 5_000).unref();
-      }
+      handleConnectionClose(statusCode, onMessage, onObservation);
     } else if (connection === "open") {
       isConnected = true;
       reconnectAttempt = 0; // Reset backoff on successful connection
       log.info("Connected!");
+      void flushOutbound();
     }
   });
 
@@ -384,7 +498,12 @@ export async function startWhatsApp(
         }
       }
 
-      if (!resolvedText.trim()) continue;
+      const isOwnerChat = !isGroup && (jid === ownerJid || (ownerLid !== null && jid === ownerLid));
+
+      if (!resolvedText.trim()) {
+        if (msg.messageStubType) await handleStubMessage(msg, jid, isOwnerChat && !msg.key.fromMe);
+        continue;
+      }
 
       // Deduplicate messages (Baileys can deliver same message via @lid and @s.whatsapp.net)
       const msgId = msg.key.id;
@@ -449,7 +568,14 @@ export async function startWhatsApp(
         // key on chatJid to identify the conversation.
         let chatJid: string | undefined;
         let chatName: string | undefined;
-        if (!isGroup) {
+        if (!isGroup && ownerLid !== null && jid === ownerLid) {
+          // Owner DM delivered via the @lid alias: normalise to the canonical
+          // owner JID so memory/frequency tracking sees one identity.
+          senderJid = ownerJid;
+          chatJid = ownerJid;
+          const contact = contactStore.get(ownerJid);
+          chatName = contact?.notify || contact?.name || process.env.OWNER_NAME || ownerJid.split("@")[0];
+        } else if (!isGroup) {
           chatJid = jid; // remoteJid is always the other party in a DM
           const contact = contactStore.get(jid);
           chatName = contact?.notify || contact?.name || jid.split("@")[0];
@@ -491,10 +617,58 @@ export async function startWhatsApp(
 
       log.info(`Processing owner message: ${resolvedText.slice(0, 100)}`);
 
-      // Always reply to owner's @s.whatsapp.net JID (LID replies may not deliver)
-      await onMessage(ownerJid, resolvedText, msg);
+      // Always reply to owner's @s.whatsapp.net JID (LID replies may not deliver).
+      // The handler must never abort this loop: the observation above already
+      // happened, and the remaining messages in the batch still need it.
+      try {
+        await onMessage(ownerJid, resolvedText, msg);
+      } catch (err) {
+        log.error(`Owner message handler failed for ${msgId ?? "?"}: ${err}`);
+      }
     }
   });
+}
+
+// ── Outbound ──
+
+/** Actual socket send + delivery-log record. Caller has checked connectivity. */
+async function deliver(jid: string, text: string, source: string): Promise<void> {
+  await sock.sendMessage(jid, { text });
+  // Every successful outbound send lands in delivery-log.json — the brain's
+  // ground truth for delivery verification. A log failure must not mask a
+  // delivery that already happened.
+  try {
+    logDelivery(jid, source, text);
+  } catch (err) {
+    log.warn(`Failed to record delivery in log (message WAS sent to ${jid}): ${err}`);
+  }
+}
+
+/** Send everything buffered while the socket was down, oldest first. */
+async function flushOutbound(): Promise<void> {
+  const { ready, expired } = outbound.drain();
+  if (expired.length > 0) log.warn(`Dropped ${expired.length} buffered owner message(s) older than the TTL`);
+  if (ready.length === 0) return;
+  log.info(`Flushing ${ready.length} buffered owner message(s)`);
+  for (const [i, entry] of ready.entries()) {
+    if (!isConnected) {
+      // Socket dropped mid-flush: keep the rest for the next open.
+      for (const rest of ready.slice(i)) outbound.push(rest);
+      log.warn(`Flush interrupted — ${ready.length - i} message(s) re-buffered`);
+      return;
+    }
+    try {
+      await deliver(entry.jid, entry.text, entry.source);
+    } catch (err) {
+      log.error(`Failed to flush buffered message to ${entry.jid}: ${err}`);
+    }
+  }
+}
+
+function isDuplicateSend(jid: string, text: string): { duplicate: boolean; dedupKey: string } {
+  const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
+  const dedupKey = `${jid}|${hash}`;
+  return { duplicate: sentMessages.has(dedupKey), dedupKey };
 }
 
 /** Force a contact sync via Baileys app state resync. */
@@ -508,32 +682,34 @@ export async function syncContacts(): Promise<void> {
   log.info("Contact sync triggered, waiting for events...");
 }
 
-export async function sendMessage(jid: string, text: string, source: string = "chat"): Promise<void> {
+export async function sendMessage(jid: string, text: string, source: string = "chat"): Promise<SendResult> {
+  const isOwner = jid === getOwnerJid();
+
   if (!isConnected) {
-    log.warn("Cannot send message — not connected");
-    throw new Error("WhatsApp not connected");
+    if (!isOwner) {
+      log.warn("Cannot send message — not connected");
+      throw new Error("WhatsApp not connected");
+    }
+    const { dropped } = outbound.push({ jid, text, source, queuedAt: Date.now() });
+    if (dropped) log.warn(`Outbound buffer full — dropped oldest owner message ("${dropped.text.slice(0, 40)}")`);
+    log.warn(`Not connected — buffered owner message (${outbound.size} waiting)`);
+    return { status: "buffered" };
   }
 
-  // Outgoing dedup: prevent duplicate sends within 5 minutes (mirrors incoming dedup pattern)
-  const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
-  const dedupKey = `${jid}|${hash}`;
-  if (sentMessages.has(dedupKey)) {
-    log.debug(`Outgoing dedup skip: already sent to ${jid} (hash=${hash})`);
-    return;
+  // Outgoing dedup: prevent duplicate sends within 5 minutes (mirrors the
+  // incoming dedup pattern). Never applied to the owner: a repeated answer
+  // ("ok", "done") to the owner is legitimate and must not vanish.
+  const { duplicate, dedupKey } = isDuplicateSend(jid, text);
+  if (!isOwner && duplicate) {
+    log.debug(`Outgoing dedup skip: already sent to ${jid} (key=${dedupKey})`);
+    return { status: "deduped" };
   }
 
-  await sock.sendMessage(jid, { text });
+  await deliver(jid, text, source);
   // Only record dedup AFTER a successful send — recording before meant a failed
   // send silently blocked retries for 5 minutes while callers assumed delivery.
-  sentMessages.set(dedupKey, Date.now());
-  // Every successful outbound send lands in delivery-log.json — the brain's
-  // ground truth for delivery verification. A log failure must not mask a
-  // delivery that already happened.
-  try {
-    logDelivery(jid, source, text);
-  } catch (err) {
-    log.warn(`Failed to record delivery in log (message WAS sent to ${jid}): ${err}`);
-  }
+  if (!isOwner) sentMessages.set(dedupKey, Date.now());
+  return { status: "sent" };
 }
 
 export async function sendImage(
