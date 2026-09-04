@@ -11,7 +11,7 @@ vi.mock("../backend/config.js", () => ({
   OWNER_NAME: "TestOwner",
 }));
 
-import { canTriggerInitiativeThink, recordInitiativeThink, formatInitiativeSignals } from "../backend/initiative.js";
+import { canTriggerInitiativeThink, recordInitiativeThink, formatInitiativeSignals, isOwnerAnomaly } from "../backend/initiative.js";
 import type { InitiativeSignal } from "../backend/initiative.js";
 import type { BrainState } from "../backend/memory/types.js";
 import { getOwnerLocalDate } from "../backend/brain-config.js";
@@ -178,5 +178,21 @@ describe("formatInitiativeSignals", () => {
     }];
     const result = formatInitiativeSignals(signals);
     expect(result).toContain("→ Suggested: Ask about status");
+  });
+});
+
+
+describe("isOwnerAnomaly", () => {
+  const owner = { phone: "31612345678", name: "Gillis" };
+
+  it("matches the owner by phone JID (plain, device-suffixed) and by name", () => {
+    expect(isOwnerAnomaly({ contactJid: "31612345678@s.whatsapp.net", contactName: "Me" }, owner)).toBe(true);
+    expect(isOwnerAnomaly({ contactJid: "31612345678:12@s.whatsapp.net", contactName: "Me" }, owner)).toBe(true);
+    expect(isOwnerAnomaly({ contactJid: "999@lid", contactName: "gillis" }, owner)).toBe(true);
+  });
+
+  it("leaves other contacts alone and never matches on an empty owner name", () => {
+    expect(isOwnerAnomaly({ contactJid: "31699999999@s.whatsapp.net", contactName: "Rob" }, owner)).toBe(false);
+    expect(isOwnerAnomaly({ contactJid: "x@lid", contactName: "" }, { phone: "", name: "" })).toBe(false);
   });
 });

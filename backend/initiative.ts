@@ -2,6 +2,7 @@ import type { MemoryGraph } from "./memory/graph.js";
 import type { WorkingMemory, BrainState, SignalOperation } from "./memory/types.js";
 import { GoalTracker } from "./goals.js";
 import { getBrainConfig, getOwnerLocalDate, getOwnerLocalDay } from "./brain-config.js";
+import { OWNER_NAME, OWNER_PHONE } from "./config.js";
 import { createLogger } from "./logger.js";
 import { detectAnomalies, lastMessageAtForName } from "./frequency-tracker.js";
 import {
@@ -32,6 +33,19 @@ const SNOOZE_MAX_DAYS = 90;
 // on shouldn't keep claiming MEDIUM/HIGH prompt attention.
 const AUTO_DOWNGRADE_AFTER_SURFACES = 5;
 const AUTO_DOWNGRADE_PRIORITY = 0.2; // LOW band (< 0.4)
+
+/**
+ * The owner is never a "contact who went quiet": their silence is just them
+ * not messaging ARIA, and a check-in suggestion would be nonsense.
+ */
+export function isOwnerAnomaly(
+  anomaly: { contactJid: string; contactName: string },
+  owner: { phone: string; name: string } = { phone: OWNER_PHONE, name: OWNER_NAME },
+): boolean {
+  const jid = anomaly.contactJid.toLowerCase();
+  if (owner.phone && (jid === `${owner.phone}@s.whatsapp.net` || jid.startsWith(`${owner.phone}@`) || jid.startsWith(`${owner.phone}:`))) return true;
+  return owner.name.trim().length > 0 && anomaly.contactName.trim().toLowerCase() === owner.name.trim().toLowerCase();
+}
 
 function signalKey(type: InitiativeSignal["type"], subject: string): string {
   return `${type}:${subject.trim().slice(0, 60)}`;
@@ -153,7 +167,7 @@ export function detectInitiativeSignals(
 
   // 5. Frequency anomaly — unusual silence or spikes from known contacts (Phase 5b)
   try {
-    const anomalies = detectAnomalies();
+    const anomalies = detectAnomalies().filter(a => !isOwnerAnomaly(a));
     for (const anomaly of anomalies) {
       // Mostly-downtime silence windows never leave detectAnomalies; what
       // arrives here with likelyArtifact set is partial overlap (≥25%) —
