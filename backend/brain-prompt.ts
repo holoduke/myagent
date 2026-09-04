@@ -1095,13 +1095,12 @@ function buildCommitmentsBlock(
 ): string {
   const sections: string[] = [];
 
-  // Moltbook-specific section (backwards compat)
+  // Moltbook-specific section (backwards compat). These are the sub-agent's own
+  // run summaries ("I upvoted…", "I'll check back tomorrow"), not promises made
+  // to a person — running commitment extraction over them produced phantom
+  // commitments ARIA then felt obliged to keep. List them for context only.
   if (recentMoltbookActivity && recentMoltbookActivity.length > 0) {
-    const moltbookCommitments = recentMoltbookActivity.flatMap(text => extractAndClassifyCommitments(text));
-    const detectedSection = moltbookCommitments.length > 0
-      ? `\nDetected commitment language in Moltbook posts:\n${moltbookCommitments.map(c => `- [${c.weight}] "${c.commitment}" (pattern: ${c.pattern})`).join("\n")}\n`
-      : "";
-    sections.push(`Moltbook posts/comments:\n${detectedSection}${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}`);
+    sections.push(`Moltbook posts/comments (sub-agent activity, context only — not commitments):\n${recentMoltbookActivity.map((text, i) => `  ${i + 1}. ${text.slice(0, 300)}`).join("\n")}`);
   }
 
   // General outgoing activity ARIA actually sent (scheduled/chat/think/digest deliveries) — grouped by conversation
