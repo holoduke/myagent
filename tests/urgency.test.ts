@@ -11,7 +11,7 @@ vi.mock("../backend/config.js", () => ({
   OWNER_NAME: "TestOwner",
 }));
 
-import { scoreUrgency, scoreObservations, scoreAndMaybeInterrupt, setUrgencyInterruptHandler, getPendingUrgency, clearPendingUrgency } from "../backend/urgency.js";
+import { scoreUrgency, scoreObservations, scoreAndMaybeInterrupt, setUrgencyInterruptHandler, getPendingUrgency, clearPendingUrgency, compileKeywordPattern, isInterruptEligible } from "../backend/urgency.js";
 import type { Observation } from "../backend/observer.js";
 
 function makeObs(overrides: Partial<Observation> = {}): Observation {
@@ -162,6 +162,50 @@ describe("scoreUrgency", () => {
     const score = scoreUrgency(makeObs({ text: "EMERGENCY EMERGENCY!!!", isGroup: true }));
     expect(score).toBeLessThanOrEqual(1.0);
   });
+
+  // ── Word boundaries (Unicode-aware) ──
+
+  it("does not match '112' inside a phone number", () => {
+    expect(scoreUrgency(makeObs({ text: "bel me op 0612345112 vanavond", isGroup: true }))).toBe(0);
+  });
+
+  it("still matches a standalone '112'", () => {
+    expect(scoreUrgency(makeObs({ text: "ik heb 112 gebeld", isGroup: true }))).toBe(0.9);
+  });
+
+  it("does not match Dutch 'brand' in English 'brand new'", () => {
+    expect(scoreUrgency(makeObs({ text: "got a brand new bike today", isGroup: true }))).toBe(0);
+    expect(scoreUrgency(makeObs({ text: "brand-new laptop arrived", isGroup: true }))).toBe(0);
+  });
+
+  it("does not match 'ziek' inside 'muziek'", () => {
+    expect(scoreUrgency(makeObs({ text: "wat een mooie muziek", isGroup: true }))).toBe(0);
+  });
+
+  it("matches 'ziek' as a whole word", () => {
+    expect(scoreUrgency(makeObs({ text: "ik ben ziek vandaag", isGroup: true }))).toBe(0.3);
+  });
+
+  it("does not match 'sos' inside 'Sosa'", () => {
+    expect(scoreUrgency(makeObs({ text: "Sosa scored again", isGroup: true }))).toBe(0);
+  });
+
+  it("matches keywords next to punctuation and accented letters", () => {
+    expect(scoreUrgency(makeObs({ text: "Spoed! kom nu", isGroup: true }))).toBe(0.8);
+    expect(scoreUrgency(makeObs({ text: "éspoed", isGroup: true }))).toBe(0);
+  });
+});
+
+describe("compileKeywordPattern", () => {
+  it("accepts any whitespace run inside multi-word keywords", () => {
+    const re = compileKeywordPattern("zo snel mogelijk");
+    expect(re.test("graag zo  snel\tmogelijk reageren")).toBe(true);
+    expect(re.test("zosnelmogelijk")).toBe(false);
+  });
+
+  it("is case-insensitive", () => {
+    expect(compileKeywordPattern("sos").test("SOS")).toBe(true);
+  });
 });
 
 // ── scoreObservations ──
@@ -206,17 +250,47 @@ describe("scoreAndMaybeInterrupt", () => {
     clearPendingUrgency();
   });
 
-  it("triggers interrupt handler when urgency exceeds threshold", () => {
+  it("triggers interrupt handler for a trusted group message above threshold", () => {
     const handler = vi.fn();
     setUrgencyInterruptHandler(handler, 0.8);
-    scoreAndMaybeInterrupt(makeObs({ text: "emergency", isGroup: true }));
+    scoreAndMaybeInterrupt(makeObs({ text: "emergency", isGroup: true, trustLevel: "trusted" }));
+    expect(handler).toHaveBeenCalledWith(0.9);
+  });
+
+  it("triggers interrupt handler for a direct WhatsApp message from an unknown sender", () => {
+    const handler = vi.fn();
+    setUrgencyInterruptHandler(handler, 0.8);
+    scoreAndMaybeInterrupt(makeObs({ text: "emergency", isGroup: false, trustLevel: "untrusted" }));
     expect(handler).toHaveBeenCalledWith(0.9);
   });
 
   it("does not trigger handler below threshold", () => {
     const handler = vi.fn();
     setUrgencyInterruptHandler(handler, 0.8);
-    scoreAndMaybeInterrupt(makeObs({ text: "this is urgent", isGroup: true }));
+    scoreAndMaybeInterrupt(makeObs({ text: "this is urgent", isGroup: true, trustLevel: "trusted" }));
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("never interrupts for untrusted group content", () => {
+    const handler = vi.fn();
+    setUrgencyInterruptHandler(handler, 0.8);
+    scoreAndMaybeInterrupt(makeObs({ text: "EMERGENCY noodgeval", isGroup: true, trustLevel: "untrusted" }));
+    expect(handler).not.toHaveBeenCalled();
+    // The score still feeds the next scheduled tick
+    expect(getPendingUrgency()).toBe(0.9);
+  });
+
+  it("never interrupts for RSS or email observations", () => {
+    const handler = vi.fn();
+    setUrgencyInterruptHandler(handler, 0.8);
+    scoreAndMaybeInterrupt(makeObs({ text: "emergency declared", source: "rss", isGroup: false, trustLevel: "untrusted" }));
+    scoreAndMaybeInterrupt(makeObs({
+      text: "emergency: action required",
+      source: "gmail",
+      isGroup: false,
+      trustLevel: "untrusted",
+      emailMeta: { from: "x@example.com", to: "me@example.com", subject: "hi", accountId: "a", accountEmail: "me@example.com", messageId: "m1" },
+    }));
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -224,5 +298,23 @@ describe("scoreAndMaybeInterrupt", () => {
     setUrgencyInterruptHandler(() => {}, 0.8);
     scoreAndMaybeInterrupt(makeObs({ text: "urgent", isGroup: true }));
     expect(getPendingUrgency()).toBe(0.7);
+  });
+});
+
+describe("isInterruptEligible", () => {
+  it("is true for owner and trusted observations regardless of source", () => {
+    expect(isInterruptEligible(makeObs({ source: "rss", trustLevel: "trusted" }))).toBe(true);
+    expect(isInterruptEligible(makeObs({ source: "gmail", trustLevel: "owner" }))).toBe(true);
+  });
+
+  it("is true for direct messages on person-to-person channels", () => {
+    expect(isInterruptEligible(makeObs({ isGroup: false, trustLevel: "untrusted" }))).toBe(true);
+    expect(isInterruptEligible(makeObs({ source: "slack", isGroup: false, trustLevel: "untrusted" }))).toBe(true);
+  });
+
+  it("is false for untrusted groups, feeds and own messages", () => {
+    expect(isInterruptEligible(makeObs({ isGroup: true, trustLevel: "untrusted" }))).toBe(false);
+    expect(isInterruptEligible(makeObs({ source: "rss", isGroup: false, trustLevel: "untrusted" }))).toBe(false);
+    expect(isInterruptEligible(makeObs({ isFromMe: true, trustLevel: "owner" }))).toBe(false);
   });
 });
