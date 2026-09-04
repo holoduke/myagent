@@ -32,6 +32,13 @@ Three layers keep the expensive model out of the hot path:
 | Digest | every `digestIntervalMs` (15 min) | `models.haDigest` (haiku), template for ≤4 events | minutes | one `[HOME DIGEST]` observation |
 | Brain | next think tick after a digest | `models.think` (sonnet/opus) | tick cadence | memory, messages, `ha-cli.ts` commands |
 
+The house decides what ARIA hears: only automations that call
+`rest_command.aria_event` produce events. State polling from the server is off
+by default (`entities: []`); enabling it for a domain turns every state change
+in that domain into an event, and each 15-minute digest wakes the think tick,
+so keep it off unless a domain is genuinely quiet. Polled `unknown`/`unavailable`
+flaps (Home Assistant restarts) are ignored either way.
+
 Guards: per-event validation (64 KB body, string/attribute size caps), bounce
 dedup (same device+action within 1.5 s), flood guard (120 events / 10 min),
 pending cap (300), webhook budget (200 req/min), shared-token auth with

@@ -24,7 +24,10 @@ const log = createLogger("homeassistant");
 
 const CONFIG_FILE = `${HA_DIR}/config.json`;
 const STATE_FILE = `${HA_DIR}/state.json`;
-const DEFAULT_ENTITIES = ["light", "switch", "lock", "climate", "binary_sensor", "sensor"];
+/** Polling is opt-in: pushed events are the primary feed, so nothing is polled unless configured. */
+const DEFAULT_ENTITIES: string[] = [];
+/** Transitions through these states are restart/reconnect artifacts, not things that happened in the house. */
+const TRANSIENT_STATES = new Set(["unknown", "unavailable"]);
 const DEFAULT_POLL_INTERVAL = 60_000;
 const DEFAULT_DIGEST_INTERVAL = 15 * 60 * 1000;
 /** Rijnsburg, NL — overridable in config. */
@@ -116,6 +119,12 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
   return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 }
 
+/** A polled state change worth buffering: both sides real states, and actually different. */
+export function isMeaningfulStateChange(previous: string | undefined, next: string): boolean {
+  if (previous === undefined || previous === next) return false;
+  return !TRANSIENT_STATES.has(previous) && !TRANSIENT_STATES.has(next);
+}
+
 /** Fill in defaults for older/partial config files so every field is present. */
 export function withDefaults(partial: Partial<HAConfig> | null | undefined): HAConfig {
   const reflex = { ...DEFAULT_WEATHER_REFLEX, ...(partial?.reflexes?.weatherBriefing ?? {}) };
@@ -123,7 +132,8 @@ export function withDefaults(partial: Partial<HAConfig> | null | undefined): HAC
     mode: partial?.mode ?? "webhook",
     direct_api: partial?.direct_api,
     cloud: partial?.cloud,
-    entities: Array.isArray(partial?.entities) && partial.entities.length > 0 ? partial.entities : DEFAULT_ENTITIES,
+    // Empty list = state polling off (the house pushes what matters via automations).
+    entities: Array.isArray(partial?.entities) ? partial.entities.filter(e => typeof e === "string") : DEFAULT_ENTITIES,
     pollInterval: clampNumber(partial?.pollInterval, DEFAULT_POLL_INTERVAL, 15_000, 3_600_000),
     webhookToken: typeof partial?.webhookToken === "string" ? partial.webhookToken : "",
     digestIntervalMs: clampNumber(partial?.digestIntervalMs, DEFAULT_DIGEST_INTERVAL, 60_000, 6 * 3_600_000),
@@ -152,7 +162,7 @@ function loadConfigFromEnv(): Partial<HAConfig> | null {
   const url = process.env.HA_URL || "";
   const token = process.env.HA_TOKEN || "";
   if (!url || !token) return null;
-  const entities = (process.env.HA_ENTITIES || DEFAULT_ENTITIES.join(",")).split(",").map(s => s.trim());
+  const entities = (process.env.HA_ENTITIES || "").split(",").map(s => s.trim()).filter(Boolean);
   return { mode: "direct_api", direct_api: { url, token }, entities, pollInterval: Number(process.env.HA_POLL_INTERVAL ?? DEFAULT_POLL_INTERVAL) };
 }
 
@@ -237,7 +247,7 @@ async function pollHA(): Promise<void> {
     for (const entity of entities) {
       if (!matchesEntityFilter(entity.entity_id, config.entities)) continue;
       const previousState = state.entities[entity.entity_id];
-      if (previousState !== undefined && previousState !== entity.state) {
+      if (isMeaningfulStateChange(previousState, entity.state)) {
         bufferEvent({
           id: `hae_poll_${now}_${changedCount}`,
           receivedAt: now,
@@ -271,6 +281,10 @@ export function startHAPolling(): void {
   const conn = getActiveConnection(config);
   if (!conn) {
     log(`Home Assistant in ${config.mode} mode — no outbound polling (events arrive via webhook)`);
+    return;
+  }
+  if (config.entities.length === 0) {
+    log("Home Assistant state polling off (no entity domains configured) — events arrive via webhook");
     return;
   }
   log(`Starting Home Assistant polling (mode: ${config.mode}, every ${config.pollInterval / 1000}s)`);
