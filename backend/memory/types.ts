@@ -178,6 +178,14 @@ export interface BrainMessageDelivery {
   verified: boolean;      // true once cross-checked against delivery-log.json (or nothing to check)
 }
 
+/** An active snooze on an initiative signal key, set by the brain via signalOps */
+export interface SignalSnooze {
+  /** Epoch ms until which the signal is suppressed */
+  until: number;
+  /** Why the brain decided to silence this signal (e.g. "observe-only decision") */
+  reason: string;
+}
+
 export interface BrainState {
   // timing
   lastObserveTick: number;
@@ -211,6 +219,15 @@ export interface BrainState {
   // initiative think budget
   initiativeThinksToday: number;
   initiativeBudgetDate: string;
+
+  // initiative signal snooze/acknowledge — keyed by "<type>:<subject>",
+  // e.g. "person_absent:Patrick de Groot". Snoozed signals are skipped by
+  // detectInitiativeSignals until `until` passes.
+  signalSnoozes?: Record<string, SignalSnooze>;
+  // consecutive ticks each signal key has been surfaced in a prompt without
+  // the condition clearing — drives auto-downgrade to LOW priority.
+  // Entries are removed when the signal condition clears or the key is snoozed.
+  signalSurfacedCounts?: Record<string, number>;
 
   // self-improvement
   consecutiveFailures: number;
@@ -262,6 +279,18 @@ export interface GoalData {
   createdBy: "brain" | "owner";
   lastCheckedAt: number;
   reason?: string;
+}
+
+// ── Signal Operations ──
+
+/** Brain-issued snooze for an initiative signal (mirrors reject_edge for edges) */
+export interface SignalOperation {
+  /** Signal key as shown in the prompt, e.g. "person_absent:Patrick de Groot" */
+  key: string;
+  /** How long to suppress the signal */
+  snoozeDays: number;
+  /** Why — e.g. "decided observe-only, no check-in wanted" */
+  reason: string;
 }
 
 export type GoalOperation =
@@ -316,6 +345,8 @@ export interface BrainResponse {
     conversationThreads?: ConversationThread[];
   };
   goalOps?: GoalOperation[];
+  /** Optional: snooze initiative signals that keep re-firing after an observe-only decision */
+  signalOps?: SignalOperation[];
   improvementProposals?: ImprovementProposal[];
   /** Requests from non-permissioned contacts that the brain judges worth forwarding */
   requestFlags?: RequestFlag[];

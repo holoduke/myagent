@@ -571,7 +571,7 @@ async function tick(
   // ── Detect initiative signals ──
   const wm = loadWorkingMemory();
   populateTemporalContext(wm);
-  const signals = detectInitiativeSignals(graph, wm);
+  const signals = detectInitiativeSignals(graph, wm, state);
   const highPrioritySignals = signals.filter(s => s.priority >= 0.5);
   saveWorkingMemory(wm);
 

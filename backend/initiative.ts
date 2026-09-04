@@ -1,5 +1,5 @@
 import type { MemoryGraph } from "./memory/graph.js";
-import type { WorkingMemory, BrainState } from "./memory/types.js";
+import type { WorkingMemory, BrainState, SignalOperation } from "./memory/types.js";
 import { GoalTracker } from "./goals.js";
 import { getBrainConfig, getOwnerLocalDate, getOwnerLocalDay } from "./brain-config.js";
 import { createLogger } from "./logger.js";
@@ -16,10 +16,25 @@ const log = createLogger("initiative");
 
 export interface InitiativeSignal {
   type: "follow_up_due" | "person_absent" | "goal_deadline" | "conversation_stale" | "frequency_anomaly" | "meeting_approaching";
+  /** Stable identity "<type>:<subject>" — the handle for snoozes (signalOps) and surfaced-count tracking */
+  key: string;
   priority: number;
   description: string;
   relatedNodeIds: string[];
   suggestedAction?: string;
+}
+
+// ── Snooze / auto-downgrade tuning ──
+
+const SNOOZE_MAX_DAYS = 90;
+// After this many consecutive surfaced-without-clearing prompt appearances,
+// a signal is capped at LOW priority — a repeated nag the brain never acted
+// on shouldn't keep claiming MEDIUM/HIGH prompt attention.
+const AUTO_DOWNGRADE_AFTER_SURFACES = 5;
+const AUTO_DOWNGRADE_PRIORITY = 0.2; // LOW band (< 0.4)
+
+function signalKey(type: InitiativeSignal["type"], subject: string): string {
+  return `${type}:${subject.trim().slice(0, 60)}`;
 }
 
 // ── Detection (zero Claude cost) ──
@@ -27,6 +42,7 @@ export interface InitiativeSignal {
 export function detectInitiativeSignals(
   graph: MemoryGraph,
   wm: WorkingMemory,
+  state?: BrainState,
 ): InitiativeSignal[] {
   const now = Date.now();
   const signals: InitiativeSignal[] = [];
@@ -48,6 +64,7 @@ export function detectInitiativeSignals(
       const priority = Math.max(0.1, 0.7 * decayFactor); // floor at 0.1 so it never fully disappears
       signals.push({
         type: "follow_up_due",
+        key: signalKey("follow_up_due", followUp.question),
         priority,
         description: `Follow-up due${overdueDays >= 1 ? ` (${Math.floor(overdueDays)}d overdue)` : ""}: "${followUp.question}"${followUp.targetPerson ? ` (for ${followUp.targetPerson})` : ""}`,
         relatedNodeIds: [],
@@ -86,6 +103,7 @@ export function detectInitiativeSignals(
       const downDays = Math.round(downMs / (24 * 60 * 60 * 1000));
       signals.push({
         type: "person_absent",
+        key: signalKey("person_absent", node.content),
         priority: lowConfidence ? 0.2 : 0.4,
         description: `Haven't heard from/about "${node.content.slice(0, 40)}" in ${Math.floor(absenceMs / (24 * 60 * 60 * 1000))} days${downDays >= 1 ? ` (window overlaps ${downDays}d system downtime${lowConfidence ? " — low confidence" : ""})` : ""}`,
         relatedNodeIds: [node.id],
@@ -102,6 +120,7 @@ export function detectInitiativeSignals(
   for (const { nodeId, data, status } of deadlineGoals) {
     signals.push({
       type: "goal_deadline",
+      key: signalKey("goal_deadline", data.title),
       priority: status === "overdue" ? 0.8 : 0.6,
       description: `Goal "${data.title}" is ${status} (${data.progress}% complete)`,
       relatedNodeIds: [nodeId],
@@ -123,6 +142,7 @@ export function detectInitiativeSignals(
     ) {
       signals.push({
         type: "conversation_stale",
+        key: signalKey("conversation_stale", thread.topic || "unknown"),
         priority: 0.3,
         description: `Conversation with ${Array.isArray(thread.participants) ? thread.participants.join(", ") : (thread.participants || "unknown")} about "${thread.topic}" went quiet (${thread.messageCount} messages)`,
         relatedNodeIds: [],
@@ -140,6 +160,7 @@ export function detectInitiativeSignals(
       // low confidence, capped at LOW priority so it can't trigger check-ins.
       signals.push({
         type: "frequency_anomaly",
+        key: signalKey("frequency_anomaly", anomaly.contactName),
         priority: anomaly.likelyArtifact ? 0.2 : anomaly.type === "silence" ? 0.5 : 0.4,
         description: anomaly.description,
         relatedNodeIds: [],
@@ -163,6 +184,7 @@ export function detectInitiativeSignals(
       // upcomingEvents are populated by populateTemporalContext, which includes events within the next few hours
       signals.push({
         type: "meeting_approaching",
+        key: signalKey("meeting_approaching", eventStr),
         priority: 0.6,
         description: `Upcoming event: ${eventStr}`,
         relatedNodeIds: [],
@@ -171,14 +193,91 @@ export function detectInitiativeSignals(
     }
   }
 
-  // Sort by priority descending
-  signals.sort((a, b) => b.priority - a.priority);
-
-  if (signals.length > 0) {
-    log(`Detected ${signals.length} initiative signals (max priority: ${signals[0].priority.toFixed(2)})`);
+  // ── Snooze / auto-downgrade (only when brain state is available) ──
+  let result = signals;
+  if (state) {
+    // Purge expired snoozes
+    if (state.signalSnoozes) {
+      for (const [key, snooze] of Object.entries(state.signalSnoozes)) {
+        if (snooze.until <= now) delete state.signalSnoozes[key];
+      }
+    }
+    // Reset surfaced counts for signals whose condition has cleared —
+    // measured against the raw signal set so snoozed-but-still-firing
+    // conditions keep their history.
+    if (state.signalSurfacedCounts) {
+      const activeKeys = new Set(signals.map(s => s.key));
+      for (const key of Object.keys(state.signalSurfacedCounts)) {
+        if (!activeKeys.has(key)) delete state.signalSurfacedCounts[key];
+      }
+    }
+    // Skip snoozed signals entirely — the brain already made this decision
+    if (state.signalSnoozes) {
+      result = result.filter(s => {
+        const snooze = state.signalSnoozes![s.key];
+        if (snooze && snooze.until > now) {
+          log(`Signal snoozed, skipping: "${s.key}" (until ${new Date(snooze.until).toISOString()} — ${snooze.reason})`);
+          return false;
+        }
+        return true;
+      });
+    }
+    // Auto-downgrade signals surfaced many consecutive ticks without action
+    if (state.signalSurfacedCounts) {
+      for (const s of result) {
+        const surfaced = state.signalSurfacedCounts[s.key] ?? 0;
+        if (surfaced >= AUTO_DOWNGRADE_AFTER_SURFACES && s.priority > AUTO_DOWNGRADE_PRIORITY) {
+          s.priority = AUTO_DOWNGRADE_PRIORITY;
+          s.description += ` (surfaced ${surfaced}× without action — auto-downgraded; snooze via signalOps if observe-only)`;
+        }
+      }
+    }
   }
 
-  return signals;
+  // Sort by priority descending
+  result.sort((a, b) => b.priority - a.priority);
+
+  if (result.length > 0) {
+    log(`Detected ${result.length} initiative signals (max priority: ${result[0].priority.toFixed(2)})`);
+  }
+
+  return result;
+}
+
+// ── Snooze / Surfaced Tracking (brain-controlled, mirrors reject_edge) ──
+
+/** Record that these signals were actually surfaced in a think/reflect prompt.
+ *  Counts drive auto-downgrade; entries reset when the condition clears
+ *  (handled in detectInitiativeSignals) or the key is snoozed. */
+export function recordSignalsSurfaced(state: BrainState, signals: InitiativeSignal[]): void {
+  if (signals.length === 0) return;
+  if (!state.signalSurfacedCounts) state.signalSurfacedCounts = {};
+  for (const s of signals) {
+    state.signalSurfacedCounts[s.key] = (state.signalSurfacedCounts[s.key] ?? 0) + 1;
+  }
+}
+
+/** Apply brain-issued signalOps: snooze a signal key so it stops re-firing.
+ *  Turns a repeated nag into a one-time decision. */
+export function applySignalOps(state: BrainState, ops: SignalOperation[]): { applied: number; skipped: number } {
+  const now = Date.now();
+  let applied = 0;
+  let skipped = 0;
+  for (const op of ops) {
+    if (!op || typeof op.key !== "string" || op.key.trim().length === 0
+      || typeof op.snoozeDays !== "number" || !Number.isFinite(op.snoozeDays) || op.snoozeDays <= 0) {
+      skipped++;
+      continue;
+    }
+    const days = Math.min(op.snoozeDays, SNOOZE_MAX_DAYS);
+    const reason = typeof op.reason === "string" ? op.reason.slice(0, 200) : "";
+    if (!state.signalSnoozes) state.signalSnoozes = {};
+    state.signalSnoozes[op.key.trim()] = { until: now + days * 24 * 60 * 60 * 1000, reason };
+    if (state.signalSurfacedCounts) delete state.signalSurfacedCounts[op.key.trim()];
+    log(`Signal snoozed by brain: "${op.key.trim()}" for ${days}d — ${reason || "(no reason given)"}`);
+    applied++;
+  }
+  return { applied, skipped };
 }
 
 // ── Daily Budget Tracking ──
