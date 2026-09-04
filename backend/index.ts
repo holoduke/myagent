@@ -21,6 +21,9 @@ const startedAt = Date.now();
 const HTTP_PORT = 3000;
 // Hard exit guard: drain deadline plus a margin for socket close + lease release.
 const SHUTDOWN_HARD_EXIT_MS = SHUTDOWN_DRAIN_MS + 5_000;
+// After a WhatsApp "session replaced" demotion, wait before re-acquiring the
+// lease so two instances cannot ping-pong the session every few seconds.
+const REPLACED_REACQUIRE_DELAY_MS = 30_000;
 
 const lease = createInstanceLease();
 const runtime = createRuntime({ lease });
@@ -196,7 +199,8 @@ async function main() {
 
   whatsappEvents.on("replaced", () => {
     runtime.demote("whatsapp session replaced by another client")
-      .then(waitThenActivate)
+      .then(() => new Promise((r) => setTimeout(r, REPLACED_REACQUIRE_DELAY_MS)))
+      .then(() => { if (!shuttingDown) return waitThenActivate(); })
       .catch((err) => log.error(`Demotion failed: ${err}`));
   });
   whatsappEvents.on("logout", () => { void shutdown("whatsapp logout", 1); });
