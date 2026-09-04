@@ -5,8 +5,13 @@ import { getLatestQr } from "../integrations/whatsapp.js";
 import { getPublicKey, addTarget, removeTarget, testConnection } from "../integrations/ssh.js";
 import { getCalendarStatus, createEvent, listCalendars, loadCalendarConfig, saveCalendarConfig } from "../integrations/calendar.js";
 import type { CalendarConfigEntry } from "../integrations/calendar.js";
-import { getHAStatus, saveConfig, restartHAPolling, testHAConnection } from "../integrations/homeassistant.js";
-import type { HAConfig, HAConnectionMode } from "../integrations/homeassistant.js";
+import { getHAStatus, saveConfig, restartHAPolling, regenerateWebhookToken, DEFAULT_WEATHER_REFLEX, loadConfig as loadHAConfig } from "../integrations/homeassistant.js";
+import type { HAConfig, HAConnectionMode, HAWeatherReflexConfig } from "../integrations/homeassistant.js";
+import { testHAConnection, buildTtsCall } from "../integrations/ha-client.js";
+import { getRecentEvents } from "../integrations/ha-events.js";
+import { getCommandQueue, dispatchCommand } from "../integrations/ha-commands.js";
+import { testReflex } from "../ha-reflexes.js";
+import { restartHADigestLoop } from "../ha-digest.js";
 import { getRSSStatus, addFeed, removeFeed } from "../integrations/rss.js";
 import { getOwnTracksStatus } from "../integrations/owntracks.js";
 import { loadSnapshot, refreshSnapshot, isPlayStoreConfigured, getPlayStoreConfig } from "../integrations/playstore.js";
@@ -132,6 +137,32 @@ export function handleIntegrationRoutes(
 
   if (pathname === "/api/homeassistant/test" && req.method === "POST" && isAuthenticated(req)) {
     handleHATestConnection(req, res);
+    return true;
+  }
+
+  if (pathname === "/api/homeassistant/events" && req.method === "GET" && isAuthenticated(req)) {
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 50));
+    respondJson(res, 200, { events: getRecentEvents(limit) });
+    return true;
+  }
+
+  if (pathname === "/api/homeassistant/commands" && req.method === "GET" && isAuthenticated(req)) {
+    respondJson(res, 200, { commands: getCommandQueue() });
+    return true;
+  }
+
+  if (pathname === "/api/homeassistant/token/regenerate" && req.method === "POST" && isAuthenticated(req)) {
+    handleHARegenerateToken(req, res);
+    return true;
+  }
+
+  if (pathname === "/api/homeassistant/reflex/test" && req.method === "POST" && isAuthenticated(req)) {
+    handleHAReflexTest(req, res);
+    return true;
+  }
+
+  if (pathname === "/api/homeassistant/speak" && req.method === "POST" && isAuthenticated(req)) {
+    handleHASpeak(req, res);
     return true;
   }
 
@@ -500,34 +531,105 @@ const handleInjectionLogGet = apiGetHandler(() => {
 
 // -- Home Assistant handlers --
 
-const handleHASaveConfig = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
-  const mode = data.mode as HAConnectionMode;
-  if (!mode || !["direct_api", "cloud"].includes(mode)) throw new ApiError(400, "mode must be 'direct_api' or 'cloud'");
+const HA_MODES: HAConnectionMode[] = ["webhook", "direct_api", "cloud"];
+const ENTITY_ID_RE = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 
-  const config: HAConfig = {
-    mode,
-    entities: Array.isArray(data.entities) ? data.entities : ["light", "switch", "lock", "climate", "binary_sensor", "sensor"],
-    pollInterval: typeof data.pollInterval === "number" ? data.pollInterval : 60000,
+function parseConnection(raw: unknown, current: { url: string; token: string } | undefined, label: string): { url: string; token: string } | undefined {
+  if (!raw || typeof raw !== "object") return current;
+  const obj = raw as Record<string, unknown>;
+  const url = String(obj.url || "").trim().replace(/\/+$/, "");
+  if (url && !/^https?:\/\//.test(url)) throw new ApiError(400, `${label}.url must start with http:// or https://`);
+  // "***" is the masked token echoed back by the status endpoint — keep the stored one.
+  const rawToken = String(obj.token || "");
+  const token = rawToken && rawToken !== "***" ? rawToken : (current?.token || "");
+  return url || token ? { url, token } : undefined;
+}
+
+function parseWeatherReflex(raw: unknown, current: HAWeatherReflexConfig): HAWeatherReflexConfig {
+  if (!raw || typeof raw !== "object") return current;
+  const r = raw as Record<string, unknown>;
+  const mediaPlayer = typeof r.mediaPlayer === "string" ? r.mediaPlayer.trim() : current.mediaPlayer;
+  if (!ENTITY_ID_RE.test(mediaPlayer)) throw new ApiError(400, "reflex mediaPlayer must be a media_player entity id");
+  const weatherEntity = typeof r.weatherEntity === "string" ? r.weatherEntity.trim() : current.weatherEntity;
+  if (!ENTITY_ID_RE.test(weatherEntity)) throw new ApiError(400, "reflex weatherEntity must be an entity id");
+  const actions = Array.isArray(r.actions) ? r.actions.filter((a): a is string => typeof a === "string" && /^[a-z0-9_]+$/.test(a)) : current.actions;
+  if (actions.length === 0) throw new ApiError(400, "reflex needs at least one button action");
+  const eveningHour = typeof r.eveningHour === "number" ? r.eveningHour : current.eveningHour;
+  if (!Number.isInteger(eveningHour) || eveningHour < 0 || eveningHour > 23) throw new ApiError(400, "eveningHour must be 0-23");
+  const device = typeof r.device === "string" ? r.device.trim() : current.device;
+  if (!device) throw new ApiError(400, "reflex device is required");
+  return {
+    enabled: typeof r.enabled === "boolean" ? r.enabled : current.enabled,
+    device,
+    actions,
+    mediaPlayer,
+    ttsEngine: typeof r.ttsEngine === "string" && /^[a-z0-9_.]+$/.test(r.ttsEngine) ? r.ttsEngine : current.ttsEngine,
+    language: typeof r.language === "string" && /^[a-z]{2}(-[A-Za-z]{2})?$/.test(r.language) ? r.language : current.language,
+    eveningHour,
+    weatherEntity,
+    pushTts: typeof r.pushTts === "boolean" ? r.pushTts : current.pushTts,
   };
+}
 
-  if (data.direct_api && typeof data.direct_api === "object") {
-    const directApi = data.direct_api as Record<string, unknown>;
-    config.direct_api = { url: String(directApi.url || ""), token: String(directApi.token || "") };
+const handleHASaveConfig = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
+  const current = getHAStatus().config;
+  const mode = (data.mode ?? current.mode) as HAConnectionMode;
+  if (!HA_MODES.includes(mode)) throw new ApiError(400, `mode must be one of ${HA_MODES.join(", ")}`);
+
+  // Unmasked config for merging — the status endpoint masks tokens.
+  const existing = loadHAConfig();
+  const updates: Partial<HAConfig> = {
+    mode,
+    entities: Array.isArray(data.entities) ? data.entities.filter((e): e is string => typeof e === "string") : existing.entities,
+    pollInterval: typeof data.pollInterval === "number" ? data.pollInterval : existing.pollInterval,
+    digestIntervalMs: typeof data.digestIntervalMs === "number" ? data.digestIntervalMs : existing.digestIntervalMs,
+    direct_api: parseConnection(data.direct_api, existing.direct_api, "direct_api"),
+    cloud: parseConnection(data.cloud, existing.cloud, "cloud"),
+    reflexes: { weatherBriefing: parseWeatherReflex((data.reflexes as Record<string, unknown> | undefined)?.weatherBriefing, existing.reflexes.weatherBriefing ?? DEFAULT_WEATHER_REFLEX) },
+  };
+  if (data.location && typeof data.location === "object") {
+    const loc = data.location as Record<string, unknown>;
+    const lat = Number(loc.lat), lon = Number(loc.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) throw new ApiError(400, "location must have valid lat/lon");
+    updates.location = { lat, lon };
   }
 
-  if (data.cloud && typeof data.cloud === "object") {
-    const cloud = data.cloud as Record<string, unknown>;
-    config.cloud = { url: String(cloud.url || ""), token: String(cloud.token || "") };
-  }
-
-  saveConfig(config);
+  saveConfig(updates);
   restartHAPolling();
+  restartHADigestLoop();
   return { success: true, status: getHAStatus() };
 });
 
-const handleHATestConnection = apiHandler(async (_req, _res, body: { mode?: string; url?: string; token?: string }) => {
-  if (!body.mode || !body.url || !body.token) throw new ApiError(400, "mode, url, and token are required");
-  return await testHAConnection(body.mode as HAConnectionMode, body.url, body.token);
+const handleHATestConnection = apiHandler(async (_req, _res, body: { url?: string; token?: string }) => {
+  if (!body.url || !body.token) throw new ApiError(400, "url and token are required");
+  return await testHAConnection(body.url, body.token);
+});
+
+const handleHARegenerateToken = apiHandler(async () => {
+  const token = regenerateWebhookToken();
+  return { success: true, webhookToken: token };
+});
+
+const handleHAReflexTest = apiHandler(async (_req, _res, body: { reflexId?: string; push?: boolean }) => {
+  const reflexId = body.reflexId || "weather_briefing";
+  const result = await testReflex(reflexId);
+  let pushed: string | null = null;
+  if (body.push && result.tts) {
+    const dispatched = await dispatchCommand(result.tts, "api", `dashboard test of ${reflexId}`);
+    pushed = dispatched.mode;
+  }
+  return { success: true, result, pushed };
+});
+
+const handleHASpeak = apiHandler(async (_req, _res, body: { text?: string; player?: string }) => {
+  const text = (body.text || "").trim();
+  if (!text || text.length > 400) throw new ApiError(400, "text is required (max 400 chars)");
+  const reflex = getHAStatus().config.reflexes.weatherBriefing;
+  const player = body.player?.trim() || reflex.mediaPlayer;
+  if (!ENTITY_ID_RE.test(player)) throw new ApiError(400, "player must be a media_player entity id");
+  const call = buildTtsCall(text, { player, engine: reflex.ttsEngine, language: reflex.language });
+  const dispatched = await dispatchCommand(call, "api", "dashboard speak");
+  return { success: true, mode: dispatched.mode, command: dispatched.command };
 });
 
 // -- Twilio handlers --

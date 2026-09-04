@@ -1,0 +1,95 @@
+[
+  {
+    "id": "aria_styrbar_silver_weather",
+    "alias": "ARIA: silver STYRBAR → weather briefing",
+    "description": "Sends every short press of the silver IKEA STYRBAR to ARIA with today's/tomorrow's Buienradar forecast, then speaks ARIA's reply on the WiiM. Falls back to a plain forecast if ARIA is unreachable.",
+    "mode": "single",
+    "max_exceeded": "silent",
+    "triggers": [
+      { "trigger": "device", "domain": "mqtt", "device_id": "505fe2c55f3e036b458f872f3a9654cf", "type": "action", "subtype": "on", "id": "on" },
+      { "trigger": "device", "domain": "mqtt", "device_id": "505fe2c55f3e036b458f872f3a9654cf", "type": "action", "subtype": "off", "id": "off" },
+      { "trigger": "device", "domain": "mqtt", "device_id": "505fe2c55f3e036b458f872f3a9654cf", "type": "action", "subtype": "arrow_left_click", "id": "arrow_left_click" },
+      { "trigger": "device", "domain": "mqtt", "device_id": "505fe2c55f3e036b458f872f3a9654cf", "type": "action", "subtype": "arrow_right_click", "id": "arrow_right_click" }
+    ],
+    "actions": [
+      {
+        "action": "weather.get_forecasts",
+        "target": { "entity_id": "weather.buienradar" },
+        "data": { "type": "daily" },
+        "response_variable": "fc"
+      },
+      {
+        "action": "rest_command.aria_event",
+        "data": {
+          "type": "button_press",
+          "device": "Ikea switch 3 silver",
+          "action": "{{ trigger.id | default('on') }}",
+          "context": { "forecast": "{{ fc['weather.buienradar'].forecast[:3] }}" }
+        },
+        "response_variable": "aria",
+        "continue_on_error": true
+      },
+      {
+        "choose": [
+          {
+            "conditions": [{ "condition": "template", "value_template": "{{ aria is defined and aria.status == 200 and aria.content.reflex is not none and aria.content.reflex.speak }}" }],
+            "sequence": [
+              {
+                "action": "tts.google_translate_say",
+                "target": { "entity_id": "media_player.wiim_amp_ultra_3d72" },
+                "data": { "message": "{{ aria.content.reflex.speak }}", "language": "nl" }
+              }
+            ]
+          }
+        ],
+        "default": [
+          {
+            "variables": {
+              "day": "{{ fc['weather.buienradar'].forecast[0] if now().hour < 14 else fc['weather.buienradar'].forecast[1] }}",
+              "label": "{{ 'Vandaag' if now().hour < 14 else 'Morgen' }}"
+            }
+          },
+          {
+            "action": "tts.google_translate_say",
+            "target": { "entity_id": "media_player.wiim_amp_ultra_3d72" },
+            "data": {
+              "message": "{{ label }} wordt het {{ day.condition }} met een maximum van {{ day.temperature | round }} graden en {{ day.precipitation_probability }} procent kans op regen. ARIA is even niet bereikbaar.",
+              "language": "nl"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "aria_command_puller",
+    "alias": "ARIA: command puller",
+    "description": "Every 30 seconds fetch queued service calls from ARIA and execute them. Lets ARIA act on the house without an inbound port.",
+    "mode": "single",
+    "max_exceeded": "silent",
+    "triggers": [
+      { "trigger": "time_pattern", "seconds": "/30" }
+    ],
+    "actions": [
+      { "action": "rest_command.aria_pull_commands", "response_variable": "pull", "continue_on_error": true },
+      {
+        "if": [{ "condition": "template", "value_template": "{{ pull is defined and pull.status == 200 and (pull.content.commands | default([]) | count) > 0 }}" }],
+        "then": [
+          {
+            "repeat": {
+              "for_each": "{{ pull.content.commands }}",
+              "sequence": [
+                {
+                  "action": "{{ repeat.item.service }}",
+                  "target": "{{ repeat.item.target | default({}) }}",
+                  "data": "{{ repeat.item.data | default({}) }}",
+                  "continue_on_error": true
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

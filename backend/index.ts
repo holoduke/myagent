@@ -11,7 +11,9 @@ import { startBrainLoop, stopBrainLoop, getBrainHealth } from "./brain.js";
 import { startGmailPolling, stopGmailPolling, getAccountStatus } from "./integrations/gmail.js";
 import { handleGmailRoutes } from "./integrations/gmail-routes.js";
 import { startCalendarPolling, stopCalendarPolling } from "./integrations/calendar.js";
-import { startHAPolling, stopHAPolling } from "./integrations/homeassistant.js";
+import { startHAPolling, stopHAPolling, ensureWebhookToken } from "./integrations/homeassistant.js";
+import { handleHAEventWebhook, handleHACommandsPull } from "./integrations/ha-webhook.js";
+import { startHADigestLoop, stopHADigestLoop } from "./ha-digest.js";
 import { startRSSPolling, stopRSSPolling } from "./integrations/rss.js";
 import { startPlayStorePolling, stopPlayStorePolling } from "./integrations/playstore-poll.js";
 import { startSlackPolling, stopSlackPolling } from "./integrations/slack.js";
@@ -36,6 +38,7 @@ function cleanupServices(): void {
   stopSlackPolling();
   stopCalendarPolling();
   stopHAPolling();
+  stopHADigestLoop();
   stopRSSPolling();
   stopPlayStorePolling();
   closeBrowser();
@@ -64,7 +67,9 @@ async function main() {
   // Start integration pollers
   startGmailPolling();
   startCalendarPolling();
+  ensureWebhookToken();
   startHAPolling();
+  startHADigestLoop();
   startRSSPolling();
   startSlackPolling();
   startPlayStorePolling();
@@ -91,6 +96,10 @@ async function main() {
 
     // OwnTracks webhook (public endpoint)
     if (req.url === "/owntracks" && req.method === "POST") { handleOwnTracksWebhook(req, res); return; }
+
+    // Home Assistant (public endpoints, shared-token auth)
+    if (req.url === "/homeassistant/event" && req.method === "POST") { void handleHAEventWebhook(req, res); return; }
+    if (req.url?.startsWith("/homeassistant/commands") && req.method === "GET") { handleHACommandsPull(req, res); return; }
 
     // Public status endpoint — uses cached stats from BrainState, no file I/O
     if (req.url === "/status") {

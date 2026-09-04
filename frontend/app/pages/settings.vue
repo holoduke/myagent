@@ -456,6 +456,9 @@ const brainForm = reactive<BrainConfig>({
     driftAudit: 'sonnet',
     selfImprove: 'sonnet',
     vision: 'haiku',
+    newsDigest: 'haiku',
+    haReflex: 'haiku',
+    haDigest: 'haiku',
   },
 })
 const brainDirty = ref(false)
@@ -502,6 +505,9 @@ const modelLabels: Record<string, string> = {
   driftAudit: 'Drift Audit (weekly code review)',
   selfImprove: 'Self-Improve (code changes)',
   vision: 'Vision (image description)',
+  newsDigest: 'News Digest (daily headlines)',
+  haReflex: 'Home Reflex (spoken weather etc.)',
+  haDigest: 'Home Digest (house event batches)',
 }
 
 const modelSummary = computed(() => {
