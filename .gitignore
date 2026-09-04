@@ -4,3 +4,6 @@ auth_state/
 .env
 *.log
 SAAS-PLAN.md
+
+# Claude Code agent worktrees (local only)
+.claude/worktrees/
