@@ -58,15 +58,15 @@ export interface HASpeechConfig {
   language: string;
   /** Speaker volume (0–1) set right before ARIA speaks; null leaves the volume alone. */
   ttsVolume: number | null;
-  /** "homeassistant" uses ttsEngine; "elevenlabs"/"openai" synthesize on the server and stream a clip. */
-  provider: "homeassistant" | "elevenlabs" | "openai";
-  /** ElevenLabs voice id or OpenAI voice name. */
+  /** "homeassistant" uses ttsEngine; "grok"/"elevenlabs"/"openai" synthesize on the server and stream a clip. */
+  provider: "homeassistant" | "grok" | "elevenlabs" | "openai";
+  /** Grok voice id (eve, ara, rex, sal, leo), ElevenLabs voice id or OpenAI voice name. */
   voiceId: string;
   /** Provider model (eleven_multilingual_v2, gpt-4o-mini-tts, …). */
   model: string;
   /** Delivery instructions for providers that take them (OpenAI). */
   style: string;
-  /** Provider API key; empty = use ELEVENLABS_API_KEY / OPENAI_API_KEY from the environment. */
+  /** Provider API key; empty = use GROK_API_KEY / ELEVENLABS_API_KEY / OPENAI_API_KEY from the environment. */
   apiKey: string;
 }
 
@@ -134,7 +134,15 @@ export const DEFAULT_SPEECH: HASpeechConfig = {
   apiKey: "",
 };
 
-const VOICE_PROVIDERS = new Set<HASpeechConfig["provider"]>(["homeassistant", "elevenlabs", "openai"]);
+const VOICE_PROVIDERS = new Set<HASpeechConfig["provider"]>(["homeassistant", "grok", "elevenlabs", "openai"]);
+
+/** Sensible voice/model per provider, used when the provider changes without an explicit voice. */
+export const PROVIDER_VOICE_DEFAULTS: Record<HASpeechConfig["provider"], { voiceId: string; model: string }> = {
+  homeassistant: { voiceId: "", model: "" },
+  grok: { voiceId: "eve", model: "" },
+  elevenlabs: { voiceId: "JBFqnCBsd6RMkjVDRZzb", model: "eleven_multilingual_v2" },
+  openai: { voiceId: "onyx", model: "gpt-4o-mini-tts" },
+};
 
 export const DEFAULT_WEATHER_REFLEX: HAWeatherReflexConfig = {
   enabled: true,
