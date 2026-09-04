@@ -234,7 +234,8 @@ export function recordObservation(obs: Observation): void {
   }
 
   // ── Unified message evaluation (single pipeline for intent + actionable + reply) ──
-  if (!obs.isFromMe && obs.text) {
+  // Home Assistant digests are machine summaries, not conversation: no intent/reply evaluation.
+  if (!obs.isFromMe && obs.text && obs.source !== "homeassistant") {
     evaluateMessage(obs).then(result => {
       // Enrich observation with intent
       obs.intentClassification = result.intent;

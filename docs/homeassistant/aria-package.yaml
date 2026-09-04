@@ -1,0 +1,37 @@
+# ARIA package for Home Assistant — place at <config>/packages/aria.yaml and make
+# sure configuration.yaml contains:
+#
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# Secrets (secrets.yaml):
+#   aria_url: http://mw8wco0o8g44sw80gswgocg4.46.224.74.85.sslip.io
+#   aria_token: <webhook token from the ARIA dashboard>
+
+rest_command:
+  # House → ARIA: push one event. The response carries reflex.speak when a
+  # reflex answered (e.g. the weather briefing).
+  aria_event:
+    url: !secret aria_event_url
+    method: POST
+    timeout: 30
+    content_type: "application/json"
+    headers:
+      X-ARIA-Token: !secret aria_token
+    payload: >-
+      {"type": {{ type | default("custom") | to_json }},
+       "device": {{ device | default("") | to_json }},
+       "entity_id": {{ entity_id | default("") | to_json }},
+       "action": {{ action | default("") | to_json }},
+       "state": {{ state | default("") | to_json }},
+       "previous_state": {{ previous_state | default("") | to_json }},
+       "ts": {{ now().isoformat() | to_json }},
+       "context": {{ context | default({}) | to_json }}}
+
+  # ARIA → house: pull queued service calls (executed by the "ARIA command puller" automation).
+  aria_pull_commands:
+    url: !secret aria_commands_url
+    method: GET
+    timeout: 15
+    headers:
+      X-ARIA-Token: !secret aria_token

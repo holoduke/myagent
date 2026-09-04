@@ -72,7 +72,7 @@
       </UiModal>
 
       <UiModal :open="activeModal === 'homeassistant'" title="Home Assistant" @close="activeModal = null">
-        <IntegrationsHomeAssistantCard :ha="haData" />
+        <IntegrationsHomeAssistantCard :ha="haData" @reload="load" @error="(msg: string) => showToast(msg, 'error')" @info="(msg: string) => showToast(msg, 'success')" />
       </UiModal>
 
       <UiModal :open="activeModal === 'rss'" title="RSS Feeds" max-width="640px" @close="activeModal = null">
@@ -231,9 +231,9 @@ const integrations = computed<IntegrationDef[]>(() => [
     description: 'Monitor smart home device states',
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="#03A9F4" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
     isActive: () => haData.value.enabled,
-    statusClass: haData.value.connected ? 'online' : haData.value.enabled ? 'pending' : 'offline',
-    statusText: haData.value.connected ? 'Connected' : haData.value.enabled ? 'Disconnected' : 'Not configured',
-    stat: `${haData.value.entityCount} entities`,
+    statusClass: (haData.value.connected || haData.value.receiving) ? 'online' : haData.value.enabled ? 'pending' : 'offline',
+    statusText: haData.value.connected ? 'Connected' : haData.value.receiving ? 'Receiving' : haData.value.enabled ? 'Waiting for events' : 'Disabled',
+    stat: `${haData.value.eventsToday ?? 0} events today`,
   },
   {
     key: 'rss',

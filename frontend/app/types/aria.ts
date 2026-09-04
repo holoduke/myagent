@@ -135,12 +135,62 @@ export interface CalendarConfig {
   calendars: CalendarConfigEntry[]
 }
 
+export interface HAWeatherReflexConfig {
+  enabled: boolean
+  device: string
+  actions: string[]
+  mediaPlayer: string
+  ttsEngine: string
+  language: string
+  eveningHour: number
+  weatherEntity: string
+  pushTts: boolean
+}
+
+export interface HomeAssistantConfig {
+  mode: 'webhook' | 'direct_api' | 'cloud'
+  direct_api?: { url: string; token: string }
+  cloud?: { url: string; token: string }
+  entities: string[]
+  pollInterval: number
+  webhookToken: string
+  digestIntervalMs: number
+  location: { lat: number; lon: number }
+  reflexes: { weatherBriefing: HAWeatherReflexConfig }
+}
+
+export interface HAEventRecord {
+  id: string
+  receivedAt: number
+  ts: number
+  type: string
+  device?: string
+  entityId?: string
+  friendlyName?: string
+  action?: string
+  state?: string
+  previousState?: string
+  handledBy?: string
+  handledSummary?: string
+}
+
 export interface HomeAssistantStatus {
   enabled: boolean
   connected: boolean
+  receiving?: boolean
+  mode?: 'webhook' | 'direct_api' | 'cloud'
   url: string
+  webhookUrl?: string
+  webhookToken?: string
   entityCount: number
   lastPoll: number
+  lastEventAt?: number
+  eventsToday?: number
+  pendingDigest?: number
+  lastDigestAt?: number
+  queuedCommands?: number
+  recentEvents?: HAEventRecord[]
+  config?: HomeAssistantConfig
 }
 
 export interface RSSFeedStatus {
@@ -394,6 +444,9 @@ export interface BrainConfig {
     driftAudit: string
     selfImprove: string
     vision: string
+    newsDigest?: string
+    haReflex?: string
+    haDigest?: string
   }
 }
 

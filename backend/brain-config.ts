@@ -46,6 +46,8 @@ export interface BrainConfig {
     selfImprove: string;    // code improvement worker
     vision: string;         // image description
     newsDigest: string;     // daily news digest (cheap by design)
+    haReflex: string;       // Home Assistant real-time reflexes (spoken weather etc.)
+    haDigest: string;       // Home Assistant event batch summaries
   };
 }
 
@@ -217,6 +219,8 @@ function envDefaults(): BrainConfig {
       selfImprove: "sonnet",
       vision: "haiku",
       newsDigest: "haiku",
+      haReflex: "haiku",
+      haDigest: "haiku",
     },
   };
 }

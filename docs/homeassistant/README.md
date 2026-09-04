@@ -1,0 +1,150 @@
+# Home Assistant ↔ ARIA
+
+How the house talks to the agent on Hetzner, how the agent talks back, and how
+the first reflex (silver IKEA STYRBAR → spoken weather on the WiiM) works.
+
+## Architecture
+
+```
+ Home Assistant (LAN)                          ARIA (Hetzner)
+ ┌──────────────────────┐   POST /homeassistant/event   ┌──────────────────────────────┐
+ │ automation:          │ ────────────────────────────▶ │ ha-webhook.ts  token check    │
+ │  STYRBAR pressed     │   {type, device, action,      │   │                           │
+ │  + daily forecast    │    context.forecast}          │   ├─▶ ha-reflexes.ts (fast)   │
+ │                      │ ◀──────────────────────────── │   │    weather → haiku → text  │
+ │  tts.*_say(speak)    │   {reflex:{speak:"..."}}      │   │                           │
+ │  on the WiiM         │                               │   └─▶ ha-events.ts (buffer)   │
+ │                      │                               │        bounce/flood guards    │
+ │ automation (30 s):   │   GET /homeassistant/commands │        │                      │
+ │  pull + run commands │ ◀───────────────────────────▶ │ ha-commands.ts queue          │
+ └──────────────────────┘                               │        │ every 15 min          │
+          ▲  direct /api/services when reachable        │ ha-digest.ts → 1 observation  │
+          └─────────────────────────────────────────────│ (haiku) → brain think tick    │
+                                                        │ (sonnet/opus) → ha-cli.ts     │
+                                                        └──────────────────────────────┘
+```
+
+Three layers keep the expensive model out of the hot path:
+
+| Layer | Trigger | Model | Latency | Output |
+|-------|---------|-------|---------|--------|
+| Reflex | matching event (button press) | `models.haReflex` (haiku) with template fallback | seconds | spoken text in the HTTP response |
+| Digest | every `digestIntervalMs` (15 min) | `models.haDigest` (haiku), template for ≤4 events | minutes | one `[HOME DIGEST]` observation |
+| Brain | next think tick after a digest | `models.think` (sonnet/opus) | tick cadence | memory, messages, `ha-cli.ts` commands |
+
+Guards: per-event validation (64 KB body, string/attribute size caps), bounce
+dedup (same device+action within 1.5 s), flood guard (120 events / 10 min),
+pending cap (300), webhook budget (200 req/min), shared-token auth with
+constant-time compare, and an allowlist of service domains for outbound
+commands (no `lock`, no `homeassistant.*`).
+
+## Endpoints (public, token-protected)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/homeassistant/event` | House pushes one event. Response includes `reflex.speak` when a reflex fired. |
+| `GET` | `/homeassistant/commands` | House pulls queued service calls (`{commands:[{id, service, target, data, reason}]}`). |
+
+Auth: `X-ARIA-Token: <token>` (or `Authorization: Bearer`). The token is
+generated on first boot, shown on the dashboard card, stored in
+`/data/homeassistant/config.json`.
+
+Event body:
+
+```json
+{ "type": "button_press", "device": "Ikea switch 3 silver", "action": "on",
+  "ts": "2026-09-04T07:42:00+02:00",
+  "context": { "forecast": [ { "datetime": "...", "condition": "rainy", "temperature": 18, "templow": 11, "precipitation_probability": 70 } ] } }
+```
+
+`type` is required; one of `device`, `entity_id`, `friendly_name` is required.
+`state`/`previous_state` describe state changes. Anything HA puts in `context`
+is available to reflexes (the weather reflex reads `context.forecast`).
+
+## Weather reflex
+
+Config (dashboard → Home Assistant card, or `/data/homeassistant/config.json`):
+
+```json
+"reflexes": { "weatherBriefing": {
+  "enabled": true,
+  "device": "Ikea switch 3 silver",
+  "actions": ["on", "off", "arrow_left_click", "arrow_right_click"],
+  "mediaPlayer": "media_player.wiim_amp_ultra_3d72",
+  "ttsEngine": "google_translate", "language": "nl",
+  "eveningHour": 14,
+  "weatherEntity": "weather.buienradar",
+  "pushTts": false } }
+```
+
+Forecast source order: forecast in the event → Home Assistant API (when the
+agent can reach the house) → Open-Meteo for `location`. Before `eveningHour`
+(owner-local) the briefing covers today, afterwards tomorrow. Phrasing: haiku
+prompt in Dutch, deterministic Dutch template if the model fails, so the button
+always answers.
+
+Delivery: the automation speaks `reflex.speak` from the response with
+`tts.google_translate_say` on the WiiM (Google Cast). With `pushTts: true` and
+a reachable house, ARIA also pushes the TTS call itself.
+
+## Outbound: ARIA → house
+
+`backend/integrations/ha-client.ts` calls `/api/services/...` when a direct or
+cloud URL is configured. `ha-commands.ts` wraps this: direct when reachable,
+queued otherwise, queued-as-fallback when a direct call fails. Queued commands
+expire after 30 min. The brain uses the CLI:
+
+```
+npx tsx backend/scripts/ha-cli.ts states [--domain light] [--match keuken]
+npx tsx backend/scripts/ha-cli.ts call light.turn_on --entity light.lampen_keuken_groep --data '{"brightness":128}'
+npx tsx backend/scripts/ha-cli.ts speak "Goedemorgen" [--player media_player.x]
+npx tsx backend/scripts/ha-cli.ts forecast
+npx tsx backend/scripts/ha-cli.ts events [--limit 20]
+```
+
+### Making the house reachable (direct mode)
+
+The house has no inbound access by default. Options, safest first:
+
+1. **Firewall-scoped port forward** (what we use): UniFi forward WAN `:8123` →
+   `192.168.2.111:8123`, source restricted to the agent's IP only
+   (`46.224.74.85/32`). Home Assistant's own long-lived token still applies.
+2. Tailscale/WireGuard between the server and the HA host.
+3. Nabu Casa remote URL (`cloud` mode).
+
+Without any of these everything still works: reflexes answer in the HTTP
+response and commands are pulled by the house every 30 s.
+
+## Home Assistant side
+
+Files in this folder:
+
+- `aria-package.yaml` — `rest_command` definitions (event push, command pull)
+  and the `input_text` holding the token. Goes in `packages/aria.yaml`;
+  `configuration.yaml` needs `homeassistant: packages: !include_dir_named packages`.
+- `automations.json` — the two automations (STYRBAR → ARIA → TTS, and the
+  30-second command puller), created through the config API. The STYRBAR
+  automation uses MQTT device triggers on device `505fe2c55f3e036b458f872f3a9654cf`.
+
+After editing YAML: Developer tools → YAML → "Rest commands" (or restart).
+
+WiiM: the players are currently exposed via Google Cast (`media_player.wiim_*`),
+which supports TTS. Home Assistant 2026.4+ also ships a native **WiiM**
+integration (Settings → Integrations → Add → WiiM, auto-discovered) that adds
+presets, multiroom and better volume control; switching `mediaPlayer` to the
+WiiM entity is a config change only.
+
+## Files
+
+| File | Role |
+|------|------|
+| `backend/integrations/ha-events.ts` | validation, bounce/flood guards, pending buffer, history |
+| `backend/integrations/ha-webhook.ts` | public endpoints, token auth, request budget |
+| `backend/ha-reflexes.ts` | reflex registry + weather briefing reflex |
+| `backend/ha-weather.ts` | forecast sources, day selection, Dutch phrasing |
+| `backend/ha-digest.ts` | periodic batch → one observation |
+| `backend/integrations/ha-client.ts` | outbound REST client, TTS call builder |
+| `backend/integrations/ha-commands.ts` | dispatch (direct/queued), allowlist, pull queue |
+| `backend/integrations/homeassistant.ts` | config, webhook token, optional polling, status |
+| `backend/scripts/ha-cli.ts` | brain-facing CLI |
+| `tests/ha-*.test.ts` | unit tests for all of the above |

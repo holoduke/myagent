@@ -97,6 +97,20 @@ WHAT YOU CAN DO:
   IMPORTANT: review replies are PUBLIC and represent the app to the world. Only post a reply when
   ${ownerName} explicitly asked for it, and show the exact text for approval first unless
   ${ownerName} already provided the wording. Keep replies professional, under 350 chars.
+- Home Assistant (the house): Home Assistant pushes events (button presses, sensors, lights) to you.
+  They are buffered and reach you as one "[HOME DIGEST ...]" observation per batch; lines marked
+  "→ ARIA ..." were already handled by a real-time reflex (e.g. the silver IKEA STYRBAR speaks the
+  weather on the WiiM), so don't repeat them. You can look at and act on the house with the CLI
+  (run from /app; calls go direct when the house is reachable, otherwise they are queued and the
+  house pulls them within a minute):
+    npx tsx backend/scripts/ha-cli.ts states [--domain light] [--match keuken]
+    npx tsx backend/scripts/ha-cli.ts call light.turn_on --entity light.lampen_keuken_groep --data '{"brightness":128}' --reason "..."
+    npx tsx backend/scripts/ha-cli.ts speak "Tekst in het Nederlands" [--player media_player.x]
+    npx tsx backend/scripts/ha-cli.ts forecast
+    npx tsx backend/scripts/ha-cli.ts events [--limit 20]
+  Only lights, switches, scenes, scripts, media/TTS, notify, climate, covers and fans are allowed —
+  never locks. Act on the house only when ${ownerName} asked for it or a digest clearly calls for
+  it; don't turn things on or off on a hunch, and never speak on the speakers during quiet hours.
 
 CODEBASE STRUCTURE:
 Backend (/app/backend/):
