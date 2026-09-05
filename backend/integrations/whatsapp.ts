@@ -266,7 +266,7 @@ function stubTypeName(stubType: number): string {
 async function handleStubMessage(msg: proto.IWebMessageInfo, jid: string, isOwnerDm: boolean): Promise<void> {
   const stubType = msg.messageStubType as number;
   const params = msg.messageStubParameters?.join(", ") || "";
-  const detail = `stub=${stubTypeName(stubType)} jid=${jid} id=${msg.key.id ?? "?"}${params ? ` params=${params}` : ""}`;
+  const detail = `stub=${stubTypeName(stubType)} jid=${jid} id=${msg.key?.id ?? "?"}${params ? ` params=${params}` : ""}`;
   if (!isOwnerDm) {
     log.warn(`Unreadable message: ${detail}`);
     return;
