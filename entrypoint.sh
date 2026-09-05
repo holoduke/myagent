@@ -126,8 +126,7 @@ fi
 # Start the agent. Run node directly (tsx as a loader) so Coolify's SIGTERM
 # (`docker stop -t 30`) reaches the process: through `npx tsx` the signal was
 # swallowed, the app never released its instance lease, and every handover
-# waited for the lock to go stale. The app resets the boot counter itself is
-# not needed — a clean exit code 0 from node is the "clean exit" signal.
-trap 'echo "0" > "$BOOT_COUNTER_FILE"; rm -f "$BOOT_TIMESTAMP_FILE"' EXIT
+# waited for the lock to go stale. (A shell trap cannot run after exec; the
+# boot counter is reset by the app's own clean-exit path.)
 
 exec node --import tsx backend/index.ts
