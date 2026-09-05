@@ -63,11 +63,10 @@ export class GrokProvider extends BaseProvider {
     ];
 
     const startTime = Date.now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
 
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeout);
-
       const response = await fetch(GROK_API_URL, {
         method: "POST",
         headers: {
@@ -82,7 +81,6 @@ export class GrokProvider extends BaseProvider {
         signal: controller.signal,
       });
 
-      clearTimeout(timer);
       const durationMs = Date.now() - startTime;
 
       if (!response.ok) {
@@ -118,9 +116,11 @@ export class GrokProvider extends BaseProvider {
       return { messages: this.splitMessage(text), stats };
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`Grok timed out after ${timeout / 1000}s`);
+        throw new Error(`Grok timed out after ${timeout / 1000}s`, { cause: err });
       }
       throw err;
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
