@@ -186,6 +186,20 @@ export interface SignalSnooze {
   reason: string;
 }
 
+/** Compact, persisted summary of the last failed brain tick. */
+export interface TickFailureSummary {
+  /** Epoch ms when the failure was recorded */
+  ts: number;
+  /** Tick phase that failed (e.g. "think", "consolidate", "reflect") */
+  phase: string;
+  /** Error message, truncated to ~200 chars */
+  message: string;
+  /** Whether the error was classified as transient (retryable) */
+  transient: boolean;
+  /** Consecutive failure count at the time of this failure */
+  consecutiveFailures: number;
+}
+
 export interface BrainState {
   // timing
   lastObserveTick: number;
@@ -232,6 +246,10 @@ export interface BrainState {
   // self-improvement
   consecutiveFailures: number;
   lastSuccessfulTick: number;
+  /** Compact summary of the most recent failed tick. Survives restarts so the
+   *  watchdog alert and dashboard can name the root cause; not cleared on
+   *  recovery (lastSuccessfulTick > ts marks it stale). */
+  lastTickFailure?: TickFailureSummary;
   pendingSelfMod: boolean;
   selfModSpawnedAt?: number;
   lastImproveNudgeDate?: string; // legacy — superseded by lastImproveNudgeAt

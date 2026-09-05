@@ -27,6 +27,7 @@ import { createLogger } from "./logger.js";
 import { safeReadJSON, atomicWriteJSON } from "./utils/file-store.js";
 import { BRAIN_DIR } from "./config.js";
 import { scheduleMessage, getScheduledMessages, markDelivered } from "./scheduler.js";
+import type { TickFailureSummary } from "./memory/types.js";
 
 const log = createLogger("watchdog");
 
@@ -50,6 +51,12 @@ export interface WatchdogOptions {
    * When omitted, the watchdog is log-only (pre-escalation behavior).
    */
   ownerJid?: string;
+  /**
+   * Function returning the persisted summary of the last tick failure, or null
+   * when none is relevant. When provided, the ALERT message names the failure
+   * ("laatste fout: ...") instead of only pointing at dashboard/logs.
+   */
+  getLastTickFailure?: () => TickFailureSummary | null;
 }
 
 export interface WatchdogStatus {
@@ -105,15 +112,39 @@ function hasQueuedWatchdogMessage(): boolean {
   }
 }
 
-function escalateAlert(ownerJid: string, msSinceSuccess: number): void {
+/**
+ * Format the last tick failure as a message suffix, e.g.
+ * " — laatste fout: [think] API timeout (transient, 6x)". Empty string when
+ * there is no failure to report. Truncated so the full alert stays well under
+ * ~300 chars.
+ */
+export function formatFailureSuffix(failure: TickFailureSummary | null | undefined): string {
+  if (!failure) return "";
+  const msg = failure.message.length > 140 ? `${failure.message.slice(0, 137)}...` : failure.message;
+  const kind = failure.transient ? "transient" : "permanent";
+  return ` — laatste fout: [${failure.phase}] ${msg} (${kind}, ${failure.consecutiveFailures}x)`;
+}
+
+function escalateAlert(
+  ownerJid: string,
+  msSinceSuccess: number,
+  getLastTickFailure?: () => TickFailureSummary | null,
+): void {
   try {
     const state = loadNotifyState();
     if (state.alertNotified && Date.now() - state.lastAlertNotifiedAt < ALERT_RENOTIFY_MS) return;
     if (hasQueuedWatchdogMessage()) return;
     const hours = Math.round(msSinceSuccess / 3600000);
+    let failureSuffix = "";
+    try {
+      failureSuffix = formatFailureSuffix(getLastTickFailure?.());
+    } catch (err) {
+      // Diagnostics must never block the alert itself.
+      log(`Could not read last tick failure for alert: ${err}`);
+    }
     scheduleMessage(
       ownerJid,
-      `aria heartbeat: geen succesvolle brain tick in ${hours}h — check dashboard/logs`,
+      `aria heartbeat: geen succesvolle brain tick in ${hours}h${failureSuffix || " — check dashboard/logs"}`,
       Date.now(),
       WATCHDOG_SOURCE,
     );
@@ -174,7 +205,7 @@ export function startWatchdog(opts: WatchdogOptions): void {
     if (status.level === "alert") {
       log(`!! ALERT: no successful tick in ${Math.round(status.msSinceSuccess / 60000)}m — brain may be stalled`);
       lastLoggedLevel = "alert";
-      if (opts.ownerJid) escalateAlert(opts.ownerJid, status.msSinceSuccess);
+      if (opts.ownerJid) escalateAlert(opts.ownerJid, status.msSinceSuccess, opts.getLastTickFailure);
     } else if (status.level === "warn" && lastLoggedLevel !== "warn" && lastLoggedLevel !== "alert") {
       log(`WARN: no successful tick in ${Math.round(status.msSinceSuccess / 60000)}m`);
       lastLoggedLevel = "warn";

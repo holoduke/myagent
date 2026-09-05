@@ -81,6 +81,7 @@ function handleStatus(res: import("http").ServerResponse): void {
       consecutiveFailures: health.consecutiveFailures,
       pendingSelfMod: health.pendingSelfMod,
       lastSuccessfulTick: health.lastSuccessfulTick,
+      lastTickFailure: health.lastTickFailure,
     },
     memory: { nodes: health.nodeCount, edges: health.edgeCount },
     queue: { depth: queue.size, processing: queue.isProcessing },
