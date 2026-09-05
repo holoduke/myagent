@@ -3,54 +3,38 @@ import { askClaudeStreaming } from "./claude.js";
 import type { SubAgentTask, SubAgentResult } from "./sub-agents.js";
 import { createLogger } from "./logger.js";
 import { BRAIN_DIR } from "./config.js";
+import { parseLastJsonObject } from "./utils/json-extract.js";
+import { validateSubAgentTools, isValidSubAgentTimeout, SUB_AGENT_MAX_TIMEOUT_MS } from "./utils/worker-sandbox.js";
 
 const log = createLogger("sub-agent-worker");
 
-function parseResult(raw: string, agentId: string): SubAgentResult {
-  // Try to find a JSON block that has our expected result fields (summary/success)
-  // Search from the END of the response since the result JSON comes last
-  const jsonBlocks: string[] = [];
-  let depth = 0;
-  let start = -1;
-  for (let i = 0; i < raw.length; i++) {
-    if (raw[i] === "{") {
-      if (depth === 0) start = i;
-      depth++;
-    } else if (raw[i] === "}") {
-      depth--;
-      if (depth === 0 && start >= 0) {
-        jsonBlocks.push(raw.slice(start, i + 1));
-        start = -1;
-      }
-    }
+const DEFAULT_TIMEOUT_MS = 300_000;
+
+/** Pure: the last JSON object with our result shape, else an explicit failure. Exported for tests. */
+export function parseResult(raw: string, agentId: string): SubAgentResult {
+  const parsed = parseLastJsonObject(raw, p =>
+    "summary" in p || ("success" in p && ("details" in p || "error" in p)),
+  );
+  if (parsed) {
+    return {
+      agentId,
+      success: !!parsed.success,
+      summary: typeof parsed.summary === "string" ? parsed.summary : "",
+      details: typeof parsed.details === "string" ? parsed.details : "",
+      metrics: (parsed.metrics as SubAgentResult["metrics"]) || undefined,
+      error: typeof parsed.error === "string" ? parsed.error : undefined,
+      completedAt: Date.now(),
+    };
   }
 
-  // Search blocks from last to first — result JSON is typically at the end
-  for (let i = jsonBlocks.length - 1; i >= 0; i--) {
-    try {
-      const parsed = JSON.parse(jsonBlocks[i]);
-      if ("summary" in parsed || ("success" in parsed && ("details" in parsed || "error" in parsed))) {
-        return {
-          agentId,
-          success: !!parsed.success,
-          summary: parsed.summary || "",
-          details: parsed.details || "",
-          metrics: parsed.metrics || undefined,
-          error: parsed.error || undefined,
-          completedAt: Date.now(),
-        };
-      }
-    } catch { /* expected: response may not be valid JSON */ }
-  }
-
-  // Fallback: treat the whole response as a successful run with raw text details
-  // (the agent did work, it just didn't format the output as JSON)
-  const hasActionWords = /upvot|comment|post|follow|check|notif/i.test(raw);
+  // Unstructured output is a failure: we cannot tell what (if anything) the
+  // agent did, and guessing "success" from action words made bad runs look good.
   return {
     agentId,
-    success: hasActionWords,
-    summary: hasActionWords ? "Completed (unstructured response)" : "Could not parse structured response",
+    success: false,
+    summary: "Could not parse structured response",
     details: raw.slice(0, 2000),
+    error: "unparseable-output",
     completedAt: Date.now(),
   };
 }
@@ -63,6 +47,36 @@ function writeResult(agentId: string, result: SubAgentResult): void {
   } catch (err) {
     log(`Failed to write result for ${agentId}: ${err}`);
   }
+}
+
+function buildPrompt(task: SubAgentTask): string {
+  return `You are ARIA's sub-agent "${task.name}". You are a specialized autonomous worker.
+
+Complete the following task and provide structured results.
+
+═══ TASK ═══
+
+${task.prompt}
+
+═══ INSTRUCTIONS ═══
+
+Output ONLY a JSON object with your results (no markdown code fences):
+{
+  "success": true/false,
+  "summary": "One-line summary",
+  "details": "Full detailed report",
+  "metrics": { ... optional key-value metrics ... },
+  "error": null or "error message if failed"
+}`;
+}
+
+/** Enforce the tool allowlist and timeout bounds even if the task file was hand-edited. */
+function resolveSandbox(task: SubAgentTask): { tools: string; timeout: number } | { error: string } {
+  const tools = validateSubAgentTools(task.tools);
+  if (!tools.ok) return { error: tools.reason };
+  const requested = task.timeout ?? DEFAULT_TIMEOUT_MS;
+  const timeout = isValidSubAgentTimeout(requested) ? requested : Math.min(DEFAULT_TIMEOUT_MS, SUB_AGENT_MAX_TIMEOUT_MS);
+  return { tools: tools.tools, timeout };
 }
 
 async function run(): Promise<void> {
@@ -90,47 +104,38 @@ async function run(): Promise<void> {
 
   log(`Task: ${task.name}`);
 
-  const prompt = `You are ARIA's sub-agent "${task.name}". You are a specialized autonomous worker.
-
-Complete the following task and provide structured results.
-
-═══ TASK ═══
-
-${task.prompt}
-
-═══ INSTRUCTIONS ═══
-
-Output ONLY a JSON object with your results (no markdown code fences):
-{
-  "success": true/false,
-  "summary": "One-line summary",
-  "details": "Full detailed report",
-  "metrics": { ... optional key-value metrics ... },
-  "error": null or "error message if failed"
-}`;
-
-  try {
-    const result = await askClaudeStreaming(prompt, (delta) => {
-      process.stdout.write(delta);
-    }, {
-      timeout: task.timeout || 300_000,
-      allowedTools: task.tools,
-      noSession: true,
-    });
-
-    const responseText = result.messages.join("\n");
-    const parsed = parseResult(responseText, agentId);
-    writeResult(agentId, parsed);
-  } catch (err) {
-    log(`Worker error for ${agentId}: ${err}`);
+  const sandbox = resolveSandbox(task);
+  if ("error" in sandbox) {
+    log(`Refusing to run ${agentId}: ${sandbox.error}`);
     writeResult(agentId, {
       agentId,
       success: false,
-      summary: `Worker error: ${err}`,
-      details: `${err}`,
+      summary: `Refused: ${sandbox.error}`,
+      details: "Sub-agent tools must be within the allowlist; edit the agent configuration.",
+      error: sandbox.error,
       completedAt: Date.now(),
-      error: `${err}`,
     });
+  } else {
+    try {
+      const result = await askClaudeStreaming(buildPrompt(task), (delta) => {
+        process.stdout.write(delta);
+      }, {
+        timeout: sandbox.timeout,
+        allowedTools: sandbox.tools,
+        noSession: true,
+      });
+      writeResult(agentId, parseResult(result.messages.join("\n"), agentId));
+    } catch (err) {
+      log(`Worker error for ${agentId}: ${err}`);
+      writeResult(agentId, {
+        agentId,
+        success: false,
+        summary: `Worker error: ${err}`,
+        details: `${err}`,
+        completedAt: Date.now(),
+        error: `${err}`,
+      });
+    }
   }
 
   // Clean up task file
@@ -138,9 +143,12 @@ Output ONLY a JSON object with your results (no markdown code fences):
   log(`Worker for ${agentId} complete`);
 }
 
-run()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    log(`Worker fatal error: ${err}`);
-    process.exit(1);
-  });
+const isEntrypoint = process.argv[1]?.endsWith("sub-agent-worker.ts") || process.argv[1]?.endsWith("sub-agent-worker.js");
+if (isEntrypoint) {
+  run()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      log(`Worker fatal error: ${err}`);
+      process.exit(1);
+    });
+}
