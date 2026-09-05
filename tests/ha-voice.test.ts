@@ -21,7 +21,7 @@ vi.mock("../backend/integrations/homeassistant.js", () => ({
 
 import {
   resolveApiKey, isPremiumVoiceConfigured, audioIdFor, buildElevenLabsRequest, buildOpenAIRequest, buildGrokRequest,
-  synthesizeSpeech, planSpeech, parseAudioId, handleTtsAudio, TTS_DIR, applyEffect, EFFECT_FILTERS,
+  synthesizeSpeech, planSpeech, parseAudioId, handleTtsAudio, TTS_DIR, applyEffect, EFFECT_FILTERS, applySpeechTags,
 } from "../backend/ha-voice.js";
 import type { HASpeechConfig } from "../backend/integrations/homeassistant.js";
 import type { IncomingMessage, ServerResponse } from "http";
@@ -29,7 +29,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 const base: HASpeechConfig = {
   mediaPlayer: "media_player.wiim", ttsEngine: "tts.edge", language: "nl-NL-FennaNeural", ttsVolume: 0.3,
   provider: "elevenlabs", voiceId: "voice123", model: "eleven_multilingual_v2", style: "", apiKey: "key-abc",
-  effect: "none", speed: 1,
+  effect: "none", speed: 1, speechTags: [],
 };
 
 beforeEach(() => disk.clear());
@@ -71,6 +71,15 @@ describe("provider requests", () => {
     const r = buildOpenAIRequest({ ...base, provider: "openai", voiceId: "onyx", model: "gpt-4o-mini-tts", style: "calm" }, "Hoi", "k");
     expect(r.headers.Authorization).toBe("Bearer k");
     expect(JSON.parse(r.body)).toEqual({ model: "gpt-4o-mini-tts", voice: "onyx", input: "Hoi", response_format: "mp3", instructions: "calm" });
+  });
+});
+
+describe("speech tags", () => {
+  it("wraps text in nested Grok tags and ignores unknown ones", () => {
+    expect(applySpeechTags("Hallo", ["soft", "low", "bogus"])).toBe("<soft><low>Hallo</low></soft>");
+    expect(applySpeechTags("Hallo", [])).toBe("Hallo");
+    const r = buildGrokRequest({ ...base, provider: "grok", speechTags: ["soft"] }, "Hoi", "k");
+    expect(JSON.parse(r.body).text).toBe("<soft>Hoi</soft>");
   });
 });
 

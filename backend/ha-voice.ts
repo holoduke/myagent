@@ -72,7 +72,7 @@ export function isPremiumVoiceConfigured(speech: HASpeechConfig, env: NodeJS.Pro
 /** Deterministic id per (provider, voice, model, text) so repeated phrases reuse the file. */
 export function audioIdFor(speech: HASpeechConfig, text: string): string {
   return createHash("sha256")
-    .update(`${speech.provider}|${speech.voiceId}|${speech.model}|${speech.style}|${speech.effect}|${speech.speed}|${text}`)
+    .update(`${speech.provider}|${speech.voiceId}|${speech.model}|${speech.style}|${speech.effect}|${speech.speed}|${(speech.speechTags ?? []).join(",")}|${text}`)
     .digest("hex")
     .slice(0, 32);
 }
@@ -116,6 +116,15 @@ export function buildOpenAIRequest(speech: HASpeechConfig, text: string, apiKey:
 }
 
 /** xAI text-to-speech: raw MP3 back, BCP-47 language, voice ids like eve/ara/rex/sal/leo. */
+export const GROK_WRAP_TAGS = new Set(["soft", "low", "whisper", "loud", "high", "sing"]);
+
+/** Wrap text in Grok delivery tags (<soft><low>…</low></soft>); unknown tags are ignored. */
+export function applySpeechTags(text: string, tags: string[]): string {
+  const valid = tags.filter(t => GROK_WRAP_TAGS.has(t));
+  if (valid.length === 0) return text;
+  return `${valid.map(t => `<${t}>`).join("")}${text}${[...valid].reverse().map(t => `</${t}>`).join("")}`;
+}
+
 export function buildGrokRequest(speech: HASpeechConfig, text: string, apiKey: string): SynthRequest {
   // speech.language may be an Edge voice name ("nl-NL-FennaNeural"); xAI wants the language itself.
   const primary = (speech.language || "").split("-")[0].toLowerCase();
@@ -123,7 +132,7 @@ export function buildGrokRequest(speech: HASpeechConfig, text: string, apiKey: s
     url: "https://api.x.ai/v1/tts",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      text,
+      text: applySpeechTags(text, speech.speechTags ?? []),
       voice_id: speech.voiceId || "eve",
       language: /^[a-z]{2}$/.test(primary) ? primary : "auto",
       speed: Math.min(1.5, Math.max(0.7, speech.speed || 1)),

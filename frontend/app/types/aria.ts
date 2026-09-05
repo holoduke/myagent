@@ -147,6 +147,7 @@ export interface HASpeechConfig {
   apiKey: string
   effect: 'none' | 'reverb' | 'computer'
   speed: number
+  speechTags: string[]
 }
 
 export interface HAButtonRule {
