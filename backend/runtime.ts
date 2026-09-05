@@ -100,6 +100,8 @@ function toObservation(obs: ObservationEvent): void {
     source: "whatsapp",
     chatJid: obs.chatJid,
     chatName: obs.chatName,
+    messageId: obs.messageId,
+    mediaType: obs.mediaType,
   });
 }
 
@@ -171,12 +173,22 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
     if (wasActive) {
       stopBrainLoop();
       stopPollers();
+      // Release first: the replacement instance activates within a poll
+      // interval instead of waiting for the lock to go stale if Docker kills
+      // us before the drain finishes. Our WhatsApp socket may get replaced
+      // (440) during the drain; undelivered owner replies stay in the inbox
+      // and are replayed by the new instance.
+      lease.release();
       const drained = await queue.drain(drainMs);
       log.info(drained ? "Owner queue drained" : `Owner queue drain deadline (${drainMs}ms) hit — pending replies stay in inbox`);
       stopWhatsApp();
-      await closeBrowser().catch((err) => log.warn(`closeBrowser failed: ${err}`));
+      await Promise.race([
+        closeBrowser().catch((err) => log.warn(`closeBrowser failed: ${err}`)),
+        new Promise((r) => setTimeout(r, 2_000)),
+      ]);
+    } else {
+      lease.release();
     }
-    lease.release();
     transition("stopped", signal);
   };
 

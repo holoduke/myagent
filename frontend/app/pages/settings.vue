@@ -279,7 +279,7 @@
           <div v-if="showHistory" class="si-history">
             <div v-if="improveHistory.length === 0" class="si-empty">No history yet</div>
             <div v-for="item in improveHistory.slice(0, 10)" :key="item.id" class="si-history-item">
-              <span class="si-badge" :class="item.status">{{ item.status === 'completed' ? '\u2713' : item.status === 'failed' ? '\u2717' : '\u2014' }}</span>
+              <span class="si-badge" :class="item.status">{{ item.status === 'completed' ? '\u2713' : (item.status === 'failed' || item.status === 'merge-failed') ? '\u2717' : '\u2014' }}</span>
               <span class="si-history-desc">{{ item.task.description }}</span>
               <a v-if="item.result?.prUrl" :href="item.result.prUrl" target="_blank" class="si-history-pr">PR</a>
               <span class="si-history-time">{{ timeAgo(item.completedAt || item.reviewedAt || item.createdAt) }}</span>
@@ -948,6 +948,8 @@ onMounted(load)
 .si-badge.running { background: rgba(139,92,246,0.15); color: var(--accent); animation: pulse 2s infinite; }
 .si-badge.completed { background: rgba(34,197,94,0.15); color: #22c55e; }
 .si-badge.failed { background: rgba(239,68,68,0.15); color: #ef4444; }
+.si-badge.merge-pending { background: rgba(59,130,246,0.15); color: #3b82f6; animation: pulse 2s infinite; }
+.si-badge.merge-failed { background: rgba(249,115,22,0.15); color: #f97316; }
 .si-badge.rejected { background: rgba(107,114,128,0.15); color: #6b7280; }
 @keyframes pulse {
   0%, 100% { opacity: 1; }

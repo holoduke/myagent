@@ -259,28 +259,56 @@ export function populateTemporalContext(wm: WorkingMemory): void {
 
 // ── Conversation Thread Tracking ──
 
+/** Media markers and caption-failure stubs are not conversation topics. */
+const MEDIA_STUB_RE = /^\[(image|voice|document|audio|video|sticker)\b[^\]]*\]\s*$/i;
+
+export function threadTopicFrom(obs: Observation): string | null {
+  const text = obs.text.replace(/\s+/g, " ").trim();
+  if (!text || MEDIA_STUB_RE.test(text) || /caption failed/i.test(text)) return null;
+  return text.slice(0, 60);
+}
+
+/**
+ * Thread identity per observation. Groups by group; DMs by counterpart;
+ * e-mail per sender (one bucket per account made every newsletter look like
+ * one busy conversation) — and promotional mail never opens a thread.
+ */
+export function conversationThreadKey(obs: Observation): string | null {
+  if (obs.source === "gmail") {
+    if (obs.promotionalEmail) return null;
+    const from = (obs.emailMeta?.from || obs.senderJid || "").toLowerCase();
+    const address = /<([^>]+)>/.exec(from)?.[1] ?? from;
+    return address ? `email:${address}` : null;
+  }
+  if (obs.isGroup) return `group:${obs.groupName || obs.senderJid}`;
+  // For DMs, key by the chat counterpart (chatJid), not the sender — so both
+  // incoming and outgoing messages map to the same thread.
+  return `dm:${obs.chatJid || obs.senderJid}`;
+}
+
 export function updateConversationThreads(wm: WorkingMemory, observations: Observation[]): void {
   const now = Date.now();
   const STALE_THRESHOLD = 48 * 60 * 60 * 1000; // 48 hours
 
   for (const obs of observations) {
     if (!obs.sender) continue;
-
-    // For DMs, key by the chat counterpart (chatJid), not the sender — so both
-    // incoming and outgoing messages map to the same thread.
-    const key = obs.isGroup ? `group:${obs.groupName || obs.senderJid}` : `dm:${obs.chatJid || obs.senderJid}`;
+    const key = conversationThreadKey(obs);
+    if (!key) continue;
     let thread = wm.conversationThreads.find(t => t.id === key);
 
     if (!thread) {
       thread = {
         id: key,
         participants: [obs.sender],
-        topic: obs.text.slice(0, 60),
+        topic: threadTopicFrom(obs) ?? "",
         lastMessageAt: obs.timestamp,
         messageCount: 0,
         status: "active",
       };
       wm.conversationThreads.push(thread);
+    } else if (!thread.topic) {
+      // A thread opened by a media stub picks up its topic from the first real text.
+      thread.topic = threadTopicFrom(obs) ?? "";
     }
 
     thread.lastMessageAt = obs.timestamp;

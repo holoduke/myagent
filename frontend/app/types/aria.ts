@@ -501,7 +501,7 @@ export interface AgentProfile {
 export interface ImproveQueueItem {
   id: string
   task: { type: string; description: string; rationale: string; files: string[]; createdAt: number }
-  status: 'pending' | 'approved' | 'rejected' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'approved' | 'rejected' | 'running' | 'merge-pending' | 'merge-failed' | 'completed' | 'failed'
   createdAt: number
   reviewedAt?: number
   completedAt?: number

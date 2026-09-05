@@ -6,6 +6,7 @@ import { safeReadJSON, atomicWriteJSON } from "./utils/file-store.js";
 import { askClaudeStreaming } from "./claude.js";
 import { getBrainConfig } from "./brain-config.js";
 import { MemoryGraph } from "./memory/graph.js";
+import { appendGraphOps } from "./memory/graph-inbox.js";
 import { buildImprovementPrompt } from "./self-improve-prompt.js";
 import type { ImprovementTask } from "./self-improve-prompt.js";
 import { normalizeIntentTokens, hashIntent } from "./utils/intent-hash.js";
@@ -90,21 +91,22 @@ function failureResult(description: string, metaNodeContent: string, wasRollback
   };
 }
 
-function addMetaNode(graph: MemoryGraph, content: string, tags: string[]): void {
+/**
+ * The worker is not the graph's owner: it queues the meta node in the graph
+ * inbox and the brain applies it at its next tick (a direct save here would be
+ * refused by the generation guard whenever the brain saved in between).
+ */
+function addMetaNode(_graph: MemoryGraph, content: string, tags: string[]): void {
   const id = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
-  graph.addNode({
+  appendGraphOps([{
+    op: "add_node",
     id,
     type: "meta",
     content,
     tags: ["self-improvement", ...tags],
     strength: 0.9,
-    pinned: false,
-    createdAt: Date.now(),
-    lastAccessedAt: Date.now(),
-    accessCount: 1,
-  });
-  graph.save();
-  log(`Added meta node: ${id}`);
+  }], "self-improve-worker");
+  log(`Queued meta node ${id} for the brain`);
 }
 
 // ── Improve Mode ──
