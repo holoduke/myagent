@@ -14,9 +14,11 @@
  * 4. Alerting when drift exceeds configurable thresholds
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from "fs";
 import type { MemoryGraph } from "./graph.js";
 import type { MemoryNode } from "./types.js";
+import { tokenJaccard, tagJaccard } from "./text-utils.js";
+import { appendRollingJsonl } from "../utils/file-store.js";
 import { createLogger } from "../logger.js";
 import { BRAIN_DIR } from "../config.js";
 
@@ -70,57 +72,6 @@ export interface DriftReport {
   missingNodes: string[];
   /** Nodes that are newly pinned since snapshot */
   newPinnedNodes: string[];
-}
-
-// ── Token Similarity ──
-
-/**
- * Jaccard similarity on token sets — simple but effective for detecting
- * content drift. Tokenizes on whitespace and punctuation.
- */
-function tokenJaccard(a: string, b: string): number {
-  if (a === b) return 1.0;
-  if (!a || !b) return 0.0;
-
-  const tokenize = (text: string): Set<string> =>
-    new Set(
-      text.toLowerCase()
-        .split(/[\s\-—,.:;!?()[\]"'`/\\]+/)
-        .filter(w => w.length >= 2)
-    );
-
-  const setA = tokenize(a);
-  const setB = tokenize(b);
-
-  if (setA.size === 0 && setB.size === 0) return 1.0;
-  if (setA.size === 0 || setB.size === 0) return 0.0;
-
-  let intersection = 0;
-  for (const token of setA) {
-    if (setB.has(token)) intersection++;
-  }
-
-  const union = setA.size + setB.size - intersection;
-  return union > 0 ? intersection / union : 0;
-}
-
-/**
- * Tag set Jaccard similarity.
- */
-function tagJaccard(a: string[], b: string[]): number {
-  const setA = new Set(a.map(t => t.toLowerCase()));
-  const setB = new Set(b.map(t => t.toLowerCase()));
-
-  if (setA.size === 0 && setB.size === 0) return 1.0;
-  if (setA.size === 0 || setB.size === 0) return 0.0;
-
-  let intersection = 0;
-  for (const tag of setA) {
-    if (setB.has(tag)) intersection++;
-  }
-
-  const union = setA.size + setB.size - intersection;
-  return union > 0 ? intersection / union : 0;
 }
 
 // ── Snapshot Management ──
@@ -409,19 +360,7 @@ function appendDriftLog(report: DriftReport): void {
         .map(d => ({ id: d.nodeId, type: d.nodeType, score: Math.round(d.driftScore * 1000) / 1000 })),
     };
 
-    const line = JSON.stringify(entry) + "\n";
-
-    // Append
-    appendFileSync(DRIFT_LOG_PATH, line, "utf-8");
-
-    // Rolling trim
-    if (existsSync(DRIFT_LOG_PATH)) {
-      const content = readFileSync(DRIFT_LOG_PATH, "utf-8");
-      const lines = content.trimEnd().split("\n");
-      if (lines.length > MAX_LOG_ENTRIES) {
-        writeFileSync(DRIFT_LOG_PATH, lines.slice(lines.length - MAX_LOG_ENTRIES).join("\n") + "\n");
-      }
-    }
+    appendRollingJsonl(DRIFT_LOG_PATH, entry, MAX_LOG_ENTRIES);
   } catch (err) {
     log(`Failed to write drift log: ${err}`);
   }

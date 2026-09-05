@@ -17,6 +17,8 @@ const EMBEDDINGS_FILE = `${GRAPH_DIR}/embeddings.json`;
 
 // In-memory cache of embeddings: nodeId → vector
 let embeddingCache: Map<string, number[]> | null = null;
+// Ids removed since the last save — so a merge-on-save doesn't resurrect them from disk
+const removedSinceSave = new Set<string>();
 
 function loadEmbeddings(): Map<string, number[]> {
   if (embeddingCache) return embeddingCache;
@@ -27,14 +29,24 @@ function loadEmbeddings(): Map<string, number[]> {
   return embeddingCache;
 }
 
+/**
+ * Merge-on-save: several processes embed nodes (brain, chat provider, workers),
+ * so a plain overwrite would drop whatever another process wrote since we
+ * loaded. Re-read the file, overlay our cache, drop what we removed, write.
+ */
 function saveEmbeddings(): void {
   if (!embeddingCache) return;
   ensureDir(GRAPH_DIR);
-  const obj: Record<string, number[]> = {};
-  for (const [id, vec] of embeddingCache) {
-    obj[id] = vec;
+  const onDisk = safeReadJSON<Record<string, number[]>>(EMBEDDINGS_FILE, {});
+  const merged: Record<string, number[]> = {};
+  for (const [id, vec] of Object.entries(onDisk)) {
+    if (!removedSinceSave.has(id)) merged[id] = vec;
   }
-  atomicWriteJSON(EMBEDDINGS_FILE, obj, 0);
+  for (const [id, vec] of embeddingCache) {
+    merged[id] = vec;
+  }
+  atomicWriteJSON(EMBEDDINGS_FILE, merged, 0);
+  removedSinceSave.clear();
 }
 
 /**
@@ -86,8 +98,12 @@ const SAVE_DEBOUNCE_MS = 5000;
 function scheduleSave(): void {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
-    saveEmbeddings();
     saveTimer = null;
+    try {
+      saveEmbeddings();
+    } catch (err) {
+      log(`Debounced embedding save failed: ${err}`);
+    }
   }, SAVE_DEBOUNCE_MS);
   saveTimer.unref();
 }
@@ -266,6 +282,7 @@ export function getNodeEmbedding(nodeId: string): number[] | null {
 export function removeEmbedding(nodeId: string): void {
   const cache = loadEmbeddings();
   if (cache.delete(nodeId)) {
+    removedSinceSave.add(nodeId);
     scheduleSave();
   }
 }
@@ -278,12 +295,17 @@ export function getEmbeddingCount(): number {
 }
 
 /**
- * Force save (for shutdown hooks).
+ * Force save (shutdown hook, pre-consolidation flush). Never throws — a failed
+ * flush is logged; the debounced save will retry on the next embedding.
  */
 export function flushEmbeddings(): void {
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
-  saveEmbeddings();
+  try {
+    saveEmbeddings();
+  } catch (err) {
+    log(`Failed to flush embeddings: ${err}`);
+  }
 }

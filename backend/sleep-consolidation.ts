@@ -4,17 +4,28 @@
  *
  * Enhanced consolidation that runs during quiet hours:
  * - Detects contradicting facts and resolves them
- * - Deduplicates near-identical nodes
+ * - Deduplicates near-identical nodes (loser archived, never deleted)
  * - Promotes frequently-accessed episodic memories to semantic
- * - Merges overlapping emotion signals
  */
 
 import type { MemoryGraph } from "./memory/graph.js";
 import type { MemoryNode } from "./memory/types.js";
 import { createLogger } from "./logger.js";
 import { getNodeEmbedding, cosine } from "./memory/embeddings.js";
+import { tokenJaccard, tokenOverlap } from "./memory/text-utils.js";
 
 const log = createLogger("sleep-consolidation");
+
+// ── Thresholds ──
+
+/** Near-duplicate needs BOTH: semantic agreement and real wording overlap. */
+export const DUPLICATE_MIN_COSINE = 0.85;
+export const DUPLICATE_MIN_JACCARD = 0.5;
+/** A semantic near-miss only counts as a contradiction when the texts actually share vocabulary. */
+export const CONTRADICTION_MIN_COSINE = 0.6;
+export const CONTRADICTION_MIN_TOKEN_OVERLAP = 0.3;
+const SUPERSEDED_MIN_SIMILARITY = 0.4;
+const MAX_ACTIVE_FACTS = 100;
 
 // ── Types ──
 
@@ -35,107 +46,96 @@ export interface SleepConsolidationResult {
 
 // ── Conflict Detection ──
 
-/**
- * Simple token overlap similarity (Jaccard-like).
- */
-function tokenSimilarity(a: string, b: string): number {
-  const tokensA = new Set(a.toLowerCase().split(/\s+/).filter(t => t.length > 2));
-  const tokensB = new Set(b.toLowerCase().split(/\s+/).filter(t => t.length > 2));
-  if (tokensA.size === 0 || tokensB.size === 0) return 0;
+interface PairSimilarity {
+  cosine: number | null;
+  jaccard: number;
+  overlap: number;
+}
 
-  let intersection = 0;
-  for (const t of tokensA) {
-    if (tokensB.has(t)) intersection++;
+function similarityFor(a: MemoryNode, b: MemoryNode): PairSimilarity {
+  const embA = getNodeEmbedding(a.id);
+  const embB = getNodeEmbedding(b.id);
+  return {
+    cosine: embA && embB ? cosine(embA, embB) : null,
+    jaccard: tokenJaccard(a.content, b.content),
+    overlap: tokenOverlap(a.content, b.content),
+  };
+}
+
+function hasContradictsEdge(graph: MemoryGraph, a: MemoryNode, b: MemoryNode): boolean {
+  return graph.edgesFor(a.id).some(e => e.type === "contradicts" && (e.from === b.id || e.to === b.id));
+}
+
+function classifyPair(graph: MemoryGraph, a: MemoryNode, b: MemoryNode): ConflictPair | null {
+  const sim = similarityFor(a, b);
+
+  if (sim.cosine !== null && sim.cosine > DUPLICATE_MIN_COSINE && sim.jaccard >= DUPLICATE_MIN_JACCARD) {
+    return { nodeA: a, nodeB: b, conflictType: "near-duplicate", similarity: Math.min(sim.cosine, sim.jaccard) };
   }
-  return intersection / Math.max(tokensA.size, tokensB.size);
+  if (hasContradictsEdge(graph, a, b)) {
+    return { nodeA: a, nodeB: b, conflictType: "contradiction", similarity: sim.cosine ?? sim.jaccard };
+  }
+  // Semantic near-miss: same meaning, different wording — but the wording must
+  // still overlap, or "shares a tag + vaguely related" would weaken real memories.
+  if (sim.cosine !== null && sim.cosine > CONTRADICTION_MIN_COSINE && sim.overlap >= CONTRADICTION_MIN_TOKEN_OVERLAP) {
+    return { nodeA: a, nodeB: b, conflictType: "contradiction", similarity: sim.cosine };
+  }
+  const similarity = Math.max(sim.cosine ?? 0, sim.jaccard);
+  if (similarity > SUPERSEDED_MIN_SIMILARITY && a.validUntil && a.validUntil < Date.now()) {
+    return { nodeA: a, nodeB: b, conflictType: "superseded", similarity };
+  }
+  return null;
 }
 
 /**
- * Detect conflicting or near-duplicate facts in the graph.
+ * Detect conflicting or near-duplicate facts in the graph. Only pairs that
+ * share at least one tag are compared, bounded to the most recent facts.
  */
 export function detectConflicts(graph: MemoryGraph): ConflictPair[] {
-  const pairs: ConflictPair[] = [];
-  const factNodes = [...graph.findByType("fact"), ...graph.findByType("belief")];
-
-  // Only check recent/active nodes to bound computation
-  const active = factNodes
+  const active = [...graph.findByType("fact"), ...graph.findByType("belief")]
     .filter(n => n.strength > 0.1)
     .sort((a, b) => b.lastAccessedAt - a.lastAccessedAt)
-    .slice(0, 100);
+    .slice(0, MAX_ACTIVE_FACTS);
 
+  const pairs: ConflictPair[] = [];
   for (let i = 0; i < active.length; i++) {
     for (let j = i + 1; j < active.length; j++) {
       const a = active[i];
       const b = active[j];
-
-      // Must share at least one tag
-      const sharedTags = a.tags.filter(t => b.tags.includes(t));
-      if (sharedTags.length === 0) continue;
-
-      const tokenSim = tokenSimilarity(a.content, b.content);
-
-      // Semantic similarity via embeddings — catches conflicts that share meaning but not words
-      // e.g. "Gillis works at NewStory" vs "Gillis joined Company X"
-      let semanticSim = 0;
-      const embA = getNodeEmbedding(a.id);
-      const embB = getNodeEmbedding(b.id);
-      if (embA && embB) {
-        semanticSim = cosine(embA, embB);
-      }
-
-      // Combined similarity: use the higher of token or semantic similarity
-      const similarity = Math.max(tokenSim, semanticSim);
-
-      // Near-duplicate: very high similarity (token or semantic)
-      if (similarity > 0.7) {
-        pairs.push({
-          nodeA: a,
-          nodeB: b,
-          conflictType: "near-duplicate",
-          similarity,
-        });
-        continue;
-      }
-
-      // Contradiction: check for contradicting edges between them
-      const hasContradiction = graph.edgesFor(a.id)
-        .some(e => e.type === "contradicts" && (e.from === b.id || e.to === b.id));
-
-      if (hasContradiction) {
-        pairs.push({
-          nodeA: a,
-          nodeB: b,
-          conflictType: "contradiction",
-          similarity,
-        });
-        continue;
-      }
-
-      // Semantic near-miss: high embedding similarity with shared tags but low token overlap
-      // These are likely about the same topic with different wording — potential contradictions
-      if (semanticSim > 0.6 && tokenSim < 0.4 && sharedTags.length >= 1) {
-        pairs.push({
-          nodeA: a,
-          nodeB: b,
-          conflictType: "contradiction",
-          similarity: semanticSim,
-        });
-        continue;
-      }
-
-      // Superseded: same topic but one is much newer with validUntil set
-      if (similarity > 0.4 && a.validUntil && a.validUntil < Date.now()) {
-        pairs.push({
-          nodeA: a,
-          nodeB: b,
-          conflictType: "superseded",
-          similarity,
-        });
-      }
+      if (!a.tags.some(t => b.tags.includes(t))) continue;
+      const pair = classifyPair(graph, a, b);
+      if (pair) pairs.push(pair);
     }
   }
-
   return pairs;
+}
+
+// ── Resolution ──
+
+/**
+ * Fold `loser` into `keeper`: union tags, note the merged content on the
+ * keeper, rewire the loser's edges, then archive the loser (its content stays
+ * recoverable in cold storage).
+ */
+function mergeDuplicate(graph: MemoryGraph, keeper: MemoryNode, loser: MemoryNode): boolean {
+  if (!graph.getNode(keeper.id) || !graph.getNode(loser.id)) return false;
+  if (loser.pinned) return false;
+
+  const mergeNote = `\n[merged ${new Date().toISOString().slice(0, 10)} from ${loser.id}: ${loser.content.slice(0, 300)}]`;
+  graph.updateNode(keeper.id, {
+    content: keeper.content + mergeNote,
+    tags: [...new Set([...keeper.tags, ...loser.tags])],
+  });
+
+  const now = Date.now();
+  for (const edge of graph.edgesFor(loser.id)) {
+    const from = edge.from === loser.id ? keeper.id : edge.from;
+    const to = edge.to === loser.id ? keeper.id : edge.to;
+    if (from === to) continue;
+    graph.addEdge({ ...edge, from, to, lastReinforcedAt: now });
+  }
+
+  return graph.archiveNode(loser.id, "consolidation");
 }
 
 /**
@@ -147,43 +147,19 @@ export function resolveConflicts(graph: MemoryGraph, pairs: ConflictPair[]): num
   for (const pair of pairs) {
     switch (pair.conflictType) {
       case "near-duplicate": {
-        // Keep the stronger/newer node, merge content
         const [keep, remove] = pair.nodeA.strength >= pair.nodeB.strength
           ? [pair.nodeA, pair.nodeB]
           : [pair.nodeB, pair.nodeA];
-
-        graph.applyOperations([{
-          op: "merge_nodes",
-          ids: [keep.id, remove.id],
-          into: {
-            content: keep.content,
-            tags: [...new Set([...keep.tags, ...remove.tags])],
-          },
-        }]);
-        resolved++;
+        if (mergeDuplicate(graph, keep, remove)) resolved++;
         break;
       }
-
       case "contradiction": {
-        // Weaken the older/weaker one
         const weaker = pair.nodeA.strength <= pair.nodeB.strength ? pair.nodeA : pair.nodeB;
-        graph.applyOperations([{
-          op: "weaken",
-          id: weaker.id,
-          amount: 0.2,
-        }]);
-        resolved++;
+        if (graph.applyOperations([{ op: "weaken", id: weaker.id, amount: 0.2 }]).applied > 0) resolved++;
         break;
       }
-
       case "superseded": {
-        // Accelerate decay of superseded fact
-        graph.applyOperations([{
-          op: "weaken",
-          id: pair.nodeA.id,
-          amount: 0.3,
-        }]);
-        resolved++;
+        if (graph.applyOperations([{ op: "weaken", id: pair.nodeA.id, amount: 0.3 }]).applied > 0) resolved++;
         break;
       }
     }
@@ -192,7 +168,6 @@ export function resolveConflicts(graph: MemoryGraph, pairs: ConflictPair[]): num
   if (resolved > 0) {
     log(`Resolved ${resolved}/${pairs.length} conflicts`);
   }
-
   return resolved;
 }
 
@@ -204,7 +179,6 @@ export function promoteEpisodicToSemantic(graph: MemoryGraph): number {
   const ACCESS_THRESHOLD = 10;
   const AGE_THRESHOLD = 7 * 24 * 3600_000; // 7 days old
   const now = Date.now();
-  let promoted = 0;
 
   const eventNodes = graph.findByType("event")
     .filter(n =>
@@ -215,21 +189,17 @@ export function promoteEpisodicToSemantic(graph: MemoryGraph): number {
     );
 
   for (const node of eventNodes) {
-    // Add tag and boost strength/importance via updateNode (avoids direct mutation)
     graph.updateNode(node.id, {
       tags: [...node.tags, "promoted-to-semantic"],
       strength: Math.min(1, node.strength + 0.1),
       importance: Math.max(node.importance ?? 0, 0.4),
     });
-
-    promoted++;
   }
 
-  if (promoted > 0) {
-    log(`Promoted ${promoted} episodic memories to semantic`);
+  if (eventNodes.length > 0) {
+    log(`Promoted ${eventNodes.length} episodic memories to semantic`);
   }
-
-  return promoted;
+  return eventNodes.length;
 }
 
 /**
@@ -248,6 +218,5 @@ export function runSleepConsolidation(graph: MemoryGraph): SleepConsolidationRes
   };
 
   log(`Sleep consolidation: ${result.conflictsDetected} conflicts, ${result.conflictsResolved} resolved, ${result.promotedToSemantic} promoted`);
-
   return result;
 }

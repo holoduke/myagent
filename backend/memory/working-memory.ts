@@ -1,6 +1,7 @@
 import { randomBytes } from "crypto";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "../utils/file-store.js";
 import type { WorkingMemory, PendingFollowUp, ConversationThread, TemporalContext, TemporalSummaries } from "./types.js";
+import { MAX_PENDING_FOLLOWUPS } from "./types.js";
 import type { Observation } from "../observer.js";
 import { getBrainConfig, getOwnerLocalTime, getOwnerLocalDate } from "../brain-config.js";
 import { extractKeywordsFromText } from "./activation.js";
@@ -79,6 +80,39 @@ function newFollowUpId(): string {
   return `fu_${randomBytes(4).toString("hex")}`;
 }
 
+const normalizeQuestion = (q: string): string => q.trim().toLowerCase().replace(/\s+/g, " ");
+
+/**
+ * Merge follow-ups the brain returned into the existing list. The LLM tends to
+ * echo only the items it is thinking about, so omitted items are kept; an item
+ * is only dropped when it comes back with `resolved: true`. Incoming items
+ * match existing ones by id, or by identical question text when the brain
+ * re-emitted one without its id. Capped at MAX_PENDING_FOLLOWUPS (oldest go).
+ */
+export function mergePendingFollowUps(existing: PendingFollowUp[], incoming: PendingFollowUp[]): PendingFollowUp[] {
+  const byId = new Map(existing.map(fu => [fu.id, fu]));
+  const idByQuestion = new Map(existing.map(fu => [normalizeQuestion(fu.question), fu.id]));
+
+  for (const item of incoming) {
+    const matchId = byId.has(item.id) ? item.id : idByQuestion.get(normalizeQuestion(item.question));
+    if (item.resolved) {
+      if (matchId) byId.delete(matchId);
+      continue;
+    }
+    const current = matchId ? byId.get(matchId) : undefined;
+    const merged: PendingFollowUp = current
+      ? { ...current, ...item, id: current.id, createdAt: current.createdAt }
+      : item;
+    byId.set(merged.id, merged);
+    idByQuestion.set(normalizeQuestion(merged.question), merged.id);
+  }
+
+  const all = [...byId.values()];
+  if (all.length <= MAX_PENDING_FOLLOWUPS) return all;
+  log(`Follow-ups capped: dropping ${all.length - MAX_PENDING_FOLLOWUPS} oldest of ${all.length}`);
+  return [...all].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_PENDING_FOLLOWUPS);
+}
+
 export function saveWorkingMemory(wm: WorkingMemory): void {
   try {
     ensureDir(BRAIN_DIR);
@@ -103,7 +137,12 @@ export function updateWorkingMemory(
   if (updates.mood !== undefined) wm.mood = updates.mood;
   if (updates.shortTermTracking !== undefined) wm.shortTermTracking = updates.shortTermTracking;
   if (updates.activatedNodeIds !== undefined) wm.activatedNodeIds = updates.activatedNodeIds;
-  if (updates.pendingFollowUps !== undefined) wm.pendingFollowUps = normalizePendingFollowUps(updates.pendingFollowUps);
+  if (updates.pendingFollowUps !== undefined) {
+    wm.pendingFollowUps = mergePendingFollowUps(
+      normalizePendingFollowUps(wm.pendingFollowUps),
+      normalizePendingFollowUps(updates.pendingFollowUps),
+    );
+  }
   if (updates.conversationThreads !== undefined) wm.conversationThreads = updates.conversationThreads;
   wm.lastUpdated = Date.now();
   return wm;
@@ -273,14 +312,16 @@ export function updateConversationThreads(wm: WorkingMemory, observations: Obser
     }
   }
 
-  // Keep max 20 threads, dropping oldest closed ones first
+  // Keep max 20 threads, dropping closed ones first, then the oldest
   if (wm.conversationThreads.length > 20) {
-    wm.conversationThreads.sort((a, b) => {
-      if (a.status === "closed" && b.status !== "closed") return 1;
-      return b.lastMessageAt - a.lastMessageAt;
-    });
-    wm.conversationThreads = wm.conversationThreads.slice(0, 20);
+    wm.conversationThreads = [...wm.conversationThreads].sort(compareThreadsForRetention).slice(0, 20);
   }
+}
+
+/** Open threads before closed ones, newest first within each group. Antisymmetric, so sort() is stable and correct. */
+export function compareThreadsForRetention(a: ConversationThread, b: ConversationThread): number {
+  const rank = (t: ConversationThread): number => (t.status === "closed" ? 1 : 0);
+  return (rank(a) - rank(b)) || (b.lastMessageAt - a.lastMessageAt);
 }
 
 // ── Hierarchical Temporal Summaries ──

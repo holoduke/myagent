@@ -1,12 +1,16 @@
-import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, openSync, readSync, fstatSync, closeSync } from "fs";
-import { dirname } from "path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, openSync, readSync, fstatSync, closeSync } from "fs";
 import type { MemoryGraph } from "./graph.js";
 import type { MemoryNode, WorkingMemory } from "./types.js";
-import { extractKeywordsFromText, spreadingActivation } from "./activation.js";
+import { ARCHIVE_RECALL_STRENGTH_FLOOR } from "./types.js";
+import { spreadingActivation } from "./activation.js";
+import { extractKeywordsFromText, tokenJaccard } from "./text-utils.js";
 import { getBrainConfig } from "../brain-config.js";
 import { createLogger } from "../logger.js";
 import { inferContentSalience } from "./retention.js";
+import { appendRollingJsonl } from "../utils/file-store.js";
 import { BRAIN_DIR } from "../config.js";
+
+export { tokenJaccard };
 
 const log = createLogger("decay");
 
@@ -128,7 +132,9 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
     // Dimension 6: Frequency — access count reflects historical relevance
     const frequency = Math.min(1, (archived.accessCount ?? 0) / 10);
 
-    // Weighted composite: relevance is king, but diversity matters
+    // Weighted composite: relevance is king, but diversity matters.
+    // Strength is floored: decay-archived nodes sit near 0.05 and would
+    // otherwise never clear the threshold no matter how relevant they are.
     const score = (
       relevance * 0.30 +
       importance * 0.20 +
@@ -136,7 +142,7 @@ export function rescanArchive(graph: MemoryGraph, wm: WorkingMemory): number {
       recency * 0.15 +
       uniqueness * 0.10 +
       frequency * 0.15
-    ) * archived.strength;
+    ) * Math.max(archived.strength, ARCHIVE_RECALL_STRENGTH_FLOOR);
 
     if (score >= RESCAN_ACTIVATION_THRESHOLD) {
       candidates.push({
@@ -744,27 +750,6 @@ export interface FidelityLogEntry {
 }
 
 /**
- * Compute Jaccard similarity between two strings based on word tokens.
- * Returns 0.0–1.0 where 1.0 = identical token sets.
- */
-export function tokenJaccard(a: string, b: string): number {
-  const tokenize = (s: string) => new Set(
-    s.toLowerCase().split(/[\s\-—,.:;!?()[\]"'`/\\]+/).filter(w => w.length >= 2)
-  );
-  const setA = tokenize(a);
-  const setB = tokenize(b);
-  if (setA.size === 0 && setB.size === 0) return 1; // both empty = identical
-  if (setA.size === 0 || setB.size === 0) return 0;
-
-  let intersection = 0;
-  for (const token of setA) {
-    if (setB.has(token)) intersection++;
-  }
-  const union = setA.size + setB.size - intersection;
-  return union > 0 ? intersection / union : 0;
-}
-
-/**
  * Validate reconstruction fidelity for all nodes that have been restored
  * from archive or logs. Compares current state against the original
  * archived content snapshot to detect drift or loss.
@@ -832,20 +817,7 @@ export function validateReconstructionFidelity(graph: MemoryGraph): FidelityResu
 
 export function appendFidelityLog(entry: FidelityLogEntry): void {
   try {
-    const dir = dirname(FIDELITY_LOG_PATH);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-    appendFileSync(FIDELITY_LOG_PATH, JSON.stringify(entry) + "\n");
-
-    // Rolling cap
-    if (existsSync(FIDELITY_LOG_PATH)) {
-      const content = readFileSync(FIDELITY_LOG_PATH, "utf-8");
-      const lines = content.trimEnd().split("\n");
-      if (lines.length > FIDELITY_LOG_MAX_ENTRIES) {
-        const trimmed = lines.slice(lines.length - FIDELITY_LOG_MAX_ENTRIES);
-        writeFileSync(FIDELITY_LOG_PATH, trimmed.join("\n") + "\n");
-      }
-    }
+    appendRollingJsonl(FIDELITY_LOG_PATH, entry, FIDELITY_LOG_MAX_ENTRIES);
   } catch (err) {
     log(`Failed to write fidelity log: ${err}`);
   }
