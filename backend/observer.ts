@@ -1,4 +1,7 @@
-import { appendFileSync, readFileSync, existsSync, openSync, fstatSync, readSync, closeSync } from "fs";
+import {
+  appendFileSync, readFileSync, existsSync, openSync, fstatSync, readSync, closeSync,
+  writeSync, writeFileSync, renameSync, statSync, unlinkSync,
+} from "fs";
 import { ensureDir, atomicWriteFile, safeReadJSON } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
 import { BrainError } from "./brain-errors.js";
@@ -11,6 +14,7 @@ import { processObservation as trackActionable } from "./actionable-tracker.js";
 import type { PromptDetectionResult } from "./prompt-detector.js";
 import type { IntentClassification } from "./intent-classifier.js";
 import { evaluateMessage } from "./message-evaluator.js";
+import type { EvaluationResult } from "./message-evaluator.js";
 import { dispatchReply } from "./reply-agent.js";
 import { runMessageHandlers } from "./message-handlers.js";
 import { BRAIN_DIR } from "./config.js";
@@ -35,12 +39,11 @@ function sanitizeImageCaption(text: string): string {
 
 
 const OBS_FILE = `${BRAIN_DIR}/observations.jsonl`;
+const ENRICHMENT_FILE = `${BRAIN_DIR}/observation-enrichment.jsonl`;
+const PRUNE_LOCK_FILE = `${BRAIN_DIR}/observations.prune.lock`;
 const RETENTION_DAYS = Number(process.env.BRAIN_OBSERVATION_DAYS ?? 7);
-
-// Guard against concurrent append + prune on the observations file.
-// When pruneObservations() is active, appends are buffered and flushed after prune completes.
-let pruneInProgress = false;
-let appendBuffer: string[] = [];
+/** A prune lock older than this belongs to a crashed instance and may be cleared. */
+const PRUNE_LOCK_STALE_MS = 10 * 60 * 1000;
 
 export interface EmailMeta {
   from: string;
@@ -131,6 +134,29 @@ export interface ObservationFilter {
   textContains?: string;
 }
 
+/**
+ * Compact record appended once the async evaluation of an observation
+ * finishes. The observation line itself is already persisted by then, so the
+ * evaluation outcome lives in a sidecar log keyed by the observation key.
+ */
+export interface ObservationEnrichment {
+  /** When the enrichment was written */
+  t: number;
+  /** Observation key (see getObservationKey) */
+  key: string;
+  /** Observation timestamp */
+  ts: number;
+  senderJid: string;
+  intent: IntentClassification["intent"];
+  confidence: number;
+  method: IntentClassification["method"];
+  /** Number of actionable signals (regex + LLM) */
+  signals: number;
+  usedLLM: boolean;
+  /** Whether the evaluator decided to reply */
+  reply: boolean;
+}
+
 export function ensureBrainDir(): void {
   if (!existsSync(BRAIN_DIR)) {
     ensureDir(BRAIN_DIR);
@@ -138,18 +164,22 @@ export function ensureBrainDir(): void {
   }
 }
 
+// ── Dedup persistence ──
+
 const DEDUP_FILE = `${BRAIN_DIR}/observer-dedup.json`;
 const DEDUP_SAVE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-
-const recentObservationKeys = new Set<string>();
+/** Also flush the dedup set after this many inserts — restarts happen several times a day. */
+const DEDUP_SAVE_EVERY_INSERTS = 20;
 const MAX_DEDUP_ENTRIES = 500;
 
-// --- Dedup persistence ---
+const recentObservationKeys = new Set<string>();
+let insertsSinceSave = 0;
 
 export function saveDedupSet(): void {
   try {
     ensureBrainDir();
     atomicWriteFile(DEDUP_FILE, JSON.stringify([...recentObservationKeys]));
+    insertsSinceSave = 0;
     log(`Saved dedup set (${recentObservationKeys.size} entries)`);
   } catch (err) {
     log(`Failed to save dedup set: ${err}`);
@@ -185,24 +215,25 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) {
   });
 }
 
-function getObservationKey(obs: Observation): string {
+/**
+ * Stable identity of an observation for dedup. Prefers channel-native ids
+ * (email Message-ID, calendar event id, Slack ts, WhatsApp message id) and
+ * falls back to sender + timestamp + text prefix.
+ */
+export function getObservationKey(obs: Observation): string {
   if (obs.emailMeta?.messageId) return `email:${obs.emailMeta.messageId}`;
   if (obs.calendarMeta?.eventId) return `cal:${obs.calendarMeta.eventId}`;
   if (obs.slackMeta?.messageTs) return `slack:${obs.slackMeta.workspaceId}:${obs.slackMeta.channelId}:${obs.slackMeta.messageTs}`;
-  // For WhatsApp/other: hash by sender + timestamp + first 80 chars
-  return `${obs.source || "wa"}:${obs.senderJid}:${obs.timestamp}:${obs.text.slice(0, 80)}`;
+  const source = obs.source || "wa";
+  if ((source === "wa" || source === "whatsapp") && obs.messageId) {
+    return `wa:${obs.chatJid || obs.senderJid}:${obs.messageId}`;
+  }
+  return `${source}:${obs.senderJid}:${obs.timestamp}:${obs.text.slice(0, 80)}`;
 }
 
-export function recordObservation(obs: Observation): void {
-  // Defense in depth: strip vision-LLM refusal text masquerading as a caption
-  // before it lands in the observations file or downstream pipelines.
-  if (obs.text) {
-    obs.text = sanitizeImageCaption(obs.text);
-  }
-
-  const key = getObservationKey(obs);
-  if (recentObservationKeys.has(key)) return; // deduplicated
-
+/** Returns false when the key was already seen; otherwise records it. */
+function trackObservationKey(key: string): boolean {
+  if (recentObservationKeys.has(key)) return false;
   recentObservationKeys.add(key);
   // Prevent unbounded growth of dedup set — keep newest entries
   if (recentObservationKeys.size > MAX_DEDUP_ENTRIES) {
@@ -210,33 +241,43 @@ export function recordObservation(obs: Observation): void {
     recentObservationKeys.clear();
     for (const e of keep) recentObservationKeys.add(e);
   }
+  insertsSinceSave += 1;
+  if (insertsSinceSave >= DEDUP_SAVE_EVERY_INSERTS) saveDedupSet();
+  return true;
+}
 
-  // Classify trust level at intake
-  if (!obs.trustLevel) {
-    obs.trustLevel = classifyTrust(obs);
-  }
+// ── Intake enrichment (synchronous, before persistence) ──
 
-  // Track contact frequency for anomaly detection (Phase 5b)
+function trackContactFrequency(obs: Observation): void {
   // Skip non-person sources — feed items and store events aren't contacts.
-  if (!obs.isFromMe && obs.senderJid && obs.source !== "calendar" && obs.source !== "rss" && obs.source !== "playstore") {
-    updateFrequency(obs.senderJid, obs.sender, obs.timestamp);
-    // Group activity also bumps the group chat's own baseline (keyed on the
-    // @g.us JID): a group's "silence" is measured across all participants, so
-    // only counting individual sender JIDs leaves group entries falsely quiet.
-    const groupJid = obs.isGroup
-      ? (obs.chatJid ?? (obs.senderJid.endsWith("@g.us") ? obs.senderJid : undefined))
-      : undefined;
-    if (groupJid && groupJid !== obs.senderJid) {
-      updateFrequency(groupJid, obs.groupName || obs.chatName || groupJid.split("@")[0], obs.timestamp);
-    }
+  if (obs.isFromMe || !obs.senderJid || obs.source === "calendar" || obs.source === "rss" || obs.source === "playstore") return;
+  updateFrequency(obs.senderJid, obs.sender, obs.timestamp);
+  // Group activity also bumps the group chat's own baseline (keyed on the
+  // @g.us JID): a group's "silence" is measured across all participants, so
+  // only counting individual sender JIDs leaves group entries falsely quiet.
+  const groupJid = obs.isGroup
+    ? (obs.chatJid ?? (obs.senderJid.endsWith("@g.us") ? obs.senderJid : undefined))
+    : undefined;
+  if (groupJid && groupJid !== obs.senderJid) {
+    updateFrequency(groupJid, obs.groupName || obs.chatName || groupJid.split("@")[0], obs.timestamp);
   }
+}
 
-  // Detect injection attempts in untrusted content
+/**
+ * Cheap, synchronous enrichment that must be on the persisted line: trust
+ * level, commitments in outgoing text and the urgency score. Mutates `obs`
+ * because integrations read these fields back after recording.
+ */
+function enrichAtIntake(obs: Observation): void {
+  if (obs.text) obs.text = sanitizeImageCaption(obs.text);
+  if (!obs.trustLevel) obs.trustLevel = classifyTrust(obs);
+
+  trackContactFrequency(obs);
+
+  // Detect injection attempts in untrusted content (detection logging lives here only)
   if (obs.trustLevel === "untrusted") {
     const detection = detectInjection(obs.text);
-    if (detection.detected) {
-      logInjectionAttempt(obs, detection);
-    }
+    if (detection.detected) logInjectionAttempt(obs, detection);
   }
 
   // Scan outgoing messages for commitments
@@ -248,71 +289,15 @@ export function recordObservation(obs: Observation): void {
     }
   }
 
-  // ── Unified message evaluation (single pipeline for intent + actionable + reply) ──
-  // Home Assistant digests are machine summaries, not conversation: no intent/reply evaluation.
-  if (!obs.isFromMe && obs.text && obs.source !== "homeassistant") {
-    evaluateMessage(obs).then(result => {
-      // Enrich observation with intent
-      obs.intentClassification = result.intent;
-      log(`Evaluated ${obs.sender}: ${result.intent.intent} (${result.intent.confidence.toFixed(2)}, ${result.intent.method})${result.usedLLM ? " [LLM]" : ""}`);
+  // Score urgency synchronously so the persisted line carries it; also
+  // triggers an immediate brain tick for eligible high-urgency messages.
+  scoreAndMaybeInterrupt(obs);
+}
 
-      // Merge actionable signals: regex (already found) + LLM-detected
-      const allSignals = [...result.regexSignals, ...result.llmSignals];
-      if (allSignals.length > 0 && !obs.actionableSignals?.length) {
-        obs.actionableSignals = allSignals;
-
-        // Build prompt detection result from LLM events/requests
-        if (result.detectedEvents.length > 0 || result.detectedRequests.length > 0) {
-          obs.promptDetectionResult = {
-            events: result.detectedEvents,
-            requests: result.detectedRequests,
-          };
-        }
-
-        log(`Actionable: ${allSignals.length} signal(s) from ${obs.sender}`);
-        trackActionable(obs);
-      } else if (result.regexSignals.length > 0 && !obs.actionableSignals?.length) {
-        // Regex-only signals (when LLM wasn't called)
-        obs.actionableSignals = result.regexSignals;
-        log(`Actionable (regex): ${result.regexSignals.length} signal(s) from ${obs.sender}`);
-        trackActionable(obs);
-      }
-
-      // Dispatch reply if needed
-      if (result.reply) {
-        if (result.reply.shouldReply && result.reply.reply) {
-          dispatchReply(obs, result.reply, result.replyDirectiveId || "unknown").catch(err => {
-            log(`Reply dispatch error for ${obs.sender}: ${err}`);
-          });
-        } else {
-          log(`Reply skipped for ${obs.sender}: shouldReply=${result.reply.shouldReply}, hasText=${!!result.reply.reply}, reason=${result.reply.reason}`);
-        }
-      }
-    }).catch(err => {
-      log(`Evaluation error for ${obs.sender}: ${err}`);
-      // Flag observation as unevaluated so downstream consumers know intent is missing
-      obs.intentClassification = { intent: "noise", confidence: 0, method: "heuristic", reason: `evaluation_failed: ${err}` };
-    });
-  }
-
-  // ── User-defined message handlers (independent pipeline) ──
-  runMessageHandlers(obs).catch(err => {
-    log(`Message handler error for ${obs.sender} [${obs.source || "whatsapp"}]: ${err}`);
-  });
-
+function persistObservation(obs: Observation): void {
   try {
     ensureBrainDir();
-    const line = JSON.stringify(obs) + "\n";
-
-    if (pruneInProgress) {
-      // Buffer appends while prune is rewriting the file
-      appendBuffer.push(line);
-    } else {
-      appendFileSync(OBS_FILE, line);
-    }
-
-    // Score urgency eagerly and trigger an immediate brain tick if critical
-    scoreAndMaybeInterrupt(obs);
+    appendFileSync(OBS_FILE, JSON.stringify(obs) + "\n");
   } catch (err) {
     throw new BrainError(`Failed to record observation: ${err}`, {
       phase: "observer",
@@ -321,6 +306,102 @@ export function recordObservation(obs: Observation): void {
     }, err);
   }
 }
+
+// ── Async evaluation (after persistence) ──
+
+function appendEnrichment(record: ObservationEnrichment): void {
+  try {
+    ensureBrainDir();
+    appendFileSync(ENRICHMENT_FILE, JSON.stringify(record) + "\n");
+  } catch (err) {
+    log(`Failed to append observation enrichment: ${err}`);
+  }
+}
+
+function applyActionableSignals(obs: Observation, result: EvaluationResult): void {
+  if (obs.actionableSignals?.length) return;
+  const allSignals = [...result.regexSignals, ...result.llmSignals];
+  if (allSignals.length === 0) return;
+
+  obs.actionableSignals = allSignals;
+  if (result.detectedEvents.length > 0 || result.detectedRequests.length > 0) {
+    obs.promptDetectionResult = {
+      events: result.detectedEvents,
+      requests: result.detectedRequests,
+    };
+  }
+  log(`Actionable${result.llmSignals.length === 0 ? " (regex)" : ""}: ${allSignals.length} signal(s) from ${obs.sender}`);
+  trackActionable(obs);
+}
+
+function handleEvaluation(obs: Observation, key: string, result: EvaluationResult): void {
+  obs.intentClassification = result.intent;
+  log(`Evaluated ${obs.sender}: ${result.intent.intent} (${result.intent.confidence.toFixed(2)}, ${result.intent.method})${result.usedLLM ? " [LLM]" : ""}`);
+
+  applyActionableSignals(obs, result);
+
+  const willReply = !!(result.reply?.shouldReply && result.reply.reply);
+  appendEnrichment({
+    t: Date.now(),
+    key,
+    ts: obs.timestamp,
+    senderJid: obs.senderJid,
+    intent: result.intent.intent,
+    confidence: result.intent.confidence,
+    method: result.intent.method,
+    signals: result.regexSignals.length + result.llmSignals.length,
+    usedLLM: result.usedLLM,
+    reply: willReply,
+  });
+
+  if (!result.reply) return;
+  if (willReply) {
+    dispatchReply(obs, result.reply, result.replyDirectiveId || "unknown").catch(err => {
+      log(`Reply dispatch error for ${obs.sender}: ${err}`);
+    });
+  } else {
+    log(`Reply skipped for ${obs.sender}: shouldReply=${result.reply.shouldReply}, hasText=${!!result.reply.reply}, reason=${result.reply.reason}`);
+  }
+}
+
+function startAsyncPipelines(obs: Observation, key: string): void {
+  // ── Unified message evaluation (single pipeline for intent + actionable + reply) ──
+  // Home Assistant digests are machine summaries, not conversation: no intent/reply evaluation.
+  if (!obs.isFromMe && obs.text && obs.source !== "homeassistant") {
+    evaluateMessage(obs)
+      .then(result => handleEvaluation(obs, key, result))
+      .catch(err => {
+        // The observation line is already persisted; nothing to flag on it.
+        log(`Evaluation error for ${obs.sender}: ${err}`);
+      });
+  }
+
+  // ── User-defined message handlers (independent pipeline) ──
+  runMessageHandlers(obs).catch(err => {
+    log(`Message handler error for ${obs.sender} [${obs.source || "whatsapp"}]: ${err}`);
+  });
+}
+
+/**
+ * Record an inbound/outbound observation.
+ *
+ * Order matters: dedup → synchronous enrichment (trust, frequency, urgency)
+ * → append to observations.jsonl → async evaluation/handlers. The persisted
+ * line therefore carries the urgency score; evaluation results are appended
+ * separately to observation-enrichment.jsonl when they arrive.
+ */
+export function recordObservation(obs: Observation): void {
+  if (obs.text) obs.text = sanitizeImageCaption(obs.text);
+
+  const key = getObservationKey(obs);
+  if (!trackObservationKey(key)) return; // deduplicated
+
+  enrichAtIntake(obs);
+  persistObservation(obs);
+  startAsyncPipelines(obs, key);
+}
+
+// ── Reading ──
 
 /** Size of chunks read from the tail of the file (256 KB). */
 const TAIL_CHUNK_SIZE = 256 * 1024;
@@ -406,22 +487,26 @@ export function getObservationsSince(since: number, filter?: ObservationFilter, 
 }
 
 /**
- * Tail-optimised reader: reads chunks from the end of the file, collects
- * matching observations, and stops as soon as it encounters a line older
- * than `since` (since the file is chronologically ordered).
+ * Tail-optimised reader: reads chunks from the end of the file and collects
+ * matching observations. Stops once an ENTIRE chunk is older than `since`.
+ * A single older line is not a stop signal: clock skew and out-of-order
+ * appends (two instances, delayed integrations) interleave older lines with
+ * newer ones, and stopping on the first one would silently drop the rest.
  */
 function getObservationsSinceTail(since: number, filter?: ObservationFilter, limit?: number): Observation[] {
   const results: Observation[] = [];
 
   for (const chunkLines of readTailChunks(OBS_FILE)) {
     const chunkResults: Observation[] = [];
-    let foundOlder = false;
+    let parsed = 0;
+    let older = 0;
     for (const line of chunkLines) {
       if (!line.trim()) continue;
       try {
         const obs = JSON.parse(line) as Observation;
+        parsed++;
         if (obs.timestamp <= since) {
-          foundOlder = true;
+          older++;
           continue;
         }
         if (filter && !matchesFilter(obs, filter)) continue;
@@ -436,8 +521,7 @@ function getObservationsSinceTail(since: number, filter?: ObservationFilter, lim
       results.unshift(...chunkResults);
     }
 
-    // If this chunk contained any line older than `since`, we've read far enough
-    if (foundOlder) break;
+    if (parsed > 0 && older === parsed) break;
   }
 
   // Sort by timestamp to ensure correct order even with clock skew
@@ -450,6 +534,43 @@ function getObservationsSinceTail(since: number, filter?: ObservationFilter, lim
   return results;
 }
 
+const TS_REGEX = /"timestamp"\s*:\s*(\d+(?:\.\d+)?)/;
+
+function countRecentTail(since: number): number {
+  let count = 0;
+  for (const chunkLines of readTailChunks(OBS_FILE)) {
+    let parsed = 0;
+    let older = 0;
+    for (const line of chunkLines) {
+      if (!line.trim()) continue;
+      const m = TS_REGEX.exec(line);
+      if (!m) continue;
+      parsed++;
+      if (Number(m[1]) <= since) { older++; continue; }
+      count++;
+    }
+    if (parsed > 0 && older === parsed) break;
+  }
+  return count;
+}
+
+function countFullScan(since: number): number {
+  const raw = readFileSync(OBS_FILE, "utf-8");
+  let count = 0;
+  let start = 0;
+  while (start < raw.length) {
+    let end = raw.indexOf("\n", start);
+    if (end === -1) end = raw.length;
+    const line = raw.substring(start, end);
+    start = end + 1;
+    if (!line.trim()) continue;
+    const m = TS_REGEX.exec(line);
+    if (!m) continue;
+    if (Number(m[1]) > since) count++;
+  }
+  return count;
+}
+
 /**
  * Lightweight count of observations since a timestamp.
  * Extracts only the "timestamp" field via regex, avoiding full JSON.parse
@@ -458,42 +579,8 @@ function getObservationsSinceTail(since: number, filter?: ObservationFilter, lim
 export function getObservationCountSince(since: number): number {
   try {
     if (!existsSync(OBS_FILE)) return 0;
-
     const isRecent = (Date.now() - since) < TAIL_READ_WINDOW_MS;
-    const tsRegex = /"timestamp"\s*:\s*(\d+(?:\.\d+)?)/;
-
-    if (isRecent) {
-      let count = 0;
-      for (const chunkLines of readTailChunks(OBS_FILE)) {
-        let foundOlder = false;
-        for (const line of chunkLines) {
-          if (!line.trim()) continue;
-          const m = tsRegex.exec(line);
-          if (!m) continue;
-          const ts = Number(m[1]);
-          if (ts <= since) { foundOlder = true; continue; }
-          count++;
-        }
-        if (foundOlder) break;
-      }
-      return count;
-    }
-
-    // Full-file scan for older queries
-    const raw = readFileSync(OBS_FILE, "utf-8");
-    let count = 0;
-    let start = 0;
-    while (start < raw.length) {
-      let end = raw.indexOf("\n", start);
-      if (end === -1) end = raw.length;
-      const line = raw.substring(start, end);
-      start = end + 1;
-      if (!line.trim()) continue;
-      const m = tsRegex.exec(line);
-      if (!m) continue;
-      if (Number(m[1]) > since) count++;
-    }
-    return count;
+    return isRecent ? countRecentTail(since) : countFullScan(since);
   } catch (err) {
     throw new BrainError(`Failed to count observations: ${err}`, {
       phase: "observer",
@@ -507,42 +594,133 @@ export function getObservationCount(since: number): number {
   return getObservationCountSince(since);
 }
 
-export function pruneObservations(days?: number): void {
-  const cutoff = Date.now() - (days ?? RETENTION_DAYS) * 86400000;
+// ── Pruning ──
 
-  // Activate prune lock -- appends will be buffered until prune completes
-  pruneInProgress = true;
-  appendBuffer = [];
+function tryCreatePruneLock(): boolean {
+  try {
+    const fd = openSync(PRUNE_LOCK_FILE, "wx"); // O_CREAT | O_EXCL — fails if another instance holds it
+    try {
+      writeSync(fd, `${process.pid} ${new Date().toISOString()}`);
+    } finally {
+      closeSync(fd);
+    }
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw err;
+  }
+}
+
+function clearStalePruneLock(): boolean {
+  try {
+    const st = statSync(PRUNE_LOCK_FILE);
+    if (Date.now() - st.mtimeMs < PRUNE_LOCK_STALE_MS) return false;
+    unlinkSync(PRUNE_LOCK_FILE);
+    log(`Cleared stale prune lock (age ${Math.round((Date.now() - st.mtimeMs) / 1000)}s)`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acquirePruneLock(): boolean {
+  ensureBrainDir();
+  return tryCreatePruneLock() || (clearStalePruneLock() && tryCreatePruneLock());
+}
+
+function releasePruneLock(): void {
+  try {
+    unlinkSync(PRUNE_LOCK_FILE);
+  } catch (err) {
+    log(`Failed to remove prune lock: ${err}`);
+  }
+}
+
+function partitionByCutoff(raw: string, cutoff: number): { kept: string[]; pruned: number } {
+  const kept: string[] = [];
+  let pruned = 0;
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const obs = JSON.parse(line) as Observation;
+      if (obs.timestamp >= cutoff) kept.push(line);
+      else pruned++;
+    } catch (err) {
+      log(`Dropping corrupted line during pruning: ${err}`);
+      pruned++;
+    }
+  }
+  return { kept, pruned };
+}
+
+/** Bytes appended to `filePath` beyond `fromByte` (empty string if none). */
+function readAppendedSince(filePath: string, fromByte: number): string {
+  const size = statSync(filePath).size;
+  if (size <= fromByte) return "";
+  const fd = openSync(filePath, "r");
+  try {
+    const buf = Buffer.alloc(size - fromByte);
+    readSync(fd, buf, 0, buf.length, fromByte);
+    return buf.toString("utf-8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Rewrite the observations file without lines older than `cutoff`. Appends
+ * that landed while we were filtering are picked up by re-reading the file
+ * tail right before the rename, so a concurrent recordObservation() from
+ * this or another instance is not lost.
+ */
+function rewriteObservations(cutoff: number): { kept: number; pruned: number } {
+  const raw = readFileSync(OBS_FILE, "utf-8");
+  const snapshotBytes = Buffer.byteLength(raw, "utf-8");
+  const { kept, pruned } = partitionByCutoff(raw, cutoff);
+  if (pruned === 0) return { kept: kept.length, pruned };
+
+  const tmp = `${OBS_FILE}.prune.tmp`;
+  writeFileSync(tmp, kept.join("\n") + (kept.length ? "\n" : ""));
+  const appended = readAppendedSince(OBS_FILE, snapshotBytes);
+  if (appended) {
+    appendFileSync(tmp, appended.endsWith("\n") ? appended : appended + "\n");
+    log(`Prune: carried over ${appended.split("\n").filter(l => l.trim()).length} observation(s) appended during rewrite`);
+  }
+  renameSync(tmp, OBS_FILE);
+  return { kept: kept.length, pruned };
+}
+
+function pruneEnrichmentLog(cutoff: number): void {
+  if (!existsSync(ENRICHMENT_FILE)) return;
+  const lines = readFileSync(ENRICHMENT_FILE, "utf-8").split("\n").filter(l => l.trim());
+  const kept = lines.filter(line => {
+    const m = /"ts"\s*:\s*(\d+(?:\.\d+)?)/.exec(line);
+    return !m || Number(m[1]) >= cutoff;
+  });
+  if (kept.length !== lines.length) {
+    atomicWriteFile(ENRICHMENT_FILE, kept.join("\n") + (kept.length ? "\n" : ""));
+  }
+}
+
+/**
+ * Drop observations older than the retention window. Safe against a second
+ * instance: only one holder of the O_EXCL lock file rewrites; the other
+ * skips this round. Returns true when a prune ran (even if nothing was old).
+ */
+export function pruneObservations(days?: number): boolean {
+  const cutoff = Date.now() - (days ?? RETENTION_DAYS) * 86400000;
+  if (!existsSync(OBS_FILE)) return false;
+
+  if (!acquirePruneLock()) {
+    log("Prune skipped: another instance holds the prune lock");
+    return false;
+  }
 
   try {
-    if (!existsSync(OBS_FILE)) return;
-    const lines = readFileSync(OBS_FILE, "utf-8").split("\n");
-    const kept: string[] = [];
-    let pruned = 0;
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const obs = JSON.parse(line) as Observation;
-        if (obs.timestamp >= cutoff) {
-          kept.push(line);
-        } else {
-          pruned++;
-        }
-      } catch (err) {
-        log(`Dropping corrupted line during pruning: ${err}`);
-        pruned++;
-      }
-    }
-    if (pruned > 0) {
-      atomicWriteFile(OBS_FILE, kept.join("\n") + (kept.length ? "\n" : ""));
-      log(`Pruned ${pruned} old observations, kept ${kept.length}`);
-    }
-
-    // Flush any observations that arrived during prune
-    if (appendBuffer.length > 0) {
-      appendFileSync(OBS_FILE, appendBuffer.join(""));
-      log(`Flushed ${appendBuffer.length} buffered observation(s) after prune`);
-    }
+    const { kept, pruned } = rewriteObservations(cutoff);
+    if (pruned > 0) log(`Pruned ${pruned} old observations, kept ${kept}`);
+    pruneEnrichmentLog(cutoff);
+    return true;
   } catch (err) {
     throw new BrainError(`Failed to prune observations: ${err}`, {
       phase: "observer",
@@ -550,7 +728,6 @@ export function pruneObservations(days?: number): void {
       metadata: { cutoffDays: days ?? RETENTION_DAYS },
     }, err);
   } finally {
-    appendBuffer = [];
-    pruneInProgress = false;
+    releasePruneLock();
   }
 }
