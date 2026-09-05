@@ -1,105 +1,67 @@
 /**
- * Brain tick implementations: think, consolidate, and reflect.
- * Each tick makes a Claude API call and processes the response.
- * Extracted from brain.ts for maintainability.
+ * Brain tick implementations: consolidate and reflect (think lives in
+ * brain-think.ts, shared helpers in brain-tick-shared.ts).
+ *
+ * Each LLM tick persists its own results via patchState; the orchestrator's
+ * state argument is read-only input. See brain-tick-shared.ts for the
+ * orphaned-tick rationale.
  */
 
 import { createLogger } from "./logger.js";
-import { askClaudeStreaming } from "./claude.js";
 import { getObservationsSince } from "./observer.js";
 import type { Observation } from "./observer.js";
-import { buildThinkPrompt, buildConsolidatePrompt, buildReflectPrompt } from "./brain-prompt.js";
-import type { OutgoingActivityGroup, DigestCarryover } from "./brain-prompt.js";
-import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
-import { existsSync, unlinkSync } from "fs";
+import { buildConsolidatePrompt, buildReflectPrompt } from "./brain-prompt.js";
+import type { OutgoingActivityGroup } from "./brain-prompt.js";
 import type { MessageQueue } from "./queue.js";
 import type { MemoryGraph } from "./memory/graph.js";
-import type { MemoryOperation, BrainResponse, BrainState, GoalOperation, SignalOperation, ImprovementProposal } from "./memory/types.js";
-import { applySignalOps, recordSignalsSurfaced } from "./initiative.js";
-import { createFlaggedRequest } from "./actionable-tracker.js";
-import { getRecentDeliveries, getRecentDeliveryLog, getScheduledMessages, scheduleMessage, cancelScheduledMessages, DEDUP_WINDOW_MS } from "./scheduler.js";
-import { getNextDigestSlot } from "./recurring.js";
+import type { WorkingMemory, BrainState, GoalOperation, ImprovementProposal } from "./memory/types.js";
+import type { InitiativeSignal } from "./initiative.js";
+import { getRecentDeliveries, getRecentDeliveryLog, getScheduledMessages } from "./scheduler.js";
 import { runConsolidation, detectGistClusters } from "./memory/decay.js";
-import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory, populateTemporalContext } from "./memory/working-memory.js";
-import {
-  selectContextForThink,
-  selectContextForConsolidate,
-  selectContextForReflect,
-} from "./memory/activation.js";
+import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory, populateTemporalContext, compileWeeklySummary, cleanupWorkingMemory } from "./memory/working-memory.js";
+import { selectContextForConsolidate, selectContextForReflect } from "./memory/activation.js";
 import { GoalTracker } from "./goals.js";
 import { scanAndProcessCommitments } from "./accountability.js";
 import { verify, rotateAuditLog } from "./action-verifier.js";
 import { runDriftAudit, getLatestDriftReport, pruneBaselines } from "./drift-audit.js";
-import { BrainError, wrapError } from "./brain-errors.js";
-import { getBrainConfig, getActivePreset, getOwnerLocalTime, getOwnerLocalDate } from "./brain-config.js";
+import { wrapError } from "./brain-errors.js";
+import { getBrainConfig, getActivePreset } from "./brain-config.js";
 import type { BrainConfig } from "./brain-config.js";
-import {
-  loadQueue,
-  loadHistory,
-  enqueue,
-  enqueueApproved,
-  getWeeklyCompletedCount,
-} from "./self-improve-queue.js";
+import { loadQueue, enqueue, enqueueApproved, getWeeklyCompletedCount } from "./self-improve-queue.js";
 import { loadSubAgents, loadSubAgentHistory } from "./sub-agents.js";
-import { trySendMessage, isQuietHour } from "./brain-delivery.js";
-import { OWNER_NAME, GITHUB_REPO, BRAIN_DIR } from "./config.js";
+import { trySendMessage } from "./brain-delivery.js";
+import { OWNER_NAME, GITHUB_REPO } from "./config.js";
 import { critiqueResponse } from "./response-critique.js";
-import { extractPreferenceSignals, updatePreferences } from "./preference-learner.js";
-import { extractEmotionSignals, recordEmotionSignals } from "./emotion-tracker.js";
-import { trackSentMessage, resolveReflections, createReflectionNodes } from "./reflection-tracker.js";
-import { detectCausalLinks, recordCausalLinks } from "./causal-tracker.js";
-import { isActionPermitted, recordSuccess, recordFailure, recordShadowSuccess, recordGateSuppression } from "./autonomy.js";
-import { validateUrgentReason, canUseUrgentOverride, recordUrgentOverride, getUrgentOverridesToday, MAX_URGENT_OVERRIDES_PER_DAY } from "./urgency.js";
-import { probeMemoryHealth, circuitSuccess, circuitFailure, isCircuitClosed } from "./health-monitor.js";
+import { recordFailure } from "./autonomy.js";
+import { probeMemoryHealth } from "./health-monitor.js";
 import { runSleepConsolidation } from "./sleep-consolidation.js";
 import { detectStaleBeliefs } from "./belief-tracker.js";
-import { recordTemporalEvent, analyzePatterns } from "./temporal-patterns.js";
-import { predictNextScene, applyScenePrediction } from "./scene-predictor.js";
+import { analyzePatterns } from "./temporal-patterns.js";
 import { runReflectiveConsolidation } from "./reflective-consolidation.js";
 import { runKnowledgeCompilation } from "./knowledge-compiler.js";
+import { rebuildPersonProfiles, loadPersonProfiles, serializeProfilesForPrompt } from "./memory/person-profiles.js";
+import { saveConsciousness } from "./consciousness.js";
+import { loadState, patchState } from "./brain-state.js";
+import {
+  parseBrainResponse,
+  callBrainLlm,
+  applyVerifiedMemoryOps,
+  brainDeliveryRecord,
+  persistSignalState,
+  costOf,
+  DELIVERY_SECTION_WINDOW_MS,
+} from "./brain-tick-shared.js";
+
+import { countProposedToday } from "./brain-think.js";
+
+export { thinkTick, clearDigestCarryover, countProposedToday } from "./brain-think.js";
+export { parseBrainResponse } from "./brain-tick-shared.js";
 
 const log = createLogger("brain-ticks");
 
-// ── Config ──
-
-const BRAIN_TOOLS = process.env.BRAIN_TOOLS ?? "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch";
-
-// Window for the IN-FLIGHT & RECENT DELIVERIES prompt section — must stay
-// within the delivery log's retention (25h in scheduler.ts)
-const DELIVERY_SECTION_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-// Sleep consolidation runs at most once per 6 hours (expensive O(n²) pass)
+// Sleep consolidation runs at most once per 12 hours (expensive O(n²) pass)
 let lastSleepConsolidationAt = 0;
 const SLEEP_CONSOLIDATION_INTERVAL = 12 * 3600_000;
-
-// ── Response Parsing ──
-
-export function parseBrainResponse(raw: string): BrainResponse | null {
-  try {
-    let jsonStr = raw.trim();
-    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[0];
-    }
-    const parsed = JSON.parse(jsonStr);
-    return {
-      operations: Array.isArray(parsed.operations) ? parsed.operations : [],
-      message: parsed.message ?? null,
-      messageTargetJid: typeof parsed.messageTargetJid === "string" ? parsed.messageTargetJid : undefined,
-      urgent: parsed.urgent === true,
-      urgentReason: typeof parsed.urgentReason === "string" ? parsed.urgentReason : undefined,
-      reasoning: parsed.reasoning ?? "",
-      workingMemory: parsed.workingMemory ?? undefined,
-      goalOps: Array.isArray(parsed.goalOps) ? parsed.goalOps : undefined,
-      signalOps: Array.isArray(parsed.signalOps) ? parsed.signalOps : undefined,
-      improvementProposals: Array.isArray(parsed.improvementProposals) ? parsed.improvementProposals : undefined,
-      consciousnessUpdate: typeof parsed.consciousnessUpdate === "string" ? parsed.consciousnessUpdate : undefined,
-    };
-  } catch (err) {
-    log(`Failed to parse brain response: ${raw.slice(0, 200)} — ${err}`);
-    return null;
-  }
-}
 
 // ── Shared: enqueue improvement proposals ──
 
@@ -160,710 +122,89 @@ export function enqueueImprovementProposals(
   return enqueued;
 }
 
-// ── Delivery Feedback ──
-
-/**
- * Record the real outcome of a brain-returned message in state so the next
- * tick can (a) inject it into the prompt and (b) cross-check "sent" claims
- * against delivery-log.json. Prevents the brain from building false memories
- * of contact that never happened.
- */
-function recordBrainDelivery(
-  state: BrainState,
-  message: string,
-  targetJid: string,
-  status: "sent" | "queued" | "suppressed" | "failed",
-  detail?: string,
-): void {
-  state.lastBrainMessage = {
-    at: Date.now(),
-    targetJid,
-    snippet: message.slice(0, 120),
-    status,
-    detail,
-    // "sent" awaits delivery-log verification on the next tick; the others are
-    // final ("queued" is verified by the scheduled channel's own retry loop)
-    verified: status !== "sent",
-  };
-}
-
-/**
- * Delivery time for a digest rerouted onto the scheduled-messages channel:
- * immediately, unless we're inside quiet hours — then shortly after quietEnd
- * (owner-local), so the fallback never wakes the owner.
- */
-function digestRerouteDeliverAt(now: number, cfg: BrainConfig): number {
-  const { hour } = getOwnerLocalTime(cfg.ownerTimezone);
-  if (!isQuietHour(hour, cfg.quietStart, cfg.quietEnd)) return now;
-  const hoursUntilEnd = (cfg.quietEnd - hour + 24) % 24;
-  return now + hoursUntilEnd * 3600_000;
-}
-
-// ── Digest carryover (stale-drop backstop) ──
-//
-// When the stale-digest guard drops a rerouted digest, the owner never sees
-// that content — the guard's premise is "the next digest covers the same
-// ground", but nothing enforced that. The carryover file persists the dropped
-// message so the next [DIGEST REQUEST:] prompt can fold it in, turning that
-// premise into a code-level guarantee instead of relying on working-memory
-// discipline.
-
-const DIGEST_CARRYOVER_FILE = `${BRAIN_DIR}/digest-carryover.json`;
-const DIGEST_CARRYOVER_MAX_AGE_MS = 48 * 60 * 60 * 1000;
-
-function saveDigestCarryover(carryover: DigestCarryover): void {
-  try {
-    ensureDir(BRAIN_DIR);
-    atomicWriteJSON(DIGEST_CARRYOVER_FILE, carryover);
-    log(`Digest carryover persisted for next digest tick (target ${carryover.targetJid}, ${carryover.text.length} chars)`);
-  } catch (err) {
-    log(`Failed to persist digest carryover (non-fatal): ${err}`);
-  }
-}
-
-export function clearDigestCarryover(): void {
-  try {
-    if (existsSync(DIGEST_CARRYOVER_FILE)) unlinkSync(DIGEST_CARRYOVER_FILE);
-  } catch (err) {
-    log(`Failed to clear digest carryover (non-fatal): ${err}`);
-  }
-}
-
-/**
- * Load the pending digest carryover, or null if none. Entries older than 48h
- * are deleted and not returned — stale zombie content must never resurface in
- * a briefing two days later.
- */
-function loadDigestCarryover(now: number): DigestCarryover | null {
-  try {
-    if (!existsSync(DIGEST_CARRYOVER_FILE)) return null;
-    const raw = safeReadJSON<Partial<DigestCarryover> | null>(DIGEST_CARRYOVER_FILE, null);
-    if (!raw || typeof raw.text !== "string" || typeof raw.droppedAt !== "number"
-      || typeof raw.targetJid !== "string" || typeof raw.reason !== "string") {
-      log("Digest carryover file invalid — discarding");
-      clearDigestCarryover();
-      return null;
-    }
-    if (now - raw.droppedAt > DIGEST_CARRYOVER_MAX_AGE_MS) {
-      log(`Digest carryover expired (dropped ${new Date(raw.droppedAt).toISOString()}, >48h old) — discarding`);
-      clearDigestCarryover();
-      return null;
-    }
-    return raw as DigestCarryover;
-  } catch (err) {
-    log(`Failed to load digest carryover (non-fatal): ${err}`);
-    return null;
-  }
-}
-
-// ── Think Tick (Claude call) ──
-
-export async function thinkTick(
-  state: BrainState,
-  newObs: Observation[],
-  queue: MessageQueue,
-  sendMessage: (jid: string, text: string) => Promise<void>,
-  ownerJid: string,
-  graph: MemoryGraph,
-  initiativeSignals: import("./initiative.js").InitiativeSignal[] = [],
-): Promise<boolean> {
-  const now = Date.now();
-
-  const pending = graph.getPendingObservations();
-  const allObs = pending.length > 0 ? pending : newObs;
-
-  // Track when the owner last messaged us — feeds the direct-reply gate
-  // exemption below, which must survive across ticks (the owner's question is
-  // often consumed by an earlier tick than the one that produces the answer).
-  for (const o of allObs) {
-    if (!o.isFromMe && o.trustLevel === "owner" && o.timestamp > (state.lastOwnerMessageTime ?? 0)) {
-      state.lastOwnerMessageTime = o.timestamp;
-    }
-  }
-
-  const wm = loadWorkingMemory();
-  populateTemporalContext(wm);
-
-  const signalNodeIds = initiativeSignals.flatMap(s => s.relatedNodeIds);
-  const contextNodes = await selectContextForThink(graph, wm, allObs, signalNodeIds, initiativeSignals.length);
-
-  const goalTracker = new GoalTracker(graph);
-  const goalsSection = goalTracker.serializeForPrompt();
-  wm.activeGoals = goalTracker.getWorkingGoalRefs();
-
-  log(`Think: ${allObs.length} observations, ${contextNodes.length} context nodes, ${initiativeSignals.length} initiative signals`);
-
-  const cfg = getBrainConfig();
-
-  const recentChatDeliveries = getRecentDeliveries(DEDUP_WINDOW_MS)
-    .filter(d => d.source === "chat" || d.source === "email")
-    .map(d => ({ jid: d.jid, messageSnippet: d.messageSnippet, timestamp: d.timestamp }));
-
-  const improveQueueThink = loadQueue();
-  const selfImproveStatsThink = cfg.selfImproveEnabled ? {
-    enabled: true,
-    maxPerWeek: cfg.selfImproveMaxPerWeek,
-    completedThisWeek: getWeeklyCompletedCount(),
-    pendingInQueue: improveQueueThink.items.filter(i => i.status === "pending" || i.status === "approved").length,
-    proposedToday: countProposedToday(cfg.ownerTimezone),
-    autoApprove: cfg.selfImproveAutoApprove,
-  } : undefined;
-
-  // Digest-carryover backstop: if a previous digest was dropped by the
-  // stale-digest guard, inject its content into this digest prompt so it
-  // survives the drop. Consumed (cleared) once the brain has processed it.
-  const isDigestTick = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
-  const digestCarryover = isDigestTick ? loadDigestCarryover(now) : null;
-
-  const prompt = buildThinkPrompt({
-    ownerName: OWNER_NAME,
-    githubRepo: GITHUB_REPO,
-    observations: allObs,
-    contextNodes,
-    graph,
-    wm,
-    lastThinkTime: state.lastThinkTick,
-    lastMessageTime: state.lastMessageTime,
-    messagesToday: state.messagesToday,
-    maxMessagesPerDay: cfg.maxMessagesPerDay,
-    quietStart: cfg.quietStart,
-    quietEnd: cfg.quietEnd,
-    ownerTimezone: cfg.ownerTimezone,
-    goalsSection,
-    initiativeSignals,
-    responsivenessPreset: getActivePreset(cfg),
-    recentChatDeliveries,
-    lastBrainMessage: state.lastBrainMessage,
-    queuedMessages: getScheduledMessages(),
-    recentDeliveryLog: getRecentDeliveryLog(DELIVERY_SECTION_WINDOW_MS),
-    selfImproveStats: selfImproveStatsThink,
-    digestCarryover: digestCarryover ?? undefined,
-  });
-
-  // Log prompt size for cost monitoring
-  const promptChars = prompt.length;
-  const estimatedTokens = Math.ceil(promptChars / 3.5); // rough char→token estimate
-  log(`Think prompt: ${promptChars} chars (~${estimatedTokens} tokens), ${allObs.length} obs, ${contextNodes.length} context nodes`);
-
-  try {
-    // Circuit breaker: skip API call if Claude is in open state
-    if (!isCircuitClosed("claude_api")) {
-      log("Think skipped: Claude API circuit breaker is OPEN");
-      state.lastThinkTick = now;
-      return false;
-    }
-
-    let lastLogTime = Date.now();
-    let deltaChars = 0;
-    const result = await queue.add(async () => {
-      return await askClaudeStreaming(prompt, (delta) => {
-        deltaChars += delta.length;
-        const elapsed = Date.now() - lastLogTime;
-        if (elapsed > 30_000) {
-          log(`Think streaming: ${deltaChars} chars received so far...`);
-          lastLogTime = Date.now();
-        }
-      }, {
-        timeout: 300_000,
-        allowedTools: BRAIN_TOOLS,
-        noSession: true,
-        model: cfg.models?.think,
-      });
-    });
-
-    circuitSuccess("claude_api");
-    const thinkStats = result.stats;
-    log(`Think streaming complete: ${deltaChars} chars, ${thinkStats?.inputTokens ?? "?"} input tokens, ${thinkStats?.outputTokens ?? "?"} output tokens, $${(thinkStats?.totalCostUsd ?? 0).toFixed(4)}`);
-    const responseText = result.messages.join("\n");
-    const response = parseBrainResponse(responseText);
-
-    if (!response) {
-      log(`Could not parse think response (raw length: ${responseText.length}), skipping — observations preserved for retry`);
-      state.lastThinkTick = now;
-      return false;
-    }
-
-    if (digestCarryover) {
-      // The carryover was injected into this prompt and the brain processed
-      // it — discard so it can't resurface in a later briefing. (Kept on
-      // parse failure above: the retried tick re-injects it.)
-      clearDigestCarryover();
-      log("Digest carryover injected into this digest tick and cleared");
-    }
-
-    log(`Think reasoning: ${response.reasoning?.slice(0, 200) || "(none)"}`);
-
-    if (response.operations.length > 0) {
-      const opsVerify = verify({
-        type: "memory_ops",
-        source: "think",
-        operationCount: response.operations.length,
-        operationTypes: response.operations.map(o => o.op),
-      });
-      if (opsVerify.verdict === "blocked") {
-        log(`Think ops BLOCKED by verifier: ${opsVerify.reasons.join("; ")}`);
-      } else {
-        const { applied, skipped } = graph.applyOperations(response.operations as MemoryOperation[]);
-        log(`Think ops: ${applied} applied, ${skipped} skipped`);
-      }
-    }
-
-    if (response.goalOps && response.goalOps.length > 0) {
-      const goalResult = goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
-      log(`Goal ops: ${goalResult.applied} applied, ${goalResult.failed} failed${goalResult.errors.length > 0 ? ` — errors: ${goalResult.errors.join("; ")}` : ""}`);
-      wm.activeGoals = goalTracker.getWorkingGoalRefs();
-    }
-
-    // Signal snoozes: count this surfacing first, then apply snoozes (which
-    // clear the count for the snoozed key). State is persisted by the caller.
-    recordSignalsSurfaced(state, initiativeSignals);
-    if (response.signalOps && response.signalOps.length > 0) {
-      const sigResult = applySignalOps(state, response.signalOps as SignalOperation[]);
-      log(`Signal ops: ${sigResult.applied} snoozed, ${sigResult.skipped} skipped`);
-    }
-
-    // Retrieval utility tracking: differential reinforcement based on whether
-    // Claude actually referenced each context node in its response
-    const referencedNodeIds = new Set<string>();
-    for (const node of contextNodes) {
-      if (responseText.includes(node.id)) {
-        referencedNodeIds.add(node.id);
-      }
-    }
-
-    let reinforced = 0;
-    let uselessTracked = 0;
-    for (const node of contextNodes) {
-      if (node.pinned) continue;
-      const current = graph.getNode(node.id);
-      if (!current) continue;
-      current.lastAccessedAt = now;
-      current.accessCount++;
-
-      if (referencedNodeIds.has(node.id)) {
-        // Referenced by Claude — stronger reinforcement
-        current.strength = Math.min(1, current.strength + 0.05);
-        // Successful retrieval reduces useless counter
-        if (current.uselessRetrievalCount && current.uselessRetrievalCount > 0) {
-          current.uselessRetrievalCount = Math.max(0, current.uselessRetrievalCount - 1);
-        }
-        // Importance boosting: consistently-referenced nodes earn durable importance
-        // accessCount tracks total retrievals; if referenced often enough, bump importance
-        // This is the durable signal that resists decay (unlike strength which is ephemeral)
-        if (current.accessCount >= 5 && (current.importance ?? 0) < 0.9) {
-          const importanceBoost = 0.02; // small per-reference, compounds over time
-          current.importance = Math.min(0.9, (current.importance ?? 0.3) + importanceBoost);
-        }
-      } else {
-        // In context but not referenced — minimal reinforcement + track
-        current.strength = Math.min(1, current.strength + 0.01);
-        current.uselessRetrievalCount = (current.uselessRetrievalCount ?? 0) + 1;
-        uselessTracked++;
-      }
-      reinforced++;
-    }
-    if (reinforced > 0) {
-      log(`Think: reinforced ${reinforced} context nodes (${referencedNodeIds.size} referenced, ${uselessTracked} unreferenced)`);
-    }
-
-    if (response.workingMemory) {
-      updateWorkingMemory(wm, response.workingMemory);
-      wm.activatedNodeIds = contextNodes.slice(0, 10).map(n => n.id);
-      // Update daily temporal summary with latest context
-      const { updateDailySummary } = await import("./memory/working-memory.js");
-      updateDailySummary(wm);
-      saveWorkingMemory(wm);
-    }
-
-    // Persist consciousness state update
-    if (response.consciousnessUpdate) {
-      try {
-        const { saveConsciousness } = await import("./consciousness.js");
-        saveConsciousness(response.consciousnessUpdate);
-        log(`Consciousness updated (${response.consciousnessUpdate.length} chars)`);
-      } catch (err) {
-        log(`Consciousness save error (non-fatal): ${err}`);
-      }
-    }
-
-    if (response.improvementProposals?.length) {
-      enqueueImprovementProposals(response.improvementProposals, "think", cfg);
-    }
-
-    // Phase 4: Extract preference signals from owner behavior
-    if (allObs.length > 0) {
-      try {
-        const prefSignals = extractPreferenceSignals(allObs);
-        if (prefSignals.length > 0) {
-          updatePreferences(graph, prefSignals);
-        }
-      } catch (err) {
-        log(`Preference extraction error (non-fatal): ${err}`);
-      }
-    }
-
-    // Emotion detection: extract emotional signals from observations
-    if (allObs.length > 0) {
-      try {
-        const emotionSignals = extractEmotionSignals(allObs);
-        if (emotionSignals.length > 0) {
-          recordEmotionSignals(graph, emotionSignals);
-        }
-      } catch (err) {
-        log(`Emotion extraction error (non-fatal): ${err}`);
-      }
-    }
-
-    // Reflection tracking: resolve pending reflections against new observations
-    try {
-      const resolved = resolveReflections(allObs);
-      if (resolved.length > 0) {
-        createReflectionNodes(graph, resolved);
-      }
-    } catch (err) {
-      log(`Reflection tracking error (non-fatal): ${err}`);
-    }
-
-    // Causal link detection: find cause-effect patterns in recent nodes
-    try {
-      const causalLinks = detectCausalLinks(graph);
-      if (causalLinks.length > 0) {
-        recordCausalLinks(graph, causalLinks);
-      }
-    } catch (err) {
-      log(`Causal detection error (non-fatal): ${err}`);
-    }
-
-    // Temporal pattern recording: log topics from current observations
-    try {
-      for (const obs of allObs.slice(0, 5)) {
-        if (obs.text && obs.text.length > 5 && !obs.isFromMe) {
-          const topic = obs.text.slice(0, 50).toLowerCase();
-          recordTemporalEvent(topic, obs.senderJid);
-        }
-      }
-    } catch (err) {
-      log(`Temporal pattern recording error (non-fatal): ${err}`);
-    }
-
-    // Scene prediction: pre-stage memory nodes for next think tick
-    try {
-      const prediction = predictNextScene(graph, wm);
-      if (prediction.stagedNodeIds.length > 0) {
-        applyScenePrediction(wm, prediction);
-        saveWorkingMemory(wm);
-      }
-    } catch (err) {
-      log(`Scene prediction error (non-fatal): ${err}`);
-    }
-
-    if (response.message) {
-      const isDigestTriggered = allObs.some(o => o.text.startsWith("[DIGEST REQUEST:"));
-      const isBatchDirectReply = allObs.some(o => !o.isFromMe && o.trustLevel === "owner");
-      const messageTarget = response.messageTargetJid || ownerJid;
-
-      // Direct-reply exemption: if the owner messaged us after the last message
-      // we actually delivered to them, this response is an answer in an
-      // owner-initiated conversation — a reply, not a proactive send — even when
-      // the owner's message was consumed by an earlier tick and is no longer in
-      // this batch. A suppressed reply to a direct question actively damages
-      // trust, the opposite of what the autonomy gate is for.
-      const DIRECT_REPLY_MAX_AGE_MS = 12 * 60 * 60 * 1000; // stays within the delivery log's 25h retention
-      const ownerMsgAt = state.lastOwnerMessageTime ?? 0;
-      const lastDeliveryToOwner = getRecentDeliveries()
-        .filter(d => d.jid === ownerJid)
-        .reduce((max, d) => Math.max(max, d.timestamp), 0);
-      const isDirectReplyExemption = !isBatchDirectReply
-        && messageTarget === ownerJid
-        && ownerMsgAt > lastDeliveryToOwner
-        && (now - ownerMsgAt) < DIRECT_REPLY_MAX_AGE_MS;
-      const isDirectReply = isBatchDirectReply || isDirectReplyExemption;
-      if (isDirectReplyExemption) {
-        log(`Autonomy gate exemption (reason=direct-reply): owner message at ${new Date(ownerMsgAt).toISOString()} is newer than last delivery to owner — treating brain message as a reply, skipping suppress-check`);
-      }
-
-      // Urgency override: the brain may mark a message as genuinely urgent
-      // (mandatory motivation) so it passes the autonomy gate, daily quota and
-      // min-interval via the scheduled channel (10s delivery loop, retries,
-      // delivery-log verified). The contact whitelist and action verifier still
-      // gate the actual send; every override is audit-logged (urgency.ts) and
-      // daily-capped so quota discipline stays intact. Direct replies are
-      // already exempt from throttles and never need this path.
-      let urgentOverrideHandled = false;
-      if (!isDirectReply && response.urgent === true) {
-        const urgentReason = validateUrgentReason(response.urgentReason);
-        if (!urgentReason) {
-          log("Urgent flag ignored: missing or too-short urgentReason — message follows the normal gate path");
-        } else if (!canUseUrgentOverride()) {
-          log(`Urgent override DENIED: daily cap reached (${getUrgentOverridesToday()}/${MAX_URGENT_OVERRIDES_PER_DAY}) — message follows the normal gate path`);
-        } else {
-          const schedId = scheduleMessage(messageTarget, response.message, now, "urgent");
-          recordUrgentOverride(messageTarget, urgentReason, response.message);
-          log(`URGENCY OVERRIDE: message rerouted via scheduled channel (${schedId}) — ${urgentReason}`);
-          recordBrainDelivery(state, response.message, messageTarget, "queued",
-            `urgency override (${schedId}): ${urgentReason}`);
-          scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
-          urgentOverrideHandled = true;
-        }
-      }
-
-      // Autonomy gating: check if proactive messaging is permitted at current level.
-      // A policy-level block is not a judgment failure, so it must not decrement trust —
-      // otherwise the demote-spiral drags the agent down from its own gating.
-      if (urgentOverrideHandled) {
-        // Delivered via the scheduled channel — skip the gate and send paths.
-      } else if (!isDirectReply && initiativeSignals.length > 0 && !isActionPermitted("send_proactive")) {
-        if (isDigestTriggered) {
-          // Owner-contracted digest: the gate exists to hold back unsolicited
-          // proactive sends, not briefings the owner explicitly scheduled.
-          // Reroute onto the scheduled-messages channel (10s delivery loop,
-          // retries, delivery-log verified) instead of suppressing; delivery
-          // defers past quiet hours when we're inside them. No gate bypass for
-          // any other message type — only [DIGEST REQUEST:]-triggered output.
-          const deliverAt = digestRerouteDeliverAt(now, cfg);
-          // Stale-digest guard: if the deferred delivery would land after the
-          // next scheduled digest is generated, the owner would get two
-          // briefings back-to-back with this one already outdated. Drop it —
-          // the next digest covers the same ground with fresher content.
-          const nextDigestSlot = getNextDigestSlot(now);
-          if (nextDigestSlot !== null && deliverAt >= nextDigestSlot) {
-            const dropReason = `stale digest — rerouted delivery at ${new Date(deliverAt).toISOString()} would land after next digest slot ${new Date(nextDigestSlot).toISOString()}`;
-            log(`Digest blocked by autonomy level — dropped as stale: reroute deliverAt ${new Date(deliverAt).toISOString()} falls after next digest slot ${new Date(nextDigestSlot).toISOString()}`);
-            recordBrainDelivery(state, response.message, messageTarget, "suppressed", dropReason);
-            // Backstop: persist the dropped content so the next digest prompt
-            // can fold it in — "the next digest covers the same ground" must
-            // not depend on working-memory hygiene alone.
-            saveDigestCarryover({
-              targetJid: messageTarget,
-              text: response.message,
-              droppedAt: now,
-              reason: dropReason,
-            });
-          } else {
-            // A newer digest supersedes any still-queued older one for the same
-            // target — never deliver two briefings back-to-back.
-            const superseded = cancelScheduledMessages(messageTarget, "digest");
-            if (superseded > 0) log(`Superseded ${superseded} previously queued digest(s) for ${messageTarget}`);
-            const schedId = scheduleMessage(messageTarget, response.message, deliverAt, "digest");
-            log(`Digest blocked by autonomy level — rerouted via scheduled channel (${schedId}, deliverAt ${new Date(deliverAt).toISOString()})`);
-            recordBrainDelivery(state, response.message, messageTarget, "queued",
-              `autonomy gate active — digest rerouted to scheduled channel (${schedId}), delivery at ${new Date(deliverAt).toISOString()}`);
-            scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
-          }
-        } else {
-          log(`Proactive message blocked by autonomy level (${response.message.slice(0, 60)}...)`);
-          recordGateSuppression();
-          recordBrainDelivery(state, response.message, messageTarget, "suppressed", "blocked by autonomy level");
-          // Shadow trust: the gate is a policy block, not a judgment failure. Run the
-          // same self-critique the send path would have run; if the message would have
-          // passed, award capped shadow trust so the trust ladder stays climbable even
-          // while every proactive send is gated (otherwise trustScore stays 0 forever).
-          const hoursSinceLastMessage = state.lastMessageTime > 0
-            ? (now - state.lastMessageTime) / 3600000
-            : Infinity;
-          const shadowCritique = await critiqueResponse(response.message, {
-            isDirectReply,
-            isDigest: isDigestTriggered,
-            recentObservationCount: allObs.length,
-            hoursSinceLastMessage,
-            messagesToday: state.messagesToday,
-            maxMessagesPerDay: cfg.maxMessagesPerDay,
-          });
-          if (shadowCritique.shouldSend) {
-            recordShadowSuccess("send_proactive");
-          }
-        }
-      } else
-      // Phase 3: Self-critique for proactive/initiative messages
-      if (initiativeSignals.length > 0 || !isDirectReply) {
-        const hoursSinceLastMessage = state.lastMessageTime > 0
-          ? (now - state.lastMessageTime) / 3600000
-          : Infinity;
-        const critique = await critiqueResponse(response.message, {
-          isDirectReply,
-          isDigest: isDigestTriggered,
-          recentObservationCount: allObs.length,
-          hoursSinceLastMessage,
-          messagesToday: state.messagesToday,
-          maxMessagesPerDay: cfg.maxMessagesPerDay,
-        });
-        if (!critique.shouldSend) {
-          log(`Message suppressed by self-critique (score ${critique.score}): ${critique.reason}`);
-          recordFailure("send_message", `self-critique suppressed (score ${critique.score})`);
-          recordBrainDelivery(state, response.message, messageTarget, "suppressed", `self-critique (score ${critique.score}): ${critique.reason}`);
-        } else {
-          const delivery = await trySendMessage(state, sendMessage, ownerJid, response.message, {
-            bypassLimits: isDigestTriggered,
-            targetJid: response.messageTargetJid,
-            isDirectReply,
-          });
-          recordBrainDelivery(state, response.message, messageTarget, delivery.status,
-            delivery.detail ?? (isDirectReplyExemption ? "direct-reply" : undefined));
-          trackSentMessage(response.message, messageTarget, initiativeSignals.length > 0, critique.score);
-          scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
-          recordSuccess("send_message");
-        }
-      } else {
-        const delivery = await trySendMessage(state, sendMessage, ownerJid, response.message, {
-          bypassLimits: isDigestTriggered,
-          targetJid: response.messageTargetJid,
-          isDirectReply,
-        });
-        recordBrainDelivery(state, response.message, messageTarget, delivery.status,
-          delivery.detail ?? (isDirectReplyExemption ? "direct-reply" : undefined));
-        trackSentMessage(response.message, messageTarget, false);
-        scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
-        recordSuccess("send_message");
-      }
-    }
-
-    for (const obs of allObs) {
-      if (obs.isFromMe && obs.text) {
-        const source = obs.source || "whatsapp";
-        const audience = obs.chatName || obs.groupName || "unknown";
-        scanAndProcessCommitments(obs.text, source, audience, goalTracker);
-      }
-    }
-
-    if (response.requestFlags && response.requestFlags.length > 0) {
-      for (const flag of response.requestFlags) {
-        createFlaggedRequest(flag);
-      }
-      log(`Brain flagged ${response.requestFlags.length} request(s) for owner confirmation`);
-    }
-
-    state.lastThinkTick = now;
-    state.lastObservationTime = now;
-    state.totalThinks++;
-    if (result.stats) {
-      state.totalCost += result.stats.totalCostUsd || 0;
-    }
-    graph.clearPendingObservations();
-
-    log(`Think #${state.totalThinks} complete (${graph.nodeCount} nodes, ${graph.edgeCount} edges, lifetime cost: $${state.totalCost.toFixed(4)})`);
-    return true;
-  } catch (err) {
-    circuitFailure("claude_api");
-    state.lastThinkTick = now;
-    state.lastObservationTime = now;
-    throw wrapError(err, "think", `Think failed: ${err}`, {
-      elapsedMs: Date.now() - now,
-      metadata: { obsCount: newObs.length, contextNodes: contextNodes?.length },
-    });
-  }
-}
-
 // ── Consolidate Tick (Claude call) ──
 
-export async function consolidateTick(
-  state: BrainState,
-  queue: MessageQueue,
-  graph: MemoryGraph,
-): Promise<boolean> {
-  const now = Date.now();
+function runGuarded(label: string, fn: () => void): void {
+  try {
+    fn();
+  } catch (err) {
+    log(`${label} error (non-fatal): ${err}`);
+  }
+}
 
-  const wm = loadWorkingMemory();
-
-  const decayResult = runConsolidation(graph, wm);
-  log(`Consolidate decay: ${decayResult.nodesDecayed} nodes decayed, ${decayResult.nodesPruned} archived, ${decayResult.edgesDecayed} edges decayed, ${decayResult.edgesPruned} pruned, ${decayResult.orphansPruned} orphans, ${decayResult.archiveRestored} recalled from archive`);
-
+/** Structural maintenance passes that run every consolidate tick before any LLM call. */
+function runConsolidateMaintenance(graph: MemoryGraph, wm: WorkingMemory, now: number): void {
   // Sleep consolidation: conflict detection, dedup, episodic→semantic promotion
   // Time-gated to avoid running expensive O(n²) passes every consolidate tick
   if (now - lastSleepConsolidationAt > SLEEP_CONSOLIDATION_INTERVAL) {
-    try {
+    runGuarded("Sleep consolidation", () => {
       const sleepResult = runSleepConsolidation(graph);
       lastSleepConsolidationAt = now;
       log(`Sleep consolidation: ${sleepResult.conflictsDetected} conflicts, ${sleepResult.conflictsResolved} resolved, ${sleepResult.promotedToSemantic} promoted`);
-    } catch (err) {
-      log(`Sleep consolidation error (non-fatal): ${err}`);
-    }
+    });
   }
-
-  // Health monitoring: probe memory graph health
-  try {
+  runGuarded("Health probe", () => {
     const nodes = graph.allNodes();
-    const avgStrength = nodes.length > 0
-      ? nodes.reduce((s, n) => s + n.strength, 0) / nodes.length
-      : 0;
+    const avgStrength = nodes.length > 0 ? nodes.reduce((s, n) => s + n.strength, 0) / nodes.length : 0;
     probeMemoryHealth(graph.nodeCount, graph.edgeCount, graph.archiveSize, avgStrength);
-  } catch (err) {
-    log(`Health probe error (non-fatal): ${err}`);
-  }
-  // Stale belief detection: flag beliefs needing review
-  try {
+  });
+  runGuarded("Stale belief detection", () => {
     const staleBeliefs = detectStaleBeliefs(graph);
     if (staleBeliefs.length > 0) {
       log(`Stale beliefs: ${staleBeliefs.length} beliefs need review (old + medium confidence or contradicted)`);
     }
-  } catch (err) {
-    log(`Stale belief detection error (non-fatal): ${err}`);
-  }
-
-  // Reflective consolidation: summarize weak clusters before they decay away
-  try {
+  });
+  runGuarded("Reflective consolidation", () => {
     const gistResults = runReflectiveConsolidation(graph);
     if (gistResults.length > 0) {
       log(`Reflective consolidation: ${gistResults.length} gist nodes created from ${gistResults.reduce((s, r) => s + r.nodesConsolidated, 0)} weak nodes`);
     }
-  } catch (err) {
-    log(`Reflective consolidation error (non-fatal): ${err}`);
-  }
-
-  // Knowledge compilation: compile repeated reasoning patterns into procedure nodes
-  try {
+  });
+  runGuarded("Knowledge compilation", () => {
     const compiled = runKnowledgeCompilation(graph);
-    if (compiled > 0) {
-      log(`Knowledge compilation: ${compiled} patterns compiled`);
-    }
-  } catch (err) {
-    log(`Knowledge compilation error (non-fatal): ${err}`);
-  }
-
-  // Temporal pattern analysis: detect recurring behavior patterns (daily analysis)
-  try {
+    if (compiled > 0) log(`Knowledge compilation: ${compiled} patterns compiled`);
+  });
+  runGuarded("Temporal pattern analysis", () => {
     const patterns = analyzePatterns();
-    if (patterns.length > 0) {
-      log(`Temporal patterns: ${patterns.length} recurring patterns detected`);
-    }
-  } catch (err) {
-    log(`Temporal pattern analysis error (non-fatal): ${err}`);
-  }
-
-  // Compile weekly temporal summaries from daily entries
-  try {
-    const { compileWeeklySummary } = await import("./memory/working-memory.js");
+    if (patterns.length > 0) log(`Temporal patterns: ${patterns.length} recurring patterns detected`);
+  });
+  runGuarded("Weekly summary compilation", () => {
     compileWeeklySummary(wm);
     saveWorkingMemory(wm);
-  } catch (err) {
-    log(`Weekly summary compilation error (non-fatal): ${err}`);
-  }
-
-  // Rebuild structured person profiles from graph state
-  try {
-    const { rebuildPersonProfiles } = await import("./memory/person-profiles.js");
+  });
+  runGuarded("Person profile rebuild", () => {
     const profiles = rebuildPersonProfiles(graph);
     log(`Person profiles: rebuilt ${profiles.length} profiles`);
-  } catch (err) {
-    log(`Person profile rebuild error (non-fatal): ${err}`);
-  }
+  });
+}
 
+function logDecayReports(decayResult: ReturnType<typeof runConsolidation>): void {
   if (decayResult.uncapturedSignals.length > 0) {
     log(`Consolidate audit: ${decayResult.uncapturedSignals.length} uncaptured signals found in observation logs`);
   }
-  if (decayResult.deltaReport) {
-    log(`Consolidate delta: ${decayResult.deltaReport.summary}`);
-  }
+  if (decayResult.deltaReport) log(`Consolidate delta: ${decayResult.deltaReport.summary}`);
   if (decayResult.driftReport) {
     const dr = decayResult.driftReport;
     log(`Consolidate drift: ${dr.driftedNodes.length} pinned nodes drifted (max ${dr.maxDriftScore.toFixed(3)}), ${dr.edgesLostTotal} edges lost, ${dr.missingNodes.length} missing`);
   }
-  if (decayResult.driftAlert) {
-    log(`⚠ DRIFT ALERT: ${decayResult.driftAlert}`);
-  }
+  if (decayResult.driftAlert) log(`⚠ DRIFT ALERT: ${decayResult.driftAlert}`);
+}
+
+export async function consolidateTick(
+  _state: BrainState,
+  queue: MessageQueue,
+  graph: MemoryGraph,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const now = Date.now();
+  const wm = loadWorkingMemory();
+
+  const decayResult = runConsolidation(graph, wm);
+  log(`Consolidate decay: ${decayResult.nodesDecayed} nodes decayed, ${decayResult.nodesPruned} archived, ${decayResult.edgesDecayed} edges decayed, ${decayResult.edgesPruned} pruned, ${decayResult.orphansPruned} orphans, ${decayResult.archiveRestored} recalled from archive`);
+  runConsolidateMaintenance(graph, wm, now);
+  logDecayReports(decayResult);
 
   populateTemporalContext(wm);
-
-  const { cleanupWorkingMemory } = await import("./memory/working-memory.js");
   const cleanup = cleanupWorkingMemory(wm);
   if (cleanup.trackingTrimmed > 0 || cleanup.followUpsPruned > 0) {
     log(`Working memory cleanup: trimmed ${cleanup.trackingTrimmed} tracking items, pruned ${cleanup.followUpsPruned} follow-ups`);
@@ -876,10 +217,9 @@ export async function consolidateTick(
 
   const hasUncaptured = decayResult.uncapturedSignals.length > 0;
   const hasLowFidelity = decayResult.fidelityResults.some(r => r.lowFidelity);
-  const hasGistClusters = gistClusters.length > 0;
-  if (weakNodes.length === 0 && orphanNodes.length === 0 && duplicateCandidates.length === 0 && !hasUncaptured && !hasLowFidelity && !hasGistClusters) {
+  if (weakNodes.length === 0 && orphanNodes.length === 0 && duplicateCandidates.length === 0 && !hasUncaptured && !hasLowFidelity && gistClusters.length === 0) {
     log("Consolidate: nothing for Claude to review, decay-only cycle");
-    state.lastConsolidateTick = now;
+    patchState({ lastConsolidateTick: now });
     return true;
   }
 
@@ -900,57 +240,19 @@ export async function consolidateTick(
     gistClusters,
     rejectedEdgeCount: graph.rejectedEdgeCount,
   });
-
-  const consolidatePromptChars = prompt.length;
-  log(`Consolidate prompt: ${consolidatePromptChars} chars (~${Math.ceil(consolidatePromptChars / 3.5)} tokens) → calling Claude`);
+  log(`Consolidate prompt: ${prompt.length} chars (~${Math.ceil(prompt.length / 3.5)} tokens) → calling Claude`);
 
   try {
-    let lastLogTime = Date.now();
-    let deltaChars = 0;
-    const result = await queue.add(async () => {
-      return await askClaudeStreaming(prompt, (delta) => {
-        deltaChars += delta.length;
-        const elapsed = Date.now() - lastLogTime;
-        if (elapsed > 30_000) {
-          log(`Consolidate streaming: ${deltaChars} chars received so far...`);
-          lastLogTime = Date.now();
-        }
-      }, {
-        timeout: 300_000,
-        allowedTools: BRAIN_TOOLS,
-        noSession: true,
-        model: getBrainConfig().models?.consolidate,
-      });
-    });
-
-    const consolidateStats = result.stats;
-    log(`Consolidate streaming complete: ${deltaChars} chars, ${consolidateStats?.inputTokens ?? "?"} input tokens, ${consolidateStats?.outputTokens ?? "?"} output tokens, $${(consolidateStats?.totalCostUsd ?? 0).toFixed(4)}`);
-    const responseText = result.messages.join("\n");
+    const { result, responseText } = await callBrainLlm("consolidate", prompt, queue, getBrainConfig().models?.consolidate, signal);
     const response = parseBrainResponse(responseText);
-
     if (!response) {
       log("Could not parse consolidate response");
-      state.lastConsolidateTick = now;
+      patchState(s => ({ lastConsolidateTick: now, totalCost: s.totalCost + costOf(result) }));
       return false;
     }
 
     log(`Consolidate reasoning: ${response.reasoning?.slice(0, 200) || "(none)"}`);
-
-    if (response.operations.length > 0) {
-      const opsVerify = verify({
-        type: "memory_ops",
-        source: "consolidate",
-        operationCount: response.operations.length,
-        operationTypes: response.operations.map(o => o.op),
-      });
-      if (opsVerify.verdict === "blocked") {
-        log(`Consolidate ops BLOCKED by verifier: ${opsVerify.reasons.join("; ")}`);
-      } else {
-        const { applied, skipped } = graph.applyOperations(response.operations as MemoryOperation[]);
-        log(`Consolidate ops: ${applied} applied, ${skipped} skipped`);
-      }
-    }
-
+    applyVerifiedMemoryOps(graph, response.operations, "consolidate");
     rotateAuditLog();
 
     if (response.workingMemory) {
@@ -958,18 +260,14 @@ export async function consolidateTick(
       saveWorkingMemory(wm);
     }
 
-    state.lastConsolidateTick = now;
-    if (result.stats) {
-      state.totalCost += result.stats.totalCostUsd || 0;
-    }
-
+    patchState(s => ({ lastConsolidateTick: now, totalCost: s.totalCost + costOf(result) }));
     log(`Consolidate complete (${graph.nodeCount} nodes, ${graph.edgeCount} edges)`);
     return true;
   } catch (err) {
-    state.lastConsolidateTick = now;
+    patchState({ lastConsolidateTick: now });
     throw wrapError(err, "consolidate", `Consolidate failed: ${err}`, {
       elapsedMs: Date.now() - now,
-      metadata: { weakNodes: weakNodes?.length, orphanNodes: orphanNodes?.length },
+      metadata: { weakNodes: weakNodes.length, orphanNodes: orphanNodes.length },
     });
   }
 }
@@ -995,29 +293,139 @@ function getRecentMoltbookActivity(): string[] {
   return activity;
 }
 
-/**
- * Proposals created today (owner-local day), any status. Completed/failed/rejected
- * items are moved from the queue to history, so both must be counted — the queue
- * alone would under-report and re-trigger the daily nudge after items finish.
- */
-function countProposedToday(timezone: string): number {
-  const today = getOwnerLocalDate(timezone);
-  const ids = new Set<string>();
-  for (const item of [...loadQueue().items, ...loadHistory().entries]) {
-    if (getOwnerLocalDate(timezone, new Date(item.createdAt)) === today) ids.add(item.id);
-  }
-  return ids.size;
+// ── Reflect Tick (Claude call) ──
+
+interface OutgoingActivity {
+  aria: OutgoingActivityGroup[];
+  owner: OutgoingActivityGroup[];
+  ariaCount: number;
+  ownerCount: number;
 }
 
-// ── Reflect Tick (Claude call) ──
+/**
+ * Recent outgoing messages grouped by conversation, split into what ARIA
+ * actually sent vs what the owner typed. isFromMe=true covers BOTH (ARIA sends
+ * through the owner's Baileys session), so ARIA-origin is cross-checked
+ * against delivery-log.json plus synthetic ARIA observations.
+ */
+function collectOutgoingActivity(now: number): OutgoingActivity {
+  const COMMITMENT_LOOKBACK = 12 * 60 * 60 * 1000;
+  const DELIVERY_MATCH_TOLERANCE_MS = 15 * 60 * 1000;
+  const recentOutgoing = getObservationsSince(now - COMMITMENT_LOOKBACK, { isFromMe: true }, 50);
+  const ariaDeliveries = getRecentDeliveries(COMMITMENT_LOOKBACK);
+  const isAriaSent = (o: Observation): boolean => {
+    if (o.senderJid === "system" || (o.sender || "").startsWith("ARIA")) return true;
+    const textKey = o.text.slice(0, 120);
+    return ariaDeliveries.some(d =>
+      d.messageSnippet === textKey && Math.abs(d.timestamp - o.timestamp) <= DELIVERY_MATCH_TOLERANCE_MS,
+    );
+  };
+
+  const flat = recentOutgoing
+    .filter(o => o.text && o.text.length >= 10)
+    .map(o => ({
+      source: o.source || "whatsapp",
+      audience: o.chatName || o.groupName || "unknown",
+      text: o.text,
+      ariaSent: isAriaSent(o),
+    }));
+
+  const groupByConversation = (items: { source: string; audience: string; text: string }[]): OutgoingActivityGroup[] => {
+    const map = new Map<string, OutgoingActivityGroup>();
+    for (const a of items) {
+      const key = `${a.source}::${a.audience}`;
+      const existing = map.get(key);
+      map.set(key, existing
+        ? { ...existing, messageCount: existing.messageCount + 1, latestSnippet: a.text.slice(0, 200), texts: [...existing.texts, a.text] }
+        : { source: a.source, audience: a.audience, messageCount: 1, latestSnippet: a.text.slice(0, 200), texts: [a.text] });
+    }
+    return Array.from(map.values());
+  };
+  const ariaFlat = flat.filter(a => a.ariaSent);
+  const ownerFlat = flat.filter(a => !a.ariaSent);
+  return { aria: groupByConversation(ariaFlat), owner: groupByConversation(ownerFlat), ariaCount: ariaFlat.length, ownerCount: ownerFlat.length };
+}
+
+/**
+ * Weekly drift audit. A medium/high surprise alert goes to the owner through
+ * the throttled brain channel (quiet hours, daily budget, verifier) — never a
+ * raw send.
+ */
+async function runDriftAuditForReflect(sendMessage: SendFn, ownerJid: string): Promise<string | undefined> {
+  try {
+    const driftReport = await runDriftAudit();
+    if (driftReport) {
+      log(`Drift audit completed: surprise=${driftReport.surpriseLevel}`);
+      if ((driftReport.surpriseLevel === "medium" || driftReport.surpriseLevel === "high") && ownerJid) {
+        const alertMsg = `🔍 Weekly drift audit (surprise: ${driftReport.surpriseLevel})\n\n${driftReport.directionSummary}\n\n${driftReport.driftCharacterization}\n\nRecommendation: ${driftReport.recommendation}`;
+        const delivery = await trySendMessage(sendMessage, ownerJid, alertMsg);
+        if (delivery.status !== "sent") log(`Drift alert not delivered (${delivery.status}${delivery.detail ? `: ${delivery.detail}` : ""})`);
+      }
+      pruneBaselines();
+      return `[DRIFT AUDIT] Direction: ${driftReport.directionSummary} | Surprise: ${driftReport.surpriseLevel} | ${driftReport.filesChanged.length} files changed | ${driftReport.recommendation}`;
+    }
+    const latest = getLatestDriftReport();
+    if (latest) {
+      return `[LAST DRIFT AUDIT ${new Date(latest.generatedAt).toISOString().split("T")[0]}] Direction: ${latest.directionSummary} | Surprise: ${latest.surpriseLevel}`;
+    }
+  } catch (err) {
+    log(`Drift audit error (non-fatal): ${err}`);
+  }
+  return undefined;
+}
+
+function loadPersonProfilesSection(): string | undefined {
+  try {
+    const profiles = loadPersonProfiles();
+    return profiles.length > 0 ? serializeProfilesForPrompt(profiles) : undefined;
+  } catch (err) {
+    log(`Person profile loading error (non-fatal): ${err}`);
+    return undefined;
+  }
+}
+
+type SendFn = (jid: string, text: string, source?: string) => Promise<void>;
+
+async function handleReflectMessage(
+  message: string,
+  targetJid: string | undefined,
+  sendMessage: SendFn,
+  ownerJid: string,
+  goalTracker: GoalTracker,
+  cfg: BrainConfig,
+  now: number,
+): Promise<void> {
+  const target = targetJid || ownerJid;
+  const state = loadState();
+  // Self-critique for reflect messages (always proactive)
+  const critique = await critiqueResponse(message, {
+    isDirectReply: false,
+    recentObservationCount: 0,
+    hoursSinceLastMessage: state.lastMessageTime > 0 ? (now - state.lastMessageTime) / 3600000 : Infinity,
+    messagesToday: state.messagesToday,
+    maxMessagesPerDay: cfg.maxMessagesPerDay,
+  });
+  if (!critique.shouldSend) {
+    log(`Reflect message suppressed by self-critique (score ${critique.score}): ${critique.reason}`);
+    recordFailure("send_message", `reflect self-critique suppressed (score ${critique.score})`);
+    patchState({ lastBrainMessage: brainDeliveryRecord(message, target, "suppressed", `reflect self-critique (score ${critique.score}): ${critique.reason}`) });
+    return;
+  }
+  const delivery = await trySendMessage(sendMessage, ownerJid, message, { targetJid });
+  patchState({ lastBrainMessage: brainDeliveryRecord(message, target, delivery.status, delivery.detail) });
+  if (delivery.status === "sent" || delivery.status === "queued") {
+    scanAndProcessCommitments(message, "brain", OWNER_NAME, goalTracker);
+  }
+}
 
 export async function reflectTick(
   state: BrainState,
   queue: MessageQueue,
-  sendMessage: (jid: string, text: string, source?: string) => Promise<void>,
+  sendMessage: SendFn,
   ownerJid: string,
   graph: MemoryGraph,
-  initiativeSignals: import("./initiative.js").InitiativeSignal[] = [],
+  initiativeSignals: InitiativeSignal[] = [],
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const now = Date.now();
   const wm = loadWorkingMemory();
@@ -1030,7 +438,6 @@ export async function reflectTick(
   wm.activeGoals = goalTracker.getWorkingGoalRefs();
 
   const cfg = getBrainConfig();
-
   const improveQueue = loadQueue();
   const selfImproveStats = {
     enabled: cfg.selfImproveEnabled,
@@ -1042,90 +449,11 @@ export async function reflectTick(
   };
 
   const recentMoltbookActivity = getRecentMoltbookActivity();
+  const outgoing = collectOutgoingActivity(now);
+  const driftSummary = await runDriftAuditForReflect(sendMessage, ownerJid);
+  const personProfilesSection = loadPersonProfilesSection();
 
-  const COMMITMENT_LOOKBACK = 12 * 60 * 60 * 1000;
-  const recentOutgoing = getObservationsSince(Date.now() - COMMITMENT_LOOKBACK, { isFromMe: true }, 50);
-
-  // isFromMe=true covers BOTH ARIA's own sends and the owner's outgoing messages
-  // (ARIA sends through the owner's Baileys session, so messages the owner types
-  // on his phone are also observed with fromMe=true). Only messages ARIA actually
-  // sent are ARIA's commitments — cross-check against delivery-log.json, plus
-  // synthetic ARIA observations (twilio calls, recurring/digest triggers).
-  const ariaDeliveries = getRecentDeliveries(COMMITMENT_LOOKBACK);
-  const DELIVERY_MATCH_TOLERANCE_MS = 15 * 60 * 1000;
-  const isAriaSent = (o: Observation): boolean => {
-    if (o.senderJid === "system" || (o.sender || "").startsWith("ARIA")) return true;
-    const textKey = o.text.slice(0, 120);
-    return ariaDeliveries.some(d =>
-      d.messageSnippet === textKey &&
-      Math.abs(d.timestamp - o.timestamp) <= DELIVERY_MATCH_TOLERANCE_MS,
-    );
-  };
-
-  const outgoingFlat = recentOutgoing
-    .filter(o => o.text && o.text.length >= 10)
-    .map(o => ({
-      source: o.source || "whatsapp",
-      audience: o.chatName || o.groupName || "unknown",
-      text: o.text,
-      ariaSent: isAriaSent(o),
-    }));
-
-  // Group outgoing activity by conversation (source + audience) for a concise reflect prompt
-  const groupByConversation = (items: { source: string; audience: string; text: string }[]): OutgoingActivityGroup[] => {
-    const map = new Map<string, OutgoingActivityGroup>();
-    for (const a of items) {
-      const key = `${a.source}::${a.audience}`;
-      const existing = map.get(key);
-      if (existing) {
-        existing.messageCount++;
-        existing.latestSnippet = a.text.slice(0, 200);
-        existing.texts.push(a.text);
-      } else {
-        map.set(key, { source: a.source, audience: a.audience, messageCount: 1, latestSnippet: a.text.slice(0, 200), texts: [a.text] });
-      }
-    }
-    return Array.from(map.values());
-  };
-  const ariaOutgoingFlat = outgoingFlat.filter(a => a.ariaSent);
-  const ownerOutgoingFlat = outgoingFlat.filter(a => !a.ariaSent);
-  const recentOutgoingActivity = groupByConversation(ariaOutgoingFlat);
-  const ownerOutgoingActivity = groupByConversation(ownerOutgoingFlat);
-
-  let driftSummary: string | undefined;
-  try {
-    const driftReport = await runDriftAudit();
-    if (driftReport) {
-      driftSummary = `[DRIFT AUDIT] Direction: ${driftReport.directionSummary} | Surprise: ${driftReport.surpriseLevel} | ${driftReport.filesChanged.length} files changed | ${driftReport.recommendation}`;
-      log(`Drift audit completed: surprise=${driftReport.surpriseLevel}`);
-      if ((driftReport.surpriseLevel === "medium" || driftReport.surpriseLevel === "high") && ownerJid) {
-        const alertMsg = `🔍 Weekly drift audit (surprise: ${driftReport.surpriseLevel})\n\n${driftReport.directionSummary}\n\n${driftReport.driftCharacterization}\n\nRecommendation: ${driftReport.recommendation}`;
-        try { await sendMessage(ownerJid, alertMsg, "drift-audit"); } catch (err) { log(`Failed to send drift alert: ${err}`); }
-      }
-      pruneBaselines();
-    } else {
-      const latest = getLatestDriftReport();
-      if (latest) {
-        driftSummary = `[LAST DRIFT AUDIT ${new Date(latest.generatedAt).toISOString().split("T")[0]}] Direction: ${latest.directionSummary} | Surprise: ${latest.surpriseLevel}`;
-      }
-    }
-  } catch (err) {
-    log(`Drift audit error (non-fatal): ${err}`);
-  }
-
-  // Load person profiles for reflect context
-  let personProfilesSection: string | undefined;
-  try {
-    const { loadPersonProfiles, serializeProfilesForPrompt } = await import("./memory/person-profiles.js");
-    const profiles = loadPersonProfiles();
-    if (profiles.length > 0) {
-      personProfilesSection = serializeProfilesForPrompt(profiles);
-    }
-  } catch (err) {
-    log(`Person profile loading error (non-fatal): ${err}`);
-  }
-
-  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals, ${recentMoltbookActivity.length} moltbook items, ${recentOutgoingActivity.length} ARIA outgoing conversations (${ariaOutgoingFlat.length} msgs), ${ownerOutgoingActivity.length} owner conversations (${ownerOutgoingFlat.length} msgs, observe-only)`);
+  log(`Reflect: ${strongestNodes.length} context nodes, ${stats.nodeCount} total nodes, ${initiativeSignals.length} initiative signals, ${recentMoltbookActivity.length} moltbook items, ${outgoing.aria.length} ARIA outgoing conversations (${outgoing.ariaCount} msgs), ${outgoing.owner.length} owner conversations (${outgoing.ownerCount} msgs, observe-only)`);
 
   const prompt = buildReflectPrompt({
     ownerName: OWNER_NAME,
@@ -1145,64 +473,27 @@ export async function reflectTick(
     responsivenessPreset: getActivePreset(cfg),
     selfImproveStats,
     recentMoltbookActivity,
-    recentOutgoingActivity,
-    ownerOutgoingActivity,
+    recentOutgoingActivity: outgoing.aria,
+    ownerOutgoingActivity: outgoing.owner,
     driftSummary,
     personProfilesSection,
     lastBrainMessage: state.lastBrainMessage,
     queuedMessages: getScheduledMessages(),
     recentDeliveryLog: getRecentDeliveryLog(DELIVERY_SECTION_WINDOW_MS),
   });
-
-  const reflectPromptChars = prompt.length;
-  log(`Reflect prompt: ${reflectPromptChars} chars (~${Math.ceil(reflectPromptChars / 3.5)} tokens)`);
+  log(`Reflect prompt: ${prompt.length} chars (~${Math.ceil(prompt.length / 3.5)} tokens)`);
 
   try {
-    let lastLogTime = Date.now();
-    let deltaChars = 0;
-    const result = await queue.add(async () => {
-      return await askClaudeStreaming(prompt, (delta) => {
-        deltaChars += delta.length;
-        const elapsed = Date.now() - lastLogTime;
-        if (elapsed > 30_000) {
-          log(`Reflect streaming: ${deltaChars} chars received so far...`);
-          lastLogTime = Date.now();
-        }
-      }, {
-        timeout: 600_000,
-        allowedTools: BRAIN_TOOLS,
-        noSession: true,
-        model: getBrainConfig().models?.reflect,
-      });
-    });
-
-    const reflectStats = result.stats;
-    log(`Reflect streaming complete: ${deltaChars} chars, ${reflectStats?.inputTokens ?? "?"} input tokens, ${reflectStats?.outputTokens ?? "?"} output tokens, $${(reflectStats?.totalCostUsd ?? 0).toFixed(4)}`);
-    const responseText = result.messages.join("\n");
+    const { result, responseText } = await callBrainLlm("reflect", prompt, queue, cfg.models?.reflect, signal);
     const response = parseBrainResponse(responseText);
-
     if (!response) {
       log("Could not parse reflect response");
-      state.lastReflectTick = now;
+      patchState(s => ({ lastReflectTick: now, totalCost: s.totalCost + costOf(result) }));
       return false;
     }
 
     log(`Reflect reasoning: ${response.reasoning?.slice(0, 300) || "(none)"}`);
-
-    if (response.operations.length > 0) {
-      const opsVerify = verify({
-        type: "memory_ops",
-        source: "reflect",
-        operationCount: response.operations.length,
-        operationTypes: response.operations.map(o => o.op),
-      });
-      if (opsVerify.verdict === "blocked") {
-        log(`Reflect ops BLOCKED by verifier: ${opsVerify.reasons.join("; ")}`);
-      } else {
-        const { applied, skipped } = graph.applyOperations(response.operations as MemoryOperation[]);
-        log(`Reflect ops: ${applied} applied, ${skipped} skipped`);
-      }
-    }
+    applyVerifiedMemoryOps(graph, response.operations, "reflect");
 
     if (response.goalOps && response.goalOps.length > 0) {
       const goalResult = goalTracker.applyGoalOps(response.goalOps as GoalOperation[]);
@@ -1210,25 +501,18 @@ export async function reflectTick(
       wm.activeGoals = goalTracker.getWorkingGoalRefs();
     }
 
-    recordSignalsSurfaced(state, initiativeSignals);
-    if (response.signalOps && response.signalOps.length > 0) {
-      const sigResult = applySignalOps(state, response.signalOps as SignalOperation[]);
-      log(`Reflect signal ops: ${sigResult.applied} snoozed, ${sigResult.skipped} skipped`);
-    }
+    persistSignalState(loadState(), initiativeSignals, response.signalOps, "Reflect");
 
     if (response.improvementProposals?.length) {
       enqueueImprovementProposals(response.improvementProposals, "reflect", cfg);
     }
 
-    // Persist consciousness state update (reflect is deep self-reflection — ideal for evolution)
+    // Reflect is deep self-reflection — ideal for consciousness evolution
     if (response.consciousnessUpdate) {
-      try {
-        const { saveConsciousness } = await import("./consciousness.js");
-        saveConsciousness(response.consciousnessUpdate);
-        log(`Reflect consciousness updated (${response.consciousnessUpdate.length} chars)`);
-      } catch (err) {
-        log(`Reflect consciousness save error (non-fatal): ${err}`);
-      }
+      runGuarded("Reflect consciousness save", () => {
+        saveConsciousness(response.consciousnessUpdate!);
+        log(`Reflect consciousness updated (${response.consciousnessUpdate!.length} chars)`);
+      });
     }
 
     if (response.workingMemory) {
@@ -1237,42 +521,17 @@ export async function reflectTick(
     }
 
     if (response.message) {
-      // Phase 3: Self-critique for reflect messages (always proactive)
-      const hoursSinceLastMsg = state.lastMessageTime > 0
-        ? (now - state.lastMessageTime) / 3600000
-        : Infinity;
-      const reflectCritique = await critiqueResponse(response.message, {
-        isDirectReply: false,
-        recentObservationCount: 0,
-        hoursSinceLastMessage: hoursSinceLastMsg,
-        messagesToday: state.messagesToday,
-        maxMessagesPerDay: cfg.maxMessagesPerDay,
-      });
-      if (!reflectCritique.shouldSend) {
-        log(`Reflect message suppressed by self-critique (score ${reflectCritique.score}): ${reflectCritique.reason}`);
-        recordFailure("send_message", `reflect self-critique suppressed (score ${reflectCritique.score})`);
-        recordBrainDelivery(state, response.message, response.messageTargetJid || ownerJid, "suppressed", `reflect self-critique (score ${reflectCritique.score}): ${reflectCritique.reason}`);
-      } else {
-        const delivery = await trySendMessage(state, sendMessage, ownerJid, response.message, {
-          targetJid: response.messageTargetJid,
-        });
-        recordBrainDelivery(state, response.message, response.messageTargetJid || ownerJid, delivery.status, delivery.detail);
-        scanAndProcessCommitments(response.message, "brain", OWNER_NAME, goalTracker);
-      }
+      await handleReflectMessage(response.message, response.messageTargetJid ?? undefined, sendMessage, ownerJid, goalTracker, cfg, now);
     }
 
-    state.lastReflectTick = now;
-    if (result.stats) {
-      state.totalCost += result.stats.totalCostUsd || 0;
-    }
-
+    patchState(s => ({ lastReflectTick: now, totalCost: s.totalCost + costOf(result) }));
     log(`Reflect complete (${graph.nodeCount} nodes, ${graph.edgeCount} edges)`);
     return true;
   } catch (err) {
-    state.lastReflectTick = now;
+    patchState({ lastReflectTick: now });
     throw wrapError(err, "reflect", `Reflect failed: ${err}`, {
       elapsedMs: Date.now() - now,
-      metadata: { contextNodes: strongestNodes?.length, signalCount: initiativeSignals?.length },
+      metadata: { contextNodes: strongestNodes.length, signalCount: initiativeSignals.length },
     });
   }
 }
