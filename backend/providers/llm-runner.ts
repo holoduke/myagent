@@ -76,9 +76,11 @@ export class LlmRunner extends BaseProvider {
 
   private async runClaude(prompt: string): Promise<string | null> {
     try {
+      // Prompt is piped via stdin; bare `-p` selects print mode.
       const { promise } = this.spawnWithTimeout({
         command: "claude",
-        args: ["-p", prompt, "--output-format", "json", "--model", resolveClaudeModel(this.model), "--allowedTools", ""],
+        args: ["-p", "--output-format", "json", "--model", resolveClaudeModel(this.model), "--allowedTools", ""],
+        stdin: prompt,
         env: {
           ANTHROPIC_API_KEY: "",
           CLAUDECODE: "",

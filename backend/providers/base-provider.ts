@@ -1,8 +1,12 @@
 import { spawn, type ChildProcess } from "child_process";
 import type { AIProvider, AgentResult, AgentStats, ProviderAskOptions } from "./types.js";
 import { splitMessage } from "./util.js";
+import { killProcessGroup } from "../utils/worker-sandbox.js";
+import { createLogger } from "../logger.js";
 
 export { splitMessage };
+
+const log = createLogger("base-provider");
 
 export interface SpawnedProcess {
   child: ChildProcess;
@@ -20,6 +24,44 @@ export interface SpawnOptions {
   env?: Record<string, string | undefined>;
   timeout: number;
   onTimeout?: () => void;
+  /** Data written to the child's stdin before it is closed (e.g. the prompt). */
+  stdin?: string;
+}
+
+/**
+ * Spawn a child in its own process group (detached) so a timeout can kill the
+ * whole tree — Claude Code forks shells/tools that would otherwise outlive it.
+ * stdio stays piped; the parent still waits on it.
+ */
+function spawnDetached(command: string, args: string[], env?: Record<string, string | undefined>): ChildProcess {
+  return spawn(command, args, {
+    env: env ? { ...process.env, ...env } : { ...process.env },
+    stdio: ["pipe", "pipe", "pipe"],
+    detached: true,
+  });
+}
+
+/** Write optional stdin payload and close the pipe; log (don't crash on) EPIPE. */
+function feedStdin(child: ChildProcess, command: string, payload?: string): void {
+  const stdin = child.stdin;
+  if (!stdin) return;
+  stdin.on("error", (err) => {
+    log(`${command} stdin error: ${err.message}`);
+  });
+  if (payload !== undefined && payload.length > 0) {
+    stdin.end(payload);
+  } else {
+    stdin.end();
+  }
+}
+
+/** Kill the child's process group: SIGTERM now, SIGKILL after the grace period. */
+function terminateChild(child: ChildProcess): void {
+  if (child.pid) {
+    killProcessGroup(child.pid);
+  } else {
+    child.kill("SIGTERM");
+  }
 }
 
 /**
@@ -62,12 +104,9 @@ export abstract class BaseProvider implements AIProvider {
     isTimedOut: () => boolean;
     clearTimer: () => void;
   } {
-    const { command, args, env, timeout, onTimeout } = opts;
+    const { command, args, env, timeout, onTimeout, stdin } = opts;
 
-    const child = spawn(command, args, {
-      env: env ? { ...process.env, ...env } : { ...process.env },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = spawnDetached(command, args, env);
 
     let stdout = "";
     let stderr = "";
@@ -83,26 +122,32 @@ export abstract class BaseProvider implements AIProvider {
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      terminateChild(child);
       onTimeout?.();
     }, timeout);
 
     const promise = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      let settled = false;
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn();
+      };
+
       child.on("close", (code) => {
-        clearTimeout(timer);
-        if (timedOut) {
-          reject(new Error(`${command} timed out after ${timeout / 1000}s`));
-          return;
-        }
-        resolve({ code, stdout, stderr });
+        settle(() => {
+          if (timedOut) {
+            reject(new Error(`${command} timed out after ${timeout / 1000}s`));
+            return;
+          }
+          resolve({ code, stdout, stderr });
+        });
       });
 
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
+      child.on("error", (err) => settle(() => reject(err)));
 
-      child.stdin!.end();
+      feedStdin(child, command, stdin);
     });
 
     return {
@@ -125,19 +170,16 @@ export abstract class BaseProvider implements AIProvider {
     clearTimer: () => void;
     isTimedOut: () => boolean;
   } {
-    const { command, args, env, timeout, onTimeout } = opts;
+    const { command, args, env, timeout, onTimeout, stdin } = opts;
 
-    const child = spawn(command, args, {
-      env: env ? { ...process.env, ...env } : { ...process.env },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = spawnDetached(command, args, env);
 
     let timedOut = false;
 
     const createTimer = () =>
       setTimeout(() => {
         timedOut = true;
-        child.kill("SIGTERM");
+        terminateChild(child);
         onTimeout?.();
       }, timeout);
 
@@ -152,7 +194,7 @@ export abstract class BaseProvider implements AIProvider {
 
     const clearTimer = () => clearTimeout(timer);
 
-    child.stdin!.end();
+    feedStdin(child, command, stdin);
 
     return { child, resetTimer, clearTimer, isTimedOut: () => timedOut };
   }

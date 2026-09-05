@@ -112,8 +112,12 @@ if [ "$BOOT_COUNT" -gt 2 ]; then
   if [ "$BRAIN_OFF" = "true" ]; then
     echo "[entrypoint] Repeated crashes detected (boot #$BOOT_COUNT), but brain is DISABLED — skipping recovery worker"
   else
+    # Deterministic recovery: revert the last self-improve merge on a branch,
+    # open a PR and push it through the verified merge path (tsc + vitest in a
+    # worktree, capped at 10 min). The worker budgets 840 s internally, so the
+    # outer timeout must stay above that.
     echo "[entrypoint] Repeated crashes detected (boot #$BOOT_COUNT), running recovery worker in background..."
-    (timeout 300 npx tsx backend/self-improve.ts --recover 2>&1 || echo "[entrypoint] Recovery worker exited with code $?") &
+    (timeout 900 npx tsx backend/self-improve.ts --recover 2>&1 || echo "[entrypoint] Recovery worker exited with code $?") &
     RECOVERY_PID=$!
     echo "[entrypoint] Recovery worker started (PID: $RECOVERY_PID), continuing with app startup..."
   fi

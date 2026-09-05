@@ -1,27 +1,31 @@
 import { randomUUID } from "crypto";
-import { readFileSync, existsSync, unlinkSync } from "fs";
+import { existsSync, unlinkSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 import { safeReadJSON, atomicWriteJSON } from "./utils/file-store.js";
-import { execSync } from "child_process";
 import { askClaudeStreaming } from "./claude.js";
 import { getBrainConfig } from "./brain-config.js";
 import { MemoryGraph } from "./memory/graph.js";
-import { buildImprovementPrompt, buildRecoveryPrompt } from "./self-improve-prompt.js";
+import { buildImprovementPrompt } from "./self-improve-prompt.js";
 import type { ImprovementTask } from "./self-improve-prompt.js";
 import { normalizeIntentTokens, hashIntent } from "./utils/intent-hash.js";
 import { createLogger } from "./logger.js";
-import { BRAIN_DIR } from "./config.js";
+import { BRAIN_DIR, GITHUB_REPO } from "./config.js";
 import { isValidCommitSha } from "./utils/worker-sandbox.js";
+import { parseLastJsonObject } from "./utils/json-extract.js";
+import { runGit, runGh, verifyAndMergePr, outputTail } from "./self-improve-merge.js";
+import { getLastMerge, markShaReverted, wasShaReverted } from "./self-improve-state.js";
 
 const log = createLogger("self-improve");
 
-const LOG_FILE = process.env.LOG_FILE || "./agent.log";
-
 const TASK_FILE = `${BRAIN_DIR}/improve-task.json`;
 const RESULT_FILE = `${BRAIN_DIR}/improve-result.json`;
-const SELF_MOD_MARKER = `${BRAIN_DIR}/self-mod-marker.json`;
-const LAST_GOOD_COMMIT_FILE = `${BRAIN_DIR}/last-good-commit`;
 const WORKER_TOOLS = "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch";
-const MAX_RECOVERY_ATTEMPTS = 3;
+
+/** Whole recovery run must fit inside entrypoint.sh's `timeout` (900 s) with margin. */
+const RECOVERY_BUDGET_MS = 840_000;
+const RECOVERY_GIT_TIMEOUT_MS = 90_000;
+const RECOVERY_LOG_SCAN = 30;
 
 // ── Result types ──
 
@@ -37,32 +41,31 @@ interface ImproveResult {
   intent?: { summary: string; tokens: string[]; hash: string };
 }
 
-function parseResult(raw: string): ImproveResult | null {
-  try {
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    const parsed = JSON.parse(match[0]);
-    const result: ImproveResult = {
-      success: !!parsed.success,
-      description: parsed.description || "",
-      branch: parsed.branch || null,
-      prUrl: parsed.prUrl || null,
-      filesModified: Array.isArray(parsed.filesModified) ? parsed.filesModified : [],
-      metaNodeContent: parsed.metaNodeContent || "",
-      completedAt: Date.now(),
-      wasRollback: !!parsed.wasRollback,
-    };
-    if (parsed.intent && typeof parsed.intent.summary === "string" && parsed.intent.summary.trim()) {
-      const summary: string = parsed.intent.summary;
-      const rawTokens = Array.isArray(parsed.intent.tokens) ? parsed.intent.tokens : summary;
-      const tokens = normalizeIntentTokens(rawTokens);
-      const hash = hashIntent(tokens);
-      result.intent = { summary, tokens, hash };
-    }
-    return result;
-  } catch {
-    return null;
-  }
+function parseIntent(raw: unknown): ImproveResult["intent"] | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const intent = raw as { summary?: unknown; tokens?: unknown };
+  if (typeof intent.summary !== "string" || !intent.summary.trim()) return undefined;
+  const rawTokens = Array.isArray(intent.tokens) ? intent.tokens : intent.summary;
+  const tokens = normalizeIntentTokens(rawTokens);
+  return { summary: intent.summary, tokens, hash: hashIntent(tokens) };
+}
+
+/** Pick the last balanced JSON object carrying a `success` field. Exported for tests. */
+export function parseResult(raw: string): ImproveResult | null {
+  const parsed = parseLastJsonObject(raw, p => "success" in p);
+  if (!parsed) return null;
+  const intent = parseIntent(parsed.intent);
+  return {
+    success: !!parsed.success,
+    description: typeof parsed.description === "string" ? parsed.description : "",
+    branch: typeof parsed.branch === "string" ? parsed.branch : null,
+    prUrl: typeof parsed.prUrl === "string" ? parsed.prUrl : null,
+    filesModified: Array.isArray(parsed.filesModified) ? parsed.filesModified.filter((f): f is string => typeof f === "string") : [],
+    metaNodeContent: typeof parsed.metaNodeContent === "string" ? parsed.metaNodeContent : "",
+    completedAt: Date.now(),
+    wasRollback: !!parsed.wasRollback,
+    ...(intent ? { intent } : {}),
+  };
 }
 
 function writeResult(result: ImproveResult): void {
@@ -72,6 +75,19 @@ function writeResult(result: ImproveResult): void {
   } catch (err) {
     log(`Failed to write result: ${err}`);
   }
+}
+
+function failureResult(description: string, metaNodeContent: string, wasRollback = false): ImproveResult {
+  return {
+    success: false,
+    description,
+    branch: null,
+    prUrl: null,
+    filesModified: [],
+    metaNodeContent,
+    completedAt: Date.now(),
+    wasRollback,
+  };
 }
 
 function addMetaNode(graph: MemoryGraph, content: string, tags: string[]): void {
@@ -144,27 +160,11 @@ async function runImprove(): Promise<void> {
       }
     } else {
       log("Could not parse improvement result");
-      writeResult({
-        success: false,
-        description: "Failed to parse Claude response",
-        branch: null,
-        prUrl: null,
-        filesModified: [],
-        metaNodeContent: "Self-improvement attempted but response was unparseable",
-        completedAt: Date.now(),
-      });
+      writeResult(failureResult("Failed to parse Claude response", "Self-improvement attempted but response was unparseable"));
     }
   } catch (err) {
     log(`Improve failed: ${err}`);
-    writeResult({
-      success: false,
-      description: `Error: ${err}`,
-      branch: null,
-      prUrl: null,
-      filesModified: [],
-      metaNodeContent: `Self-improvement error: ${err}`,
-      completedAt: Date.now(),
-    });
+    writeResult(failureResult(`Error: ${err}`, `Self-improvement error: ${err}`));
   }
 
   // Clean up task file
@@ -173,151 +173,158 @@ async function runImprove(): Promise<void> {
 }
 
 // ── Recover Mode ──
+//
+// Deterministic: the container is boot-looping after a self-improve merge, so
+// we revert that merge on a branch, open a PR, and push it through the same
+// verified merge path. No LLM, no in-place edits of the running checkout.
+
+/** Pure: first commit whose subject looks like a self-improve squash ("ARIA: … (#N)"). */
+export function findLastSelfImproveCommit(logLines: string): { sha: string; subject: string } | null {
+  for (const line of logLines.split("\n")) {
+    const [sha, ...rest] = line.split("\t");
+    const subject = rest.join("\t").trim();
+    if (!sha || !isValidCommitSha(sha.trim())) continue;
+    if (/^ARIA\b/i.test(subject)) return { sha: sha.trim(), subject };
+  }
+  return null;
+}
+
+/** Pure: pull the PR URL out of `gh pr create` stdout. */
+export function extractPrUrl(stdout: string, repo: string = GITHUB_REPO): string | null {
+  const escaped = repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = stdout.match(new RegExp(`https://github\\.com/${escaped}/pull/\\d+`));
+  return match ? match[0] : null;
+}
+
+async function resolveRevertTarget(): Promise<{ sha: string; label: string } | null> {
+  const recorded = getLastMerge();
+  if (recorded && isValidCommitSha(recorded.mergeSha)) {
+    return { sha: recorded.mergeSha, label: `PR #${recorded.prNumber}` };
+  }
+  const fetch = await runGit(["fetch", "origin", "main"], undefined, RECOVERY_GIT_TIMEOUT_MS);
+  if (fetch.code !== 0) {
+    log(`git fetch failed: ${outputTail(fetch.stderr, 300)}`);
+    return null;
+  }
+  const gitLog = await runGit(["log", "origin/main", "--format=%H%x09%s", `-n${RECOVERY_LOG_SCAN}`]);
+  if (gitLog.code !== 0) {
+    log(`git log failed: ${outputTail(gitLog.stderr, 300)}`);
+    return null;
+  }
+  const found = findLastSelfImproveCommit(gitLog.stdout);
+  return found ? { sha: found.sha, label: found.subject.slice(0, 80) } : null;
+}
+
+async function createRevertPr(sha: string, label: string): Promise<{ ok: true; prUrl: string; branch: string } | { ok: false; error: string }> {
+  const short = sha.slice(0, 8);
+  const branch = `aria/revert-${short}`;
+  const dir = join(tmpdir(), `aria-recover-${short}`);
+  const authorArgs = ["-c", "user.name=ARIA Recovery", "-c", "user.email=aria-recovery@users.noreply.github.com"];
+
+  const fetch = await runGit(["fetch", "origin", "main"], undefined, RECOVERY_GIT_TIMEOUT_MS);
+  if (fetch.code !== 0) return { ok: false, error: `git fetch: ${outputTail(fetch.stderr, 300)}` };
+
+  await runGit(["worktree", "remove", "--force", dir]);
+  const add = await runGit(["worktree", "add", "--detach", dir, "origin/main"]);
+  if (add.code !== 0) return { ok: false, error: `git worktree add: ${outputTail(add.stderr, 300)}` };
+
+  try {
+    const steps: Array<[string, string[]]> = [
+      ["git checkout -b", ["checkout", "-b", branch]],
+      ["git revert", [...authorArgs, "revert", "--no-edit", sha]],
+      ["git push", ["push", "--force-with-lease", "origin", branch]],
+    ];
+    for (const [name, args] of steps) {
+      const r = await runGit(args, dir, RECOVERY_GIT_TIMEOUT_MS);
+      if (r.code !== 0) return { ok: false, error: `${name}: ${outputTail(`${r.stdout}\n${r.stderr}`, 300)}` };
+    }
+    const pr = await runGh([
+      "pr", "create",
+      "--head", branch,
+      "--title", `ARIA: revert ${label} (crash recovery)`,
+      "--body", `Automatic crash recovery: the container boot-looped after this self-improve merge, so ARIA is reverting ${sha}.\n\nThis PR goes through the same verified merge path (tsc + vitest in a clean worktree).`,
+    ]);
+    const prUrl = extractPrUrl(`${pr.stdout}\n${pr.stderr}`);
+    if (pr.code !== 0 || !prUrl) return { ok: false, error: `gh pr create: ${outputTail(`${pr.stdout}\n${pr.stderr}`, 300)}` };
+    return { ok: true, prUrl, branch };
+  } finally {
+    await runGit(["worktree", "remove", "--force", dir]);
+    await runGit(["worktree", "prune"]);
+  }
+}
 
 async function runRecover(): Promise<void> {
-  log("Starting recovery mode");
+  log("Starting recovery mode (deterministic revert)");
+  const deadline = Date.now() + RECOVERY_BUDGET_MS;
 
-  // Read last 200 lines of log
-  let logs: string;
-  try {
-    const fullLog = readFileSync(LOG_FILE, "utf-8");
-    const lines = fullLog.split("\n");
-    logs = lines.slice(-200).join("\n");
-  } catch {
-    logs = "(no logs available)";
-  }
-
-  // Read self-mod marker if exists
-  let recentChanges: string | null = null;
-  try {
-    if (existsSync(SELF_MOD_MARKER)) {
-      recentChanges = readFileSync(SELF_MOD_MARKER, "utf-8");
-    }
-  } catch { /* expected: marker file may not exist */ }
-
-  // Read last good commit
-  let lastGoodCommit: string | null = null;
-  try {
-    if (existsSync(LAST_GOOD_COMMIT_FILE)) {
-      lastGoodCommit = readFileSync(LAST_GOOD_COMMIT_FILE, "utf-8").trim();
-    }
-  } catch { /* expected: commit file may not exist */ }
-
-  for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt++) {
-    log(`Recovery attempt ${attempt}/${MAX_RECOVERY_ATTEMPTS}`);
-
-    const prompt = buildRecoveryPrompt(logs, recentChanges, lastGoodCommit);
-
-    try {
-      const result = await askClaudeStreaming(prompt, (delta) => {
-        process.stdout.write(delta);
-      }, {
-        timeout: 600_000,
-        allowedTools: WORKER_TOOLS,
-        noSession: true,
-        model: getBrainConfig().models?.selfImprove,
-      });
-
-      const responseText = result.messages.join("\n");
-      const parsed = parseResult(responseText);
-
-      if (parsed?.success) {
-        writeResult(parsed);
-        const graph = new MemoryGraph();
-        graph.load();
-        if (parsed.metaNodeContent) {
-          addMetaNode(graph, parsed.metaNodeContent, ["recovery", "crash-fix"]);
-        }
-        log("Recovery successful");
-        return;
-      }
-
-      // Check if compile works after the attempt
-      try {
-        execSync("npx tsc --noEmit", { cwd: "/app", timeout: 60_000, stdio: "pipe" });
-        log("Compile check passed after recovery attempt");
-        if (parsed) {
-          writeResult({ ...parsed, success: true });
-        }
-        return;
-      } catch {
-        log(`Compile still failing after attempt ${attempt}`);
-      }
-    } catch (err) {
-      log(`Recovery attempt ${attempt} error: ${err}`);
-    }
-  }
-
-  // All attempts failed — rollback if possible
-  if (lastGoodCommit && !isValidCommitSha(lastGoodCommit)) {
-    log(`Refusing rollback: last-good-commit value is not a valid SHA: ${JSON.stringify(lastGoodCommit)}`);
-    writeResult({
-      success: false,
-      description: "Recovery refused: last-good-commit file contains a non-SHA value",
-      branch: null,
-      prUrl: null,
-      filesModified: [],
-      metaNodeContent: "Crash recovery aborted: last-good-commit file was corrupted or tampered with",
-      completedAt: Date.now(),
-    });
-    log("Recovery mode complete");
+  if (!GITHUB_REPO) {
+    writeResult(failureResult("Recovery skipped: GITHUB_REPO not configured", "Crash recovery skipped: no GitHub repo configured, manual intervention needed", true));
     return;
   }
 
-  if (lastGoodCommit) {
-    log(`All recovery attempts failed, rolling back to ${lastGoodCommit}`);
-    try {
-      // SHA format validated above via isValidCommitSha — safe to interpolate.
-      execSync(`git checkout ${lastGoodCommit} -- backend/ frontend/`, { cwd: "/app", timeout: 30_000, stdio: "pipe" });
-      writeResult({
-        success: true,
-        description: `Rolled back to ${lastGoodCommit} after ${MAX_RECOVERY_ATTEMPTS} failed fix attempts`,
-        branch: null,
-        prUrl: null,
-        filesModified: [],
-        metaNodeContent: `Crash recovery: rolled back to ${lastGoodCommit} after failed fix attempts`,
-        completedAt: Date.now(),
-        wasRollback: true,
-      });
-    } catch (err) {
-      log(`Rollback failed: ${err}`);
-      writeResult({
-        success: false,
-        description: `All recovery attempts and rollback failed: ${err}`,
-        branch: null,
-        prUrl: null,
-        filesModified: [],
-        metaNodeContent: "Crash recovery completely failed, manual intervention needed",
-        completedAt: Date.now(),
-      });
-    }
-  } else {
-    writeResult({
-      success: false,
-      description: "All recovery attempts failed, no last good commit to rollback to",
-      branch: null,
-      prUrl: null,
-      filesModified: [],
-      metaNodeContent: "Crash recovery failed: no rollback available, manual intervention needed",
-      completedAt: Date.now(),
-    });
+  const target = await resolveRevertTarget();
+  if (!target) {
+    writeResult(failureResult("Recovery found no self-improve merge to revert", "Crash recovery: no recent self-improve merge found on main, manual intervention needed", true));
+    return;
+  }
+  if (wasShaReverted(target.sha)) {
+    log(`Commit ${target.sha} already reverted by an earlier recovery run — waiting for deploy`);
+    writeResult(failureResult(`Revert of ${target.sha} already in flight`, `Crash recovery: revert PR for ${target.sha.slice(0, 8)} already opened, waiting for it to deploy`, true));
+    return;
   }
 
+  log(`Reverting ${target.sha} (${target.label})`);
+  const pr = await createRevertPr(target.sha, target.label);
+  if (!pr.ok) {
+    log(`Revert PR creation failed: ${pr.error}`);
+    writeResult(failureResult(`Recovery could not open a revert PR: ${pr.error}`, "Crash recovery failed to open a revert PR, manual intervention needed", true));
+    return;
+  }
+  markShaReverted(target.sha);
+  log(`Revert PR opened: ${pr.prUrl}`);
+
+  const remaining = deadline - Date.now();
+  const merged = await verifyAndMergePr(pr.prUrl, { verifyTimeoutMs: Math.max(remaining, 60_000) });
+  const base = {
+    branch: pr.branch,
+    prUrl: pr.prUrl,
+    filesModified: [] as string[],
+    completedAt: Date.now(),
+    wasRollback: true,
+  };
+  if (merged.ok) {
+    writeResult({
+      ...base,
+      success: true,
+      description: `Reverted ${target.label} (${target.sha.slice(0, 8)}) via ${pr.prUrl}`,
+      metaNodeContent: `Crash recovery: reverted self-improve merge ${target.sha.slice(0, 8)} (${target.label}); Coolify redeploys the revert`,
+    });
+  } else {
+    writeResult({
+      ...base,
+      success: false,
+      description: `Revert PR opened but not merged: ${merged.error.slice(0, 300)}`,
+      metaNodeContent: `Crash recovery: revert PR ${pr.prUrl} needs manual merge (${merged.error.slice(0, 120)})`,
+    });
+  }
   log("Recovery mode complete");
 }
 
 // ── Main ──
 
-const mode = process.argv.includes("--recover") ? "recover" : "improve";
-log(`Worker started in ${mode} mode`);
+const isEntrypoint = process.argv[1]?.endsWith("self-improve.ts") || process.argv[1]?.endsWith("self-improve.js");
+if (isEntrypoint) {
+  const mode = process.argv.includes("--recover") ? "recover" : "improve";
+  log(`Worker started in ${mode} mode`);
 
-const run = mode === "recover" ? runRecover : runImprove;
-run()
-  .then(() => {
-    log("Worker exiting normally");
-    process.exit(0);
-  })
-  .catch((err) => {
-    log(`Worker fatal error: ${err}`);
-    process.exit(1);
-  });
+  const run = mode === "recover" ? runRecover : runImprove;
+  run()
+    .then(() => {
+      log("Worker exiting normally");
+      process.exit(0);
+    })
+    .catch((err) => {
+      log(`Worker fatal error: ${err}`);
+      process.exit(1);
+    });
+}

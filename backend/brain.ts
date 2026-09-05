@@ -45,7 +45,8 @@ import {
   pickUpSubAgentResults,
   checkAndSpawnSubAgentWorkers,
 } from "./brain-workers.js";
-import { loadQueue, getWeeklyCompletedCount, getDailyCompletedCount } from "./self-improve-queue.js";
+import { loadQueue, getWeeklyCompletedCount, getDailyCompletedCount, getConsecutiveFailuresToday } from "./self-improve-queue.js";
+import { getForcedReflectsToday, recordForcedReflect } from "./self-improve-state.js";
 import { startWatchdog, stopWatchdog } from "./brain-watchdog.js";
 
 const log = createLogger("brain");
@@ -524,9 +525,14 @@ async function tick(
   // ── Daily self-improve target: keep proposing until minPerDay improvements
   // have shipped today. Re-nudges at most every NUDGE_SPACING_MS, only while
   // the queue is drained and no worker is running, and stops at quiet hours.
+  // Hard caps: at most MAX_FORCED_REFLECTS_PER_DAY forced reflects, and none
+  // after MAX_CONSECUTIVE_FAILED_PROPOSALS failed proposals in a row today —
+  // a brain that keeps proposing broken changes should stop, not try harder.
   try {
     const ownerHourNow = Number(new Date().toLocaleString("en-US", { timeZone: cfg.ownerTimezone, hour: "numeric", hour12: false }));
     const NUDGE_SPACING_MS = 90 * 60 * 1000;
+    const MAX_FORCED_REFLECTS_PER_DAY = 2;
+    const MAX_CONSECUTIVE_FAILED_PROPOSALS = 3;
     if (
       cfg.selfImproveEnabled &&
       cfg.selfImproveMinPerDay > 0 &&
@@ -535,21 +541,33 @@ async function tick(
       Date.now() - (state.lastImproveNudgeAt ?? 0) >= NUDGE_SPACING_MS
     ) {
       const queue = loadQueue();
-      const queueActionable = queue.items.filter(i => i.status === "pending" || i.status === "approved" || i.status === "running").length;
+      const queueActionable = queue.items.filter(i =>
+        i.status === "pending" || i.status === "approved" || i.status === "running" ||
+        i.status === "merge-pending" || i.status === "merge-failed",
+      ).length;
       const doneToday = getDailyCompletedCount();
       const weeklyDone = getWeeklyCompletedCount();
+      const forcedToday = getForcedReflectsToday(today);
+      const failStreak = getConsecutiveFailuresToday();
       if (
         doneToday < cfg.selfImproveMinPerDay &&
         queueActionable === 0 &&
         !state.pendingSelfMod &&
-        weeklyDone < cfg.selfImproveMaxPerWeek
+        weeklyDone < cfg.selfImproveMaxPerWeek &&
+        forcedToday < MAX_FORCED_REFLECTS_PER_DAY &&
+        failStreak < MAX_CONSECUTIVE_FAILED_PROPOSALS
       ) {
         state.lastImproveNudgeAt = Date.now();
-        log(`Daily improve target: ${doneToday}/${cfg.selfImproveMinPerDay} shipped today — forcing reflect (weekly ${weeklyDone}/${cfg.selfImproveMaxPerWeek})`);
+        const forcedCount = recordForcedReflect(today);
+        log(`Daily improve target: ${doneToday}/${cfg.selfImproveMinPerDay} shipped today — forcing reflect ${forcedCount}/${MAX_FORCED_REFLECTS_PER_DAY} (weekly ${weeklyDone}/${cfg.selfImproveMaxPerWeek}, fail streak ${failStreak})`);
         state.lastReflectTick = 0;
         // The reflect prompt derives its improvement nudge from selfImproveStats
         // (improve queue + history ground truth) — no working-memory note needed,
         // and a self-written tracking string would go stale and read as false fact.
+        saveState(state);
+      } else if (doneToday < cfg.selfImproveMinPerDay && (forcedToday >= MAX_FORCED_REFLECTS_PER_DAY || failStreak >= MAX_CONSECUTIVE_FAILED_PROPOSALS)) {
+        state.lastImproveNudgeAt = Date.now();
+        log(`Daily improve target not met (${doneToday}/${cfg.selfImproveMinPerDay}) but nudging stopped: forced reflects ${forcedToday}/${MAX_FORCED_REFLECTS_PER_DAY}, fail streak ${failStreak}`);
         saveState(state);
       }
     }

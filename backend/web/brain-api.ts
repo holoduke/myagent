@@ -49,13 +49,36 @@ import {
   restoreBackup,
   deleteBackup,
 } from "../memory/backup.js";
+import { scrubWorkerEnv, validateSubAgentTools, isValidSubAgentTimeout, SUB_AGENT_MIN_TIMEOUT_MS, SUB_AGENT_MAX_TIMEOUT_MS } from "../utils/worker-sandbox.js";
+import { validateBrainConfigUpdate } from "./brain-config-validation.js";
 
 const log = createLogger("web");
+
+/**
+ * Validate the tool list / timeout a sub-agent is (re)configured with.
+ * Returns the fields to persist; throws ApiError(400) on anything outside the allowlist.
+ */
+function validateSubAgentSettings(data: Record<string, unknown>, requireAll: boolean): { tools?: string; timeout?: number } {
+  const out: { tools?: string; timeout?: number } = {};
+  if ("tools" in data || requireAll) {
+    const check = validateSubAgentTools(data.tools ?? "Bash,WebFetch");
+    if (!check.ok) throw new ApiError(400, check.reason);
+    out.tools = check.tools;
+  }
+  if ("timeout" in data || requireAll) {
+    const timeout = data.timeout ?? 300_000;
+    if (!isValidSubAgentTimeout(timeout)) {
+      throw new ApiError(400, `timeout must be a number between ${SUB_AGENT_MIN_TIMEOUT_MS} and ${SUB_AGENT_MAX_TIMEOUT_MS} ms`);
+    }
+    out.timeout = timeout;
+  }
+  return out;
+}
 
 
 /** Sanitize IDs from URL params to prevent path traversal (e.g. "../../etc/passwd"). */
 function sanitizeId(id: string): string {
-  return id.replace(/[^a-zA-Z0-9_\-]/g, "");
+  return id.replace(/[^a-zA-Z0-9_-]/g, "");
 }
 
 export const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
@@ -64,6 +87,7 @@ export const BRAIN_CONFIG_ALLOWED_KEYS: (keyof BrainConfig)[] = [
   "thinkCooldown", "consolidateInterval", "reflectInterval", "tickInterval", "preset",
   "selfImproveEnabled", "selfImproveAutoApprove", "selfImproveMaxPerWeek",
   "selfImproveMinPerDay", "selfImproveDailyHour", "selfImproveAutoMerge",
+  "selfImproveMaxPerDay", "selfImproveMinMergeIntervalMs",
   "characterType", "characterCustomPrompt",
   "detectionMode", "detectionPrompt",
   "selfCritiqueEnabled", "selfCritiqueThreshold",
@@ -320,7 +344,15 @@ export function handleBrainRoutes(
 
   if (pathname.match(/^\/api\/improve-queue\/[^/]+$/) && req.method === "DELETE" && isAuthenticated(req)) {
     const id = sanitizeId(pathname.split("/")[3]);
-    handleImproveQueueAction(req, res, () => { deleteItem(id); return { ok: true }; });
+    try {
+      if (deleteItem(id)) {
+        respondJson(res, 200, { ok: true });
+      } else {
+        respondJson(res, 409, { error: "Item is running and cannot be deleted until the worker finishes" });
+      }
+    } catch (err) {
+      respondJson(res, 400, { error: String(err) });
+    }
     return true;
   }
 
@@ -548,20 +580,26 @@ export function handleBrainRoutes(
       respondJson(res, 404, { error: "Not found" });
     } else {
       const state = loadSubAgentState();
+      const toolCheck = validateSubAgentTools(agent.tools);
       if (state.runningAgents[id]) {
         respondJson(res, 409, { error: "Agent is already running" });
+      } else if (!toolCheck.ok) {
+        respondJson(res, 400, { error: `Agent tools invalid: ${toolCheck.reason}` });
+      } else if (!isValidSubAgentTimeout(agent.timeout)) {
+        respondJson(res, 400, { error: `Agent timeout must be between ${SUB_AGENT_MIN_TIMEOUT_MS} and ${SUB_AGENT_MAX_TIMEOUT_MS} ms` });
       } else {
         const tFile = taskFilePath(id);
         writeFileSync(tFile, JSON.stringify({
           agentId: id,
           name: agent.name,
           prompt: agent.prompt,
-          tools: agent.tools,
+          tools: toolCheck.tools,
           timeout: agent.timeout,
         }, null, 2));
         const logFd = openWorkerLog(`sub-agent-${id}-${Date.now()}`);
+        // Same containment as the scheduled path: secrets never reach the worker.
         const child = spawn("npx", ["tsx", "backend/sub-agent-worker.ts", id], {
-          detached: true, stdio: ["ignore", logFd, logFd], cwd: "/app", env: { ...process.env },
+          detached: true, stdio: ["ignore", logFd, logFd], cwd: "/app", env: scrubWorkerEnv(process.env),
         });
         markRunning(id, child.pid);
         child.unref();
@@ -660,14 +698,15 @@ function handleWorkerLogStream(req: IncomingMessage, res: ServerResponse, logId:
 // -- Sub-Agent handlers --
 
 const handleSubAgentCreate = apiHandler(async (_req, res, data: Record<string, unknown>) => {
+  const settings = validateSubAgentSettings(data, true);
   const agent = addSubAgent({
     name: (data.name as string) || "Untitled Agent",
     description: (data.description as string) || "",
     prompt: (data.prompt as string) || "",
-    tools: (data.tools as string) || "Bash,WebFetch",
+    tools: settings.tools ?? "Bash,WebFetch",
     schedule: (data.schedule as { hours: number[] }) || { hours: [9, 21] },
     enabled: data.enabled !== false,
-    timeout: (data.timeout as number) || 300000,
+    timeout: settings.timeout ?? 300000,
     maxHistoryRuns: (data.maxHistoryRuns as number) || 20,
     source: "owner",
   });
@@ -677,7 +716,8 @@ const handleSubAgentCreate = apiHandler(async (_req, res, data: Record<string, u
 const handleSubAgentUpdate = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
   const url = new URL(_req.url || "/", "http://localhost");
   const id = decodeURIComponent(url.pathname.split("/")[3]);
-  const updated = updateSubAgent(id, data);
+  const settings = validateSubAgentSettings(data, false);
+  const updated = updateSubAgent(id, { ...data, ...settings });
   if (!updated) {
     throw new ApiError(404, "Not found");
   }
@@ -866,18 +906,15 @@ const handleBrainConfigUpdate = apiHandler(async (_req, _res, data: Record<strin
   if (data.preset && typeof data.preset === "string") {
     const preset = BRAIN_PRESETS.find(p => p.name === data.preset);
     if (!preset) throw new ApiError(400, `Unknown preset: ${data.preset}`);
-    update = { ...preset.values, preset: data.preset };
-    if ("enabled" in data && typeof data.enabled === "boolean") update.enabled = data.enabled;
-    if ("selfImproveEnabled" in data && typeof data.selfImproveEnabled === "boolean") update.selfImproveEnabled = data.selfImproveEnabled;
-    if ("selfImproveAutoApprove" in data && typeof data.selfImproveAutoApprove === "boolean") update.selfImproveAutoApprove = data.selfImproveAutoApprove;
-    if ("selfImproveMaxPerWeek" in data && typeof data.selfImproveMaxPerWeek === "number") update.selfImproveMaxPerWeek = data.selfImproveMaxPerWeek;
+    const PRESET_OVERRIDE_KEYS = ["enabled", "selfImproveEnabled", "selfImproveAutoApprove", "selfImproveMaxPerWeek"] as const;
+    const overrides = validateBrainConfigUpdate(data, PRESET_OVERRIDE_KEYS);
+    if (!overrides.ok) throw new ApiError(400, overrides.error);
+    update = { ...preset.values, ...overrides.update, preset: data.preset };
   } else {
-    update = {};
-    for (const key of BRAIN_CONFIG_ALLOWED_KEYS) {
-      if (key in data && key !== "preset" && key !== "models") {
-        (update as Record<string, unknown>)[key] = data[key];
-      }
-    }
+    const scalarKeys = BRAIN_CONFIG_ALLOWED_KEYS.filter(k => k !== "preset" && k !== "models");
+    const validated = validateBrainConfigUpdate(data, scalarKeys);
+    if (!validated.ok) throw new ApiError(400, validated.error);
+    update = { ...validated.update };
 
     // Validate models sub-object: only known keys with known values
     if ("models" in data && data.models !== null && typeof data.models === "object" && !Array.isArray(data.models)) {

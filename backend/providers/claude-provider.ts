@@ -266,8 +266,10 @@ export class ClaudeProvider extends BaseProvider {
 
     const prompt = this.buildPrompt(message, noSession ?? false);
 
+    // `-p` is a boolean flag; with no positional prompt the CLI reads it from
+    // stdin. Keeping the prompt out of argv keeps it out of `ps` and ARG_MAX.
     const args = [
-      "-p", prompt,
+      "-p",
       "--output-format", "json",
       "--allowedTools", allowedTools,
     ];
@@ -285,6 +287,7 @@ export class ClaudeProvider extends BaseProvider {
       const { promise } = this.spawnWithTimeout({
         command: "claude",
         args,
+        stdin: prompt,
         env: this.claudeEnv,
         timeout,
         onTimeout: () => {
@@ -344,8 +347,9 @@ export class ClaudeProvider extends BaseProvider {
 
     const prompt = this.buildPrompt(message, noSession ?? false);
 
+    // Prompt goes to stdin (see runClaude) — `-p` alone switches to print mode.
     const args = [
-      "-p", prompt,
+      "-p",
       "--output-format", "stream-json",
       "--verbose",
       "--include-partial-messages",
@@ -370,16 +374,31 @@ export class ClaudeProvider extends BaseProvider {
       let buffer = "";
       let stderr = "";
 
+      // The promise must settle exactly once: timeout, close and error can all
+      // fire for the same child (timeout → kill → close, or spawn error → close).
+      let settled = false;
+      const settleResolve = (value: AgentResult & { isAuthError?: boolean }) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const settleReject = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
+
       const inactivityLimit = timeout;
 
       const { child, resetTimer, clearTimer, isTimedOut } = this.spawnWithActivityTimeout({
         command: "claude",
         args,
+        stdin: prompt,
         env: this.claudeEnv,
         timeout: inactivityLimit,
         onTimeout: () => {
           log(`Streaming inactivity timeout (${inactivityLimit / 1000}s no activity, session ${this.currentSessionId || "none"} preserved)`);
-          reject(new Error(`Claude timed out after ${inactivityLimit / 1000}s of inactivity`));
+          settleReject(new Error(`Claude timed out after ${inactivityLimit / 1000}s of inactivity`));
         },
       });
 
@@ -447,30 +466,33 @@ export class ClaudeProvider extends BaseProvider {
 
       child.on("close", (code) => {
         clearTimer();
-        if (isTimedOut()) return;
+        if (isTimedOut()) {
+          settleReject(new Error(`Claude timed out after ${inactivityLimit / 1000}s of inactivity`));
+          return;
+        }
         log(`Streaming exit code: ${code}`);
         if (stderr) log(`Streaming stderr: ${stderr.slice(0, 500)}`);
 
         if (isAuthError) {
-          resolve({ messages: [], isAuthError: true });
+          settleResolve({ messages: [], isAuthError: true });
           return;
         }
 
         if (!fullText && code !== 0) {
           this.handleSessionError(stderr, noSession ?? false, "Streaming");
-          reject(new Error(`Claude exited with code ${code}: ${stderr.slice(0, 500)}`));
+          settleReject(new Error(`Claude exited with code ${code}: ${stderr.slice(0, 500)}`));
           return;
         }
 
         const text = fullText || "No response from Claude.";
         log(`Streaming result: ${text.slice(0, 200)}`);
         if (stats) log(`Stats: ${stats.durationMs}ms, $${stats.totalCostUsd.toFixed(4)}, ${stats.inputTokens}in/${stats.outputTokens}out`);
-        resolve({ messages: this.splitMessage(text), sessionId, stats });
+        settleResolve({ messages: this.splitMessage(text), sessionId, stats });
       });
 
       child.on("error", (err) => {
         clearTimer();
-        reject(err);
+        settleReject(err);
       });
     });
   }

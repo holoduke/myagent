@@ -82,3 +82,70 @@ export function findDenylistViolations(files: readonly string[]): string[] {
   }
   return violations;
 }
+
+// ── Sub-agent tool / timeout validation ──
+
+/** Tools a sub-agent may be granted. Anything else is rejected at the API boundary. */
+export const SUB_AGENT_ALLOWED_TOOLS: readonly string[] = [
+  "Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch",
+];
+
+export const SUB_AGENT_MIN_TIMEOUT_MS = 30_000;          // 30 s
+export const SUB_AGENT_MAX_TIMEOUT_MS = 30 * 60 * 1000;  // 30 min
+
+export type ToolsValidation =
+  | { ok: true; tools: string }
+  | { ok: false; reason: string };
+
+/**
+ * Validate a comma/space-separated tool list against the allowlist.
+ * Returns the normalized comma-joined list on success.
+ */
+export function validateSubAgentTools(tools: unknown): ToolsValidation {
+  if (typeof tools !== "string") return { ok: false, reason: "tools must be a string" };
+  const names = tools.split(/[\s,]+/).map(t => t.trim()).filter(t => t.length > 0);
+  if (names.length === 0) return { ok: false, reason: "tools must name at least one tool" };
+  const bad = names.filter(n => !SUB_AGENT_ALLOWED_TOOLS.includes(n));
+  if (bad.length > 0) return { ok: false, reason: `tools not allowed: ${bad.join(", ")}` };
+  return { ok: true, tools: Array.from(new Set(names)).join(",") };
+}
+
+/** True when `timeout` is a finite integer within the sub-agent bounds. */
+export function isValidSubAgentTimeout(timeout: unknown): timeout is number {
+  return typeof timeout === "number"
+    && Number.isFinite(timeout)
+    && timeout >= SUB_AGENT_MIN_TIMEOUT_MS
+    && timeout <= SUB_AGENT_MAX_TIMEOUT_MS;
+}
+
+// ── Process helpers ──
+
+export function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Terminate a detached worker and everything it spawned: SIGTERM the process
+ * group, then SIGKILL whatever is still alive after `graceMs`.
+ * Falls back to signalling the single pid when the group is unreachable.
+ * Never throws — a dead process is the desired end state.
+ */
+export function killProcessGroup(pid: number, graceMs = 5000): void {
+  const signal = (sig: NodeJS.Signals): void => {
+    try {
+      process.kill(-pid, sig);
+    } catch {
+      try { process.kill(pid, sig); } catch { /* already gone */ }
+    }
+  };
+  signal("SIGTERM");
+  const timer = setTimeout(() => {
+    if (isPidAlive(pid)) signal("SIGKILL");
+  }, graceMs);
+  timer.unref();
+}

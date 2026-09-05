@@ -36,6 +36,7 @@ import type { BrainConfig } from "./brain-config.js";
 import {
   loadQueue,
   loadHistory,
+  enqueue,
   enqueueApproved,
   getWeeklyCompletedCount,
 } from "./self-improve-queue.js";
@@ -111,7 +112,8 @@ export function enqueueImprovementProposals(
 
   const weeklyRemaining = cfg.selfImproveMaxPerWeek - getWeeklyCompletedCount();
   const currentPending = loadQueue().items.filter(
-    i => i.status === "pending" || i.status === "approved" || i.status === "running",
+    i => i.status === "pending" || i.status === "approved" || i.status === "running"
+      || i.status === "merge-pending" || i.status === "merge-failed",
   ).length;
   const canEnqueue = Math.max(0, weeklyRemaining - currentPending);
   let enqueued = 0;
@@ -140,8 +142,14 @@ export function enqueueImprovementProposals(
       planNodeId: proposal.planNodeId || "",
       createdAt: Date.now(),
     };
-    enqueueApproved(task);
-    log(`${source}: enqueued improvement proposal (pre-approved): ${proposal.description.slice(0, 80)}`);
+    // Brain-originated proposals wait for review unless the owner opted into auto-approval.
+    if (cfg.selfImproveAutoApprove) {
+      enqueueApproved(task);
+      log(`${source}: enqueued improvement proposal (auto-approved): ${proposal.description.slice(0, 80)}`);
+    } else {
+      enqueue(task);
+      log(`${source}: enqueued improvement proposal (pending review): ${proposal.description.slice(0, 80)}`);
+    }
     enqueued++;
   }
 

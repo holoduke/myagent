@@ -5,7 +5,43 @@ import {
   scrubWorkerEnv,
   isValidCommitSha,
   findDenylistViolations,
+  validateSubAgentTools,
+  isValidSubAgentTimeout,
+  SUB_AGENT_MIN_TIMEOUT_MS,
+  SUB_AGENT_MAX_TIMEOUT_MS,
+  isPidAlive,
 } from "../backend/utils/worker-sandbox.js";
+
+describe("validateSubAgentTools", () => {
+  it("accepts allowlisted tools in comma or space separated form and dedupes", () => {
+    expect(validateSubAgentTools("Bash,WebFetch")).toEqual({ ok: true, tools: "Bash,WebFetch" });
+    expect(validateSubAgentTools("Bash WebFetch Bash")).toEqual({ ok: true, tools: "Bash,WebFetch" });
+  });
+
+  it("rejects unknown tools, empty lists and non-strings", () => {
+    expect(validateSubAgentTools("Bash,Task")).toMatchObject({ ok: false, reason: expect.stringContaining("Task") });
+    expect(validateSubAgentTools("")).toMatchObject({ ok: false });
+    expect(validateSubAgentTools(["Bash"])).toMatchObject({ ok: false });
+  });
+});
+
+describe("isValidSubAgentTimeout", () => {
+  it("bounds the timeout", () => {
+    expect(isValidSubAgentTimeout(SUB_AGENT_MIN_TIMEOUT_MS)).toBe(true);
+    expect(isValidSubAgentTimeout(SUB_AGENT_MAX_TIMEOUT_MS)).toBe(true);
+    expect(isValidSubAgentTimeout(SUB_AGENT_MIN_TIMEOUT_MS - 1)).toBe(false);
+    expect(isValidSubAgentTimeout(SUB_AGENT_MAX_TIMEOUT_MS + 1)).toBe(false);
+    expect(isValidSubAgentTimeout("300000")).toBe(false);
+    expect(isValidSubAgentTimeout(NaN)).toBe(false);
+  });
+});
+
+describe("isPidAlive", () => {
+  it("sees the current process and not a bogus pid", () => {
+    expect(isPidAlive(process.pid)).toBe(true);
+    expect(isPidAlive(2_000_000_000)).toBe(false);
+  });
+});
 
 describe("scrubWorkerEnv", () => {
   it("removes all known secret keys", () => {

@@ -4,7 +4,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
-import { spawn, execFile } from "child_process";
+import { spawn } from "child_process";
 import { createLogger } from "./logger.js";
 import { openWorkerLog, pruneWorkerLogs } from "./worker-logs.js";
 import type { BrainState } from "./memory/types.js";
@@ -17,8 +17,23 @@ import {
   dequeueApproved,
   completeItem,
   failItem,
+  markMergePending,
+  recordMergeFailure,
+  getMergeCandidates,
+  getQueueItem,
   getWeeklyCompletedCount,
+  getDailyAttemptCount,
+  getLastMergeAt,
 } from "./self-improve-queue.js";
+import type { QueueItem, ImproveResult } from "./self-improve-queue.js";
+import {
+  verifyAndMergePr,
+  evaluateMergeGates,
+  mergeBackoffMs,
+  closePr,
+  MAX_MERGE_ATTEMPTS,
+} from "./self-improve-merge.js";
+import { setWorkerPid, getWorkerPid, recordLastMerge } from "./self-improve-state.js";
 import { findIntentCollisions } from "./utils/intent-hash.js";
 import {
   getDueSubAgents,
@@ -30,18 +45,38 @@ import {
   saveSubAgents,
   taskFilePath,
   resultFilePath,
-  loadSubAgentHistory,
   isProcessAlive,
 } from "./sub-agents.js";
 import type { SubAgentResult } from "./sub-agents.js";
-import { getBrainConfig } from "./brain-config.js";
+import { getBrainConfig, getOwnerLocalTime } from "./brain-config.js";
 import { randomUUID } from "crypto";
-import { scrubWorkerEnv, findDenylistViolations } from "./utils/worker-sandbox.js";
+import { scrubWorkerEnv, findDenylistViolations, isPidAlive, killProcessGroup } from "./utils/worker-sandbox.js";
 
 const log = createLogger("brain-workers");
 
 const SELF_IMPROVE_STALE_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 const SUB_AGENT_STALE_TIMEOUT = 20 * 60 * 1000; // 20 minutes
+
+// ── Shared helpers ──
+
+function addMetaNode(graph: MemoryGraph, content: string, tags: string[], pinned: boolean): void {
+  try {
+    graph.addNode({
+      id: `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`,
+      type: "meta",
+      content,
+      tags: ["self-improvement", ...tags],
+      strength: pinned ? 1.0 : 0.9,
+      pinned,
+      createdAt: Date.now(),
+      lastAccessedAt: Date.now(),
+      accessCount: 1,
+    });
+    graph.save();
+  } catch (err) {
+    log(`Failed to record meta node (${tags.join(",")}): ${err}`);
+  }
+}
 
 // ── Self-Improvement Worker ──
 
@@ -57,9 +92,61 @@ function spawnSelfImproveWorker(): void {
       env: scrubWorkerEnv(process.env),
     });
     child.unref();
+    setWorkerPid(child.pid);
     log(`Self-improve worker spawned (pid: ${child.pid})`);
   } catch (err) {
     log(`Failed to spawn self-improve worker: ${err}`);
+  }
+}
+
+function readQueuedItemId(queuedMarkerFile: string): string | null {
+  try {
+    if (existsSync(queuedMarkerFile)) {
+      return readFileSync(queuedMarkerFile, "utf-8").trim() || null;
+    }
+  } catch (err) {
+    log(`Failed to read queued marker file: ${err}`);
+  }
+  const running = loadQueue().items.find(i => i.status === "running");
+  return running ? running.id : null;
+}
+
+/** Route a worker result to its queue item: fail, complete, or park for a verified merge. */
+function routeResultToQueue(queueItemId: string, queueResult: ImproveResult): void {
+  if (!queueResult.success) {
+    failItem(queueItemId, queueResult);
+    return;
+  }
+  if (!queueResult.prUrl) {
+    completeItem(queueItemId, queueResult);
+    return;
+  }
+  // The merge happens later, gated and verified, from processMergeQueue().
+  if (!markMergePending(queueItemId, queueResult)) {
+    log(`Queue item ${queueItemId} disappeared before merge — PR left open: ${queueResult.prUrl}`);
+  }
+}
+
+function recordIntentCollisions(graph: MemoryGraph, result: { intent?: { hash: string; summary: string } }, queueItemId: string | null): void {
+  if (!result.intent?.hash) return;
+  try {
+    const history = loadHistory();
+    const matches = findIntentCollisions(history.entries, result.intent.hash, 30)
+      .filter(m => m.id !== queueItemId);
+    if (matches.length === 0) return;
+    const summaries = matches
+      .map(m => (m.task?.description ?? "").slice(0, 60))
+      .filter(s => s.length > 0)
+      .join("; ");
+    addMetaNode(
+      graph,
+      `Intent collision detected: '${result.intent.summary}' (hash ${result.intent.hash}) overlaps with ${matches.length} prior improvement(s) in last 30 days: ${summaries}. Two workers may have fixed the same root cause from different ends — review diffs to determine duplicate / complementary / conflicting.`,
+      ["intent-collision"],
+      true,
+    );
+    log(`Intent collision: ${matches.length} prior match(es) on hash ${result.intent.hash}`);
+  } catch (err) {
+    log(`Intent collision check failed: ${err}`);
   }
 }
 
@@ -71,6 +158,9 @@ export function pickUpImproveResult(
   improveTaskFile: string,
   queuedMarkerFile: string,
 ): void {
+  // Parked results first: this is the continuation of result handling.
+  processMergeQueue(graph);
+
   if (!existsSync(improveResultFile)) return;
 
   try {
@@ -78,25 +168,10 @@ export function pickUpImproveResult(
     const result = JSON.parse(raw);
     log(`Picked up improve result: success=${result.success}, description=${result.description?.slice(0, 100)}`);
 
-    // Route result through queue — find the running item
-    let queueItemId: string | null = null;
-    try {
-      if (existsSync(queuedMarkerFile)) {
-        queueItemId = readFileSync(queuedMarkerFile, "utf-8").trim();
-      }
-    } catch (err) {
-      log(`Failed to read queued marker file: ${err}`);
-    }
+    const queueItemId = readQueuedItemId(queuedMarkerFile);
 
-    if (!queueItemId) {
-      const queue = loadQueue();
-      const running = queue.items.find(i => i.status === "running");
-      if (running) queueItemId = running.id;
-    }
-
-    // Post-hoc sandbox audit: if the worker modified denylisted paths, force-fail
-    // the queue item and loudly record the violation regardless of what the worker
-    // claimed. The PR will still exist on GitHub; a human must close it.
+    // Post-hoc sandbox audit on the worker's self-report. The authoritative
+    // check runs on the real PR diff before merge (self-improve-merge.ts).
     const filesModified: string[] = Array.isArray(result.filesModified) ? result.filesModified : [];
     const violations = findDenylistViolations(filesModified);
     const sandboxFailed = violations.length > 0;
@@ -105,7 +180,7 @@ export function pickUpImproveResult(
     }
 
     if (queueItemId) {
-      const queueResult = {
+      routeResultToQueue(queueItemId, {
         success: !sandboxFailed && !!result.success,
         description: sandboxFailed
           ? `SANDBOX VIOLATION — worker touched forbidden files: ${violations.join(", ")}. Original: ${result.description || ""}`
@@ -114,81 +189,33 @@ export function pickUpImproveResult(
         branch: result.branch || undefined,
         wasRollback: result.wasRollback || undefined,
         intent: result.intent || undefined,
-      };
-      if (queueResult.success) {
-        completeItem(queueItemId, queueResult);
-        if (queueResult.prUrl) {
-          autoMergeImprovePr(queueResult.prUrl, graph);
-        }
-      } else {
-        failItem(queueItemId, queueResult);
-      }
+      });
     }
 
-    // Clean up marker file
     try { if (existsSync(queuedMarkerFile)) unlinkSync(queuedMarkerFile); } catch (err) { log(`Failed to clean up queued marker file: ${err}`); }
 
-    // Create meta node from result
     if (result.metaNodeContent || sandboxFailed) {
-      const id = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
       const violationNote = sandboxFailed
         ? `\n!!! SANDBOX VIOLATION: worker modified denylisted files: ${violations.join(", ")}. PR open but flagged.`
         : "";
       const baseContent = result.metaNodeContent || "Self-improvement worker reported no summary";
-      graph.addNode({
-        id,
-        type: "meta",
-        content: baseContent + violationNote + (result.prUrl ? `\nPR: ${result.prUrl}` : ""),
-        tags: [
-          "self-improvement",
+      addMetaNode(
+        graph,
+        baseContent + violationNote + (result.prUrl ? `\nPR: ${result.prUrl}` : ""),
+        [
           (sandboxFailed || !result.success) ? "failed" : "success",
           ...(result.wasRollback ? ["rollback"] : []),
           ...(sandboxFailed ? ["sandbox-violation"] : []),
         ],
-        strength: sandboxFailed ? 1.0 : 0.9,
-        pinned: sandboxFailed,
-        createdAt: Date.now(),
-        lastAccessedAt: Date.now(),
-        accessCount: 1,
-      });
-      graph.save();
-      log(`Created meta node ${id} from improve result`);
+        sandboxFailed,
+      );
     }
 
-    // Intent-collision detection: capture loose, classify late.
-    // Cluster on intent.hash to spot when two workers shipped fixes for the same root cause.
-    if (result.success && result.intent?.hash) {
-      try {
-        const history = loadHistory();
-        const matches = findIntentCollisions(history.entries, result.intent.hash, 30)
-          .filter(m => m.id !== queueItemId);
-        if (matches.length > 0) {
-          const summaries = matches
-            .map(m => (m.task?.description ?? "").slice(0, 60))
-            .filter(s => s.length > 0)
-            .join("; ");
-          const collisionId = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
-          graph.addNode({
-            id: collisionId,
-            type: "meta",
-            content: `Intent collision detected: '${result.intent.summary}' (hash ${result.intent.hash}) overlaps with ${matches.length} prior improvement(s) in last 30 days: ${summaries}. Two workers may have fixed the same root cause from different ends — review diffs to determine duplicate / complementary / conflicting.`,
-            tags: ["self-improvement", "intent-collision"],
-            strength: 0.9,
-            pinned: true,
-            createdAt: Date.now(),
-            lastAccessedAt: Date.now(),
-            accessCount: 1,
-          });
-          graph.save();
-          log(`Intent collision: ${collisionId} (${matches.length} prior match(es) on hash ${result.intent.hash})`);
-        }
-      } catch (err) {
-        log(`Intent collision check failed: ${err}`);
-      }
-    }
+    if (result.success) recordIntentCollisions(graph, result, queueItemId);
 
     state.pendingSelfMod = false;
     saveState(state);
+    setWorkerPid(undefined);
     unlinkSync(improveResultFile);
     try { if (existsSync(improveTaskFile)) unlinkSync(improveTaskFile); } catch (err) { log(`Failed to clean up improve task file: ${err}`); }
   } catch (err) {
@@ -196,46 +223,80 @@ export function pickUpImproveResult(
   }
 }
 
-/**
- * Squash-merge a successful self-improve PR so Coolify deploys it.
- * Fire-and-forget: a failed merge (conflict, checks) leaves the PR open and
- * records a pinned meta node so it surfaces instead of silently piling up.
- */
-function autoMergeImprovePr(prUrl: string, graph: MemoryGraph): void {
-  const cfg = getBrainConfig();
-  if (!cfg.selfImproveAutoMerge) {
-    log(`Auto-merge disabled — PR left open for manual review: ${prUrl}`);
+// ── Verified merge queue ──
+
+let mergeInProgress: string | null = null;
+
+function finishMergeFailure(item: QueueItem, error: string, prNumber: number | null, graph: MemoryGraph): void {
+  const updated = recordMergeFailure(item.id, error, Date.now() + mergeBackoffMs((item.mergeAttempts ?? 0) + 2));
+  const attempts = updated?.mergeAttempts ?? MAX_MERGE_ATTEMPTS;
+  if (attempts < MAX_MERGE_ATTEMPTS && prNumber !== null) {
+    log(`Merge attempt ${attempts}/${MAX_MERGE_ATTEMPTS} failed for ${item.id} — will retry: ${error.slice(0, 200)}`);
     return;
   }
-  log(`Auto-merging self-improve PR: ${prUrl}`);
-  execFile(
-    "gh",
-    ["pr", "merge", prUrl, "--squash", "--delete-branch"],
-    { timeout: 60_000 },
-    (err, _stdout, stderr) => {
-      if (!err) {
-        log(`Auto-merged ${prUrl} — Coolify will deploy`);
-        return;
-      }
-      log(`Auto-merge FAILED for ${prUrl}: ${(stderr || err.message).slice(0, 300)} — PR left open`);
-      try {
-        graph.addNode({
-          id: `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`,
-          type: "meta",
-          content: `Self-improve PR could not be auto-merged and needs attention: ${prUrl}\nError: ${(stderr || err.message).slice(0, 300)}`,
-          tags: ["self-improvement", "merge-failed"],
-          strength: 0.9,
-          pinned: true,
-          createdAt: Date.now(),
-          lastAccessedAt: Date.now(),
-          accessCount: 1,
-        });
-        graph.save();
-      } catch (nodeErr) {
-        log(`Failed to record merge-failure node: ${nodeErr}`);
-      }
-    },
+  log(`Merge exhausted for ${item.id} — closing PR: ${error.slice(0, 200)}`);
+  if (prNumber !== null) {
+    void closePr(prNumber, `ARIA auto-merge gave up after ${attempts} attempt(s). Last error:\n\n\`\`\`\n${error}\n\`\`\``);
+  }
+  failItem(item.id, { ...(item.result ?? { success: false, description: "" }), success: false, mergeError: error });
+  addMetaNode(
+    graph,
+    `Self-improve PR could not be merged after ${attempts} attempt(s) and was closed: ${item.result?.prUrl ?? "?"}\nError: ${error.slice(0, 300)}`,
+    ["merge-failed"],
+    true,
   );
+}
+
+async function runVerifiedMerge(item: QueueItem, graph: MemoryGraph): Promise<void> {
+  const prUrl = item.result?.prUrl;
+  if (!prUrl) {
+    failItem(item.id, { ...(item.result ?? { success: false, description: "" }), success: false, mergeError: "no PR URL" });
+    return;
+  }
+  const outcome = await verifyAndMergePr(prUrl, { stillWanted: () => getQueueItem(item.id) !== null });
+  if (outcome.ok) {
+    recordLastMerge({ prNumber: outcome.prNumber, prUrl, mergeSha: outcome.mergeSha, mergedAt: outcome.mergedAt });
+    if (!completeItem(item.id, item.result ?? { success: true, description: "" }, outcome.mergedAt)) {
+      log(`Merged ${prUrl} but queue item ${item.id} was gone — recorded in state only`);
+    }
+    return;
+  }
+  if (getQueueItem(item.id) === null) {
+    log(`Skipping merge bookkeeping for ${item.id}: item was deleted (${outcome.error.slice(0, 120)})`);
+    return;
+  }
+  finishMergeFailure(item, outcome.error, outcome.prNumber, graph);
+}
+
+/**
+ * Merge at most one parked PR per tick, subject to the budget/spacing/quiet
+ * gates. Runs in the background so the tick is not blocked by verification.
+ */
+export function processMergeQueue(graph: MemoryGraph): void {
+  if (mergeInProgress) return;
+  const now = Date.now();
+  const [candidate] = getMergeCandidates(now);
+  if (!candidate) return;
+
+  const cfg = getBrainConfig();
+  const gate = evaluateMergeGates({
+    cfg,
+    ownerHour: getOwnerLocalTime(cfg.ownerTimezone).hour,
+    dailyAttempts: getDailyAttemptCount(),
+    lastMergeAt: getLastMergeAt(),
+    now,
+    isRecovery: !!candidate.result?.wasRollback,
+  });
+  if (!gate.allowed) {
+    log(`Merge of ${candidate.id} deferred: ${gate.reason}`);
+    return;
+  }
+
+  mergeInProgress = candidate.id;
+  log(`Starting verified merge for ${candidate.id}: ${candidate.result?.prUrl}`);
+  runVerifiedMerge(candidate, graph)
+    .catch(err => log(`Verified merge crashed for ${candidate.id}: ${err}`))
+    .finally(() => { mergeInProgress = null; });
 }
 
 export function interceptDirectTask(
@@ -253,6 +314,58 @@ export function interceptDirectTask(
     log("Intercepted self-improvement task → queued");
   } catch (err) {
     log(`Failed to intercept improve task: ${err}`);
+  }
+}
+
+function handleStaleWorker(
+  state: BrainState,
+  saveState: (s: BrainState) => void,
+  improveTaskFile: string,
+  elapsedMin: number,
+): void {
+  const pid = getWorkerPid();
+  if (pid && isPidAlive(pid)) {
+    log(`Self-improve worker pid ${pid} still alive after ${elapsedMin}m — killing its process group`);
+    killProcessGroup(pid);
+  }
+  setWorkerPid(undefined);
+
+  if (existsSync(improveTaskFile)) {
+    log(`Self-improve worker stale (${elapsedMin}m), task file exists — re-spawning`);
+    state.selfModSpawnedAt = Date.now();
+    saveState(state);
+    spawnSelfImproveWorker();
+  } else {
+    log(`Self-improve worker stale (${elapsedMin}m), no task file — clearing flag`);
+    state.pendingSelfMod = false;
+    state.selfModSpawnedAt = undefined;
+    saveState(state);
+  }
+}
+
+function dequeueNextTask(cfg: ReturnType<typeof getBrainConfig>, improveTaskFile: string, queuedMarkerFile: string): void {
+  if (getWeeklyCompletedCount() >= cfg.selfImproveMaxPerWeek) return;
+  const attemptsToday = getDailyAttemptCount();
+  if (attemptsToday >= cfg.selfImproveMaxPerDay) {
+    return;
+  }
+
+  if (cfg.selfImproveAutoApprove) {
+    for (const item of loadQueue().items) {
+      if (item.status === "pending") {
+        try { approveItem(item.id); } catch (err) { log(`Failed to auto-approve queue item ${item.id}: ${err}`); }
+      }
+    }
+  }
+
+  const item = dequeueApproved();
+  if (!item) return;
+  log(`Dequeued approved item ${item.id} — writing task file (attempts today ${attemptsToday}/${cfg.selfImproveMaxPerDay})`);
+  try {
+    writeFileSync(improveTaskFile, JSON.stringify(item.task, null, 2));
+    writeFileSync(queuedMarkerFile, item.id);
+  } catch (err) {
+    log(`Failed to write task file from queue: ${err}`);
   }
 }
 
@@ -278,47 +391,16 @@ export function checkAndSpawnImproveWorker(
 
   // Case 2: Worker was spawned but seems stuck
   if (state.pendingSelfMod && !existsSync(improveResultFile)) {
-    const spawnedAt = state.selfModSpawnedAt || 0;
-    const elapsed = Date.now() - spawnedAt;
+    const elapsed = Date.now() - (state.selfModSpawnedAt || 0);
     if (elapsed > SELF_IMPROVE_STALE_TIMEOUT) {
-      if (existsSync(improveTaskFile)) {
-        log(`Self-improve worker stale (${Math.round(elapsed / 60000)}m), task file exists — re-spawning`);
-        state.selfModSpawnedAt = Date.now();
-        saveState(state);
-        spawnSelfImproveWorker();
-      } else {
-        log(`Self-improve worker stale (${Math.round(elapsed / 60000)}m), no task file — clearing flag`);
-        state.pendingSelfMod = false;
-        state.selfModSpawnedAt = undefined;
-        saveState(state);
-      }
+      handleStaleWorker(state, saveState, improveTaskFile, Math.round(elapsed / 60000));
     }
     return;
   }
 
   // Case 3: No worker running, no task file — try to dequeue
   if (!state.pendingSelfMod && !existsSync(improveTaskFile)) {
-    if (getWeeklyCompletedCount() >= cfg.selfImproveMaxPerWeek) return;
-
-    if (cfg.selfImproveAutoApprove) {
-      const queue = loadQueue();
-      for (const item of queue.items) {
-        if (item.status === "pending") {
-          try { approveItem(item.id); } catch (err) { log(`Failed to auto-approve queue item ${item.id}: ${err}`); }
-        }
-      }
-    }
-
-    const item = dequeueApproved();
-    if (item) {
-      log(`Dequeued approved item ${item.id} — writing task file`);
-      try {
-        writeFileSync(improveTaskFile, JSON.stringify(item.task, null, 2));
-        writeFileSync(queuedMarkerFile, item.id);
-      } catch (err) {
-        log(`Failed to write task file from queue: ${err}`);
-      }
-    }
+    dequeueNextTask(cfg, improveTaskFile, queuedMarkerFile);
   }
 }
 

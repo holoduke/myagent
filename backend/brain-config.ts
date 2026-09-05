@@ -23,6 +23,10 @@ export interface BrainConfig {
   selfImproveDailyHour: number;
   /** Auto-merge successful self-improve PRs (squash) right after the worker completes. */
   selfImproveAutoMerge: boolean;
+  /** Hard cap on self-improve attempts (merged + failed) per owner-local day. Each merge redeploys. */
+  selfImproveMaxPerDay: number;
+  /** Minimum spacing between two auto-merges (ms) — every merge restarts the container. */
+  selfImproveMinMergeIntervalMs: number;
   urgencyInterruptThreshold: number;  // urgency score (0-1) that triggers an immediate think tick
   characterType: string;              // character preset name or "custom"
   characterCustomPrompt: string | null; // free-text personality override (used when characterType === "custom")
@@ -198,6 +202,8 @@ function envDefaults(): BrainConfig {
     selfImproveMinPerDay: Number(process.env.SELF_IMPROVE_MIN_PER_DAY ?? 4),
     selfImproveDailyHour: Number(process.env.SELF_IMPROVE_DAILY_HOUR ?? 9),
     selfImproveAutoMerge: process.env.SELF_IMPROVE_AUTO_MERGE !== "false",
+    selfImproveMaxPerDay: Number(process.env.SELF_IMPROVE_MAX_PER_DAY ?? 6),
+    selfImproveMinMergeIntervalMs: Number(process.env.SELF_IMPROVE_MIN_MERGE_INTERVAL_MS ?? 2 * 60 * 60 * 1000),
     urgencyInterruptThreshold: Number(process.env.BRAIN_URGENCY_INTERRUPT_THRESHOLD ?? 0.8),
     characterType: "default",
     characterCustomPrompt: null,
