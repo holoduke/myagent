@@ -4,7 +4,7 @@
  * Uses a 30-day rolling baseline with standard deviation analysis.
  */
 
-import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
+import { MergedStore } from "./utils/merged-store.js";
 import { BRAIN_DIR } from "./config.js";
 import { createLogger } from "./logger.js";
 import { canonicalJid } from "./integrations/jid-alias.js";
@@ -113,14 +113,44 @@ function mergeAliasedBaselines(store: BaselineStore): Map<string, MergedBaseline
 
 // ── In-memory cache ──
 
+const store = new MergedStore<BaselineStore>({
+  filePath: BASELINES_FILE,
+  defaultValue: () => ({}),
+});
+
 let baselines: BaselineStore | null = null;
 let dirty = false;
 
 function loadBaselines(): BaselineStore {
   if (baselines) return baselines;
-  baselines = safeReadJSON<BaselineStore>(BASELINES_FILE, {});
+  const loaded = store.get();
+  baselines = typeof loaded === "object" && loaded !== null ? loaded : {};
   pruneDeadEntries(baselines);
   return baselines;
+}
+
+function mergeBaseline(a: ContactBaseline, b: ContactBaseline): ContactBaseline {
+  const newer = b.lastMessageAt >= a.lastMessageAt ? b : a;
+  const dates = new Set([...Object.keys(a.dailyCounts), ...Object.keys(b.dailyCounts)]);
+  const dailyCounts: Record<string, number> = {};
+  for (const date of dates) {
+    // Both instances may have counted the same messages: take the max, not the sum.
+    dailyCounts[date] = Math.max(a.dailyCounts[date] ?? 0, b.dailyCounts[date] ?? 0);
+  }
+  return { jid: newer.jid, name: newer.name, dailyCounts, lastMessageAt: Math.max(a.lastMessageAt, b.lastMessageAt) };
+}
+
+/**
+ * Merge the on-disk store (written by another instance) with the in-memory
+ * one. Entries present on one side only are kept; shared entries take the
+ * per-day maximum and the latest name/timestamp.
+ */
+export function mergeBaselineStores(disk: BaselineStore, memory: BaselineStore): BaselineStore {
+  const merged: BaselineStore = { ...disk };
+  for (const [jid, mem] of Object.entries(memory)) {
+    merged[jid] = jid in disk ? mergeBaseline(disk[jid], mem) : mem;
+  }
+  return merged;
 }
 
 /**
@@ -142,9 +172,13 @@ function pruneDeadEntries(store: BaselineStore): void {
 
 function saveBaselines(): void {
   if (!baselines || !dirty) return;
-  ensureDir(BRAIN_DIR);
-  atomicWriteJSON(BASELINES_FILE, baselines);
-  dirty = false;
+  try {
+    if (store.changedOnDisk()) log("Baselines changed on disk since load — merging with in-memory counts");
+    baselines = store.saveMerged(baselines, mergeBaselineStores);
+    dirty = false;
+  } catch (err) {
+    log(`Failed to save frequency baselines: ${err}`);
+  }
 }
 
 // Periodic save

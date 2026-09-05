@@ -15,7 +15,30 @@ vi.mock("../backend/logger.js", () => ({
   createLogger: () => Object.assign((...args: unknown[]) => {}, { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }),
 }));
 
-import { updateFrequency, detectAnomalies } from "../backend/frequency-tracker.js";
+import { updateFrequency, detectAnomalies, mergeBaselineStores } from "../backend/frequency-tracker.js";
+
+describe("mergeBaselineStores", () => {
+  const base = (name: string, counts: Record<string, number>, last: number) =>
+    ({ jid: "x@s.whatsapp.net", name, dailyCounts: counts, lastMessageAt: last });
+
+  it("keeps entries that exist on one side only", () => {
+    const merged = mergeBaselineStores(
+      { a: base("A", { "2026-09-01": 2 }, 100) },
+      { b: base("B", { "2026-09-01": 1 }, 200) },
+    );
+    expect(Object.keys(merged).sort()).toEqual(["a", "b"]);
+  });
+
+  it("takes the per-day maximum and the latest name/timestamp for shared entries", () => {
+    const merged = mergeBaselineStores(
+      { a: base("Old Name", { "2026-09-01": 3, "2026-09-02": 1 }, 100) },
+      { a: base("New Name", { "2026-09-01": 2, "2026-09-03": 4 }, 200) },
+    );
+    expect(merged.a.dailyCounts).toEqual({ "2026-09-01": 3, "2026-09-02": 1, "2026-09-03": 4 });
+    expect(merged.a.name).toBe("New Name");
+    expect(merged.a.lastMessageAt).toBe(200);
+  });
+});
 
 describe("updateFrequency", () => {
   it("records a message without error", () => {

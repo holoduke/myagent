@@ -14,7 +14,7 @@ import { appendFileSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
 import type { Observation } from "./observer.js";
-import { OWNER_PHONE, BRAIN_DIR } from "./config.js";
+import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("trust");
 
