@@ -123,7 +123,11 @@ if [ "$BOOT_COUNT" -gt 2 ]; then
   fi
 fi
 
-# Start the agent (reset boot counter on clean exit via trap)
-trap 'echo "0" > "$BOOT_COUNTER_FILE"; rm -f "$BOOT_TIMESTAMP_FILE"; exit 0' SIGTERM
+# Start the agent. Run node directly (tsx as a loader) so Coolify's SIGTERM
+# (`docker stop -t 30`) reaches the process: through `npx tsx` the signal was
+# swallowed, the app never released its instance lease, and every handover
+# waited for the lock to go stale. The app resets the boot counter itself is
+# not needed — a clean exit code 0 from node is the "clean exit" signal.
+trap 'echo "0" > "$BOOT_COUNTER_FILE"; rm -f "$BOOT_TIMESTAMP_FILE"' EXIT
 
-exec npx tsx backend/index.ts
+exec node --import tsx backend/index.ts

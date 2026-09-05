@@ -132,7 +132,11 @@ engine, so the button still answers. Clips are cached per text+voice.
 
 **Grok (xAI, in production):** `POST https://api.x.ai/v1/tts`, voices `eve`
 (default, female), `ara`, `rex`, `sal`, `leo`; language derived from
-`speech.language` ("nl-NL-FennaNeural" → `nl`); `speech.speed` 0.7–1.5; ≈1 s
+`speech.language` ("nl-NL-FennaNeural" → `nl`); `speech.speed` 0.7–1.5;
+`speech.speechTags` wraps the text in Grok delivery tags (`soft`, `low`,
+`whisper`, `loud`, `high`) — production uses `ara` + `["soft","low"]` + 0.9 for
+a calm "AI computer" delivery on `media_player.kitchen` (native WiiM
+integration; the Cast entities `media_player.wiim_*` proved unreliable); ≈1 s
 per clip, $4.20 per million characters. `speech.effect` post-processes every
 synthesized clip with ffmpeg (in the image): `reverb` (small hall) or
 `computer` (band-limited, long soft tail — the ship's-computer treatment);
