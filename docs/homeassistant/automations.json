@@ -94,7 +94,7 @@
       {
         "action": "media_player.volume_set",
         "target": {
-          "entity_id": "media_player.wiim_amp_ultra_3d72"
+          "entity_id": "media_player.kitchen"
         },
         "data": {
           "volume_level": 0.3
@@ -124,7 +124,7 @@
                       {
                         "action": "media_player.play_media",
                         "target": {
-                          "entity_id": "media_player.wiim_amp_ultra_3d72"
+                          "entity_id": "media_player.kitchen"
                         },
                         "data": {
                           "media_content_id": "{{ aria.content.reflex.audioUrl }}",
@@ -141,7 +141,7 @@
                       "entity_id": "tts.edge_tts_service_edge_tts"
                     },
                     "data": {
-                      "media_player_entity_id": "media_player.wiim_amp_ultra_3d72",
+                      "media_player_entity_id": "media_player.kitchen",
                       "message": "{{ aria.content.reflex.speak }}",
                       "language": "nl-NL-FennaNeural"
                     }
@@ -174,7 +174,7 @@
                       "entity_id": "tts.edge_tts_service_edge_tts"
                     },
                     "data": {
-                      "media_player_entity_id": "media_player.wiim_amp_ultra_3d72",
+                      "media_player_entity_id": "media_player.kitchen",
                       "message": "{{ label }} wordt het {{ day.condition }} met een maximum van {{ day.temperature | round }} graden en {{ day.precipitation_probability }} procent kans op regen. ARIA is even niet bereikbaar.",
                       "language": "nl-NL-FennaNeural"
                     }
@@ -189,7 +189,7 @@
                   "entity_id": "tts.edge_tts_service_edge_tts"
                 },
                 "data": {
-                  "media_player_entity_id": "media_player.wiim_amp_ultra_3d72",
+                  "media_player_entity_id": "media_player.kitchen",
                   "message": "Sorry, ik kan ARIA even niet bereiken.",
                   "language": "nl-NL-FennaNeural"
                 }
