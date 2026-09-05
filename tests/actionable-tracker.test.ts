@@ -21,6 +21,10 @@ vi.mock("../backend/contact-whitelist.js", () => ({
   getActionMode: () => "auto",
 }));
 
+vi.mock("../backend/brain-config.js", () => ({
+  getBrainConfig: () => ({ ownerTimezone: "Europe/Amsterdam" }),
+}));
+
 vi.mock("../backend/integrations/calendar.js", () => ({
   createEvent: () => Promise.resolve({ success: false }),
 }));
@@ -34,12 +38,40 @@ import {
   computeDutchHolidays,
   parseDateFromSignals,
   extractMultipleEvents,
+  buildEventWindow,
 } from "../backend/actionable-tracker.js";
 import type { ActionableSignal } from "../backend/actionable.js";
 
 function signal(snippet: string, category: "event" = "event"): ActionableSignal {
   return { category, snippet, pattern: "test" };
 }
+
+// ── buildEventWindow (owner timezone, not container-local) ──
+
+describe("buildEventWindow", () => {
+  it("interprets wall-clock times in the owner's timezone", () => {
+    const w = buildEventWindow("2026-07-01", "14:30", null, "Europe/Amsterdam");
+    expect(w?.start.toISOString()).toBe("2026-07-01T12:30:00.000Z");
+    expect(w?.end.toISOString()).toBe("2026-07-01T13:30:00.000Z");
+  });
+
+  it("defaults to 10:00 local and a one-hour duration", () => {
+    const w = buildEventWindow("2026-01-15", null, null, "Europe/Amsterdam");
+    expect(w?.start.toISOString()).toBe("2026-01-15T09:00:00.000Z");
+    expect(w?.end.toISOString()).toBe("2026-01-15T10:00:00.000Z");
+  });
+
+  it("uses an explicit end time when it is after the start", () => {
+    const w = buildEventWindow("2026-07-01", "09:00", "11:15", "Europe/Amsterdam");
+    expect(w?.end.toISOString()).toBe("2026-07-01T09:15:00.000Z");
+    const inverted = buildEventWindow("2026-07-01", "09:00", "08:00", "Europe/Amsterdam");
+    expect(inverted?.end.toISOString()).toBe("2026-07-01T08:00:00.000Z"); // falls back to +1h
+  });
+
+  it("returns null for malformed dates", () => {
+    expect(buildEventWindow("next week", "10:00", null, "Europe/Amsterdam")).toBeNull();
+  });
+});
 
 // ── parseTimeFromSignals ──
 
