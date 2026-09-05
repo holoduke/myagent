@@ -969,9 +969,9 @@ export interface ConsolidateContext {
   graph: MemoryGraph;
   wm: WorkingMemory;
   stats: { nodeCount: number; edgeCount: number; archivedCount: number; ghostCount: number; byType: Record<string, number>; avgStrength: number };
-  uncapturedSignals?: import("./memory/decay.js").UncapturedSignal[];
-  deltaReport?: import("./memory/decay.js").DeltaReport | null;
-  lowFidelityReconstructions?: import("./memory/decay.js").FidelityResult[];
+  uncapturedSignals?: import("./memory/reconstruction.js").UncapturedSignal[];
+  deltaReport?: import("./memory/reconstruction.js").DeltaReport | null;
+  lowFidelityReconstructions?: import("./memory/reconstruction.js").FidelityResult[];
   gistClusters?: MemoryNode[][];
   rejectedEdgeCount?: number;
 }
