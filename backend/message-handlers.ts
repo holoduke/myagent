@@ -15,11 +15,14 @@
 import { randomUUID } from "crypto";
 import { appendFileSync, readFileSync, existsSync } from "fs";
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
+import { parseJsonResponse } from "./utils/llm-json.js";
 import { LlmRunner } from "./providers/llm-runner.js";
 import { createLogger } from "./logger.js";
 import { getBrainConfig } from "./brain-config.js";
 import type { Observation } from "./observer.js";
 import { BRAIN_DIR } from "./config.js";
+import { detectInjection, fenceForPrompt } from "./trust.js";
+import { sendGuardedReply, hasRepliedTo } from "./reply-agent.js";
 
 const log = createLogger("msg-handlers");
 
@@ -327,7 +330,7 @@ function buildFilterPrompt(obs: Observation, handler: MessageHandler): string {
 
 Current date: ${today}
 From: ${obs.sender} (${context})
-Message: "${obs.text.slice(0, 500)}"
+${fenceForPrompt(obs.text, obs.trustLevel)}
 
 ═══ FILTER CRITERIA ═══
 ${handler.filterPrompt}
@@ -346,28 +349,57 @@ async function evaluateWithLLM(obs: Observation, handler: MessageHandler): Promi
     return { match: false, reason: `LLM returned null (${latency}ms)` };
   }
 
-  try {
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { match: false, reason: "No JSON in LLM response" };
-    const parsed = JSON.parse(jsonMatch[0]) as { match?: boolean; reason?: string };
-    return {
-      match: !!parsed.match,
-      reason: parsed.reason || "no reason",
-    };
-  } catch {
-    return { match: false, reason: `JSON parse error: ${raw.slice(0, 100)}` };
-  }
+  const parsed = parseJsonResponse<{ match?: boolean; reason?: string }>(raw);
+  if (!parsed) return { match: false, reason: `No JSON in LLM response: ${raw.slice(0, 100)}` };
+  return {
+    match: !!parsed.match,
+    reason: parsed.reason || "no reason",
+  };
 }
 
 // ── Action dispatch ──
 
 type SendFn = (jid: string, text: string) => Promise<void>;
-let sendFn: SendFn | null = null;
 
-export function initMessageHandlers(send: SendFn): void {
-  sendFn = send;
+/**
+ * Kept for API compatibility with index.ts: replies are sent through the
+ * reply agent's guarded path (initReplyAgent owns the send function), so the
+ * function passed here is not used directly.
+ */
+export function initMessageHandlers(_send: SendFn): void {
   load(); // Warm cache
   log(`Message handlers initialized (${load().length} handlers)`);
+}
+
+async function executeReplyAction(obs: Observation, handler: MessageHandler): Promise<string> {
+  const action = handler.action;
+  if (!action.replyPrompt) return "reply skipped: no replyPrompt configured";
+  if (hasRepliedTo(obs)) return "reply skipped: message already answered";
+
+  const injection = detectInjection(obs.text);
+  if (injection.detected) {
+    log(`Handler "${handler.name}" reply skipped for ${obs.sender}: injection patterns [${injection.labels.join(", ")}]`);
+    return `reply skipped: injection patterns (${injection.labels.join(", ")})`;
+  }
+
+  const context = obs.isGroup ? `in group "${obs.groupName || "unknown"}"` : "private chat";
+  const replyGenPrompt = `You are composing a WhatsApp reply. Follow these rules strictly.
+
+═══ REPLY RULES ═══
+${action.replyPrompt}
+
+═══ INCOMING MESSAGE ═══
+From: ${obs.sender} (${context})
+${fenceForPrompt(obs.text, obs.trustLevel)}
+
+Respond with ONLY the reply text. No JSON, no quotes, no explanation.`;
+
+  const reply = await getHandlerLlm().run(replyGenPrompt);
+  if (!reply) return "reply skipped: LLM returned null";
+
+  const result = await sendGuardedReply(obs, reply, { source: "message-handler", id: handler.id });
+  if (result.sent) return `replied: "${reply.trim().slice(0, 80)}"`;
+  return result.sendError ? `reply failed: ${result.sendError}` : `reply skipped: ${result.reason}`;
 }
 
 async function executeAction(obs: Observation, handler: MessageHandler, llmReason: string): Promise<string> {
@@ -398,33 +430,8 @@ async function executeAction(obs: Observation, handler: MessageHandler, llmReaso
       return `flagged: ${entry.label}`;
     }
 
-    case "reply": {
-      if (!sendFn) return "reply skipped: send function not initialized";
-      if (!action.replyPrompt) return "reply skipped: no replyPrompt configured";
-
-      const context = obs.isGroup ? `in group "${obs.groupName || "unknown"}"` : "private chat";
-      const replyGenPrompt = `You are composing a WhatsApp reply. Follow these rules strictly.
-
-═══ REPLY RULES ═══
-${action.replyPrompt}
-
-═══ INCOMING MESSAGE ═══
-From: ${obs.sender} (${context})
-Message: "${obs.text.slice(0, 500)}"
-
-Respond with ONLY the reply text. No JSON, no quotes, no explanation.`;
-
-      const reply = await getHandlerLlm().run(replyGenPrompt);
-      if (!reply) return "reply skipped: LLM returned null";
-
-      const chatJid = obs.isGroup ? (obs.chatJid || obs.senderJid) : obs.senderJid;
-      try {
-        await sendFn(chatJid, reply.trim());
-        return `replied: "${reply.trim().slice(0, 80)}"`;
-      } catch (err) {
-        return `reply failed: ${err}`;
-      }
-    }
+    case "reply":
+      return executeReplyAction(obs, handler);
 
     case "memory": {
       const memEntry = {

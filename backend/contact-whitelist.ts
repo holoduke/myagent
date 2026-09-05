@@ -1,4 +1,4 @@
-import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
+import { MergedStore } from "./utils/merged-store.js";
 import { createLogger } from "./logger.js";
 import { BRAIN_DIR } from "./config.js";
 
@@ -36,19 +36,16 @@ export interface WhitelistedContact {
   permissions?: ContactPermissions;
 }
 
-// Write-through in-memory cache (follows history.ts pattern)
-let whitelistCache: WhitelistedContact[] | null = null;
+// Cached store that re-reads when another instance changed the file and
+// applies every write on top of the freshest on-disk state.
+const store = new MergedStore<WhitelistedContact[]>({
+  filePath: WHITELIST_FILE,
+  defaultValue: () => [],
+});
 
 function loadWhitelist(): WhitelistedContact[] {
-  if (whitelistCache) return whitelistCache;
-  whitelistCache = safeReadJSON<WhitelistedContact[]>(WHITELIST_FILE, []);
-  return whitelistCache;
-}
-
-function saveWhitelist(contacts: WhitelistedContact[]): void {
-  ensureDir(BRAIN_DIR);
-  atomicWriteJSON(WHITELIST_FILE, contacts);
-  whitelistCache = contacts;
+  const data = store.get();
+  return Array.isArray(data) ? data : [];
 }
 
 /**
@@ -95,17 +92,15 @@ export function resolveCanonicalJid(jid: string): string {
 }
 
 export function addToWhitelist(jid: string, name: string): void {
-  const contacts = loadWhitelist();
-  if (contacts.some(c => c.jid === jid)) return;
-  contacts.push({ jid, name, addedAt: Date.now() });
-  saveWhitelist(contacts);
+  if (loadWhitelist().some(c => c.jid === jid)) return;
+  store.update(contacts => contacts.some(c => c.jid === jid)
+    ? contacts
+    : [...contacts, { jid, name, addedAt: Date.now() }]);
 }
 
 export function removeFromWhitelist(jid: string): boolean {
-  const contacts = loadWhitelist();
-  const filtered = contacts.filter(c => c.jid !== jid);
-  if (filtered.length === contacts.length) return false;
-  saveWhitelist(filtered);
+  if (!loadWhitelist().some(c => c.jid === jid)) return false;
+  store.update(contacts => contacts.filter(c => c.jid !== jid));
   return true;
 }
 
@@ -118,15 +113,14 @@ export function getWhitelist(): WhitelistedContact[] {
  * Pass null to remove permissions (revert to observe-only).
  */
 export function updatePermissions(jid: string, permissions: ContactPermissions | null): boolean {
-  const contacts = loadWhitelist();
-  const contact = contacts.find(c => c.jid === jid);
+  const contact = loadWhitelist().find(c => c.jid === jid);
   if (!contact) return false;
-  if (permissions) {
-    contact.permissions = permissions;
-  } else {
-    delete contact.permissions;
-  }
-  saveWhitelist(contacts);
+  store.update(contacts => contacts.map(c => {
+    if (c.jid !== jid) return c;
+    if (permissions) return { ...c, permissions };
+    const { permissions: _dropped, ...rest } = c;
+    return rest;
+  }));
   log(`Updated permissions for ${contact.name} (${jid}): ${permissions ? JSON.stringify(permissions) : "removed"}`);
   return true;
 }

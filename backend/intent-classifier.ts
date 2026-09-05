@@ -2,19 +2,15 @@
  * Intent classifier for incoming messages.
  *
  * Classifies messages into: command, question, logistics, casual, noise.
- * Uses lightweight heuristics first (keyword matching, @-mentions, question marks,
- * imperative verbs). Falls back to a brief Claude haiku call only for ambiguous messages.
+ * Pure heuristics (keyword matching, @-mentions, question marks, imperative
+ * verbs) — no LLM. Ambiguous messages default to "casual" at low confidence;
+ * the unified message evaluator decides separately whether an LLM call is
+ * worth it for actionable content or replies.
  *
  * This structured intent-detection pipeline replaces basic detection logic,
  * reducing false positives (responding when shouldn't) and false negatives
  * (missing genuine requests).
  */
-
-import { LlmRunner } from "./providers/llm-runner.js";
-import { getBrainConfig } from "./brain-config.js";
-import { createLogger } from "./logger.js";
-
-const log = createLogger("intent-classifier");
 
 export type MessageIntent = "command" | "question" | "logistics" | "casual" | "noise";
 
@@ -61,11 +57,10 @@ const CASUAL_RE = /^(?:hey|hi|hello|hoi|hallo|goedemorgen|goedemiddag|goedenavon
 const HIGH_CONFIDENCE = 0.9;
 const MEDIUM_CONFIDENCE = 0.7;
 const LOW_CONFIDENCE = 0.5;
-const AMBIGUOUS_THRESHOLD = 0.5; // Below this → fall back to LLM
 
 /**
  * Classify a message's intent using fast heuristics.
- * Returns null if the message is ambiguous and needs LLM classification.
+ * Returns null if the message is ambiguous (no strong pattern).
  */
 function classifyWithHeuristics(text: string, senderName: string, isGroup: boolean): IntentClassification | null {
   const trimmed = text.trim();
@@ -127,79 +122,13 @@ function classifyWithHeuristics(text: string, senderName: string, isGroup: boole
     return { intent: "casual", confidence: LOW_CONFIDENCE, method: "heuristic", reason: "short message, no actionable patterns" };
   }
 
-  // Ambiguous — needs LLM
+  // Ambiguous — no strong pattern
   return null;
 }
 
 /**
- * Classify a message's intent using Claude haiku as fallback.
- */
-async function classifyWithLLM(text: string, senderName: string): Promise<IntentClassification> {
-  const prompt = `Classify this message's intent into exactly one category. Respond with ONLY valid JSON, no markdown.
-
-Categories:
-- "command": A direct request or instruction for the AI assistant (e.g., "remind me", "send a message", "look this up")
-- "question": An information query directed at the assistant (e.g., "what time is the meeting?", "do you know where...")
-- "logistics": Event planning, scheduling, coordination (e.g., "dinner at 7", "pick up kids at 3", "meeting moved to Thursday")
-- "casual": General chat, greetings, social messages, opinions, stories (e.g., "hey how are you", "that was fun yesterday")
-- "noise": Spam, promotional, forwarded chain messages, media-only, single-word reactions
-
-Message from ${senderName}:
-"${text.slice(0, 300)}"
-
-{"intent":"<category>","reason":"<brief reason>"}`;
-
-  try {
-    const classifier = new LlmRunner({ name: "intent-classifier", model: getBrainConfig().models?.messageEval });
-    const result = await classifier.run(prompt);
-
-    if (!result) {
-      log(`LLM classification returned null for: "${text.slice(0, 60)}"`);
-      return { intent: "casual", confidence: LOW_CONFIDENCE, method: "llm", reason: "llm returned no result, defaulting to casual" };
-    }
-
-    const jsonStr = result.replace(/^```json?\s*/, "").replace(/```\s*$/, "").trim();
-    const parsed = JSON.parse(jsonStr) as { intent: string; reason: string };
-
-    const validIntents: MessageIntent[] = ["command", "question", "logistics", "casual", "noise"];
-    const intent: MessageIntent = validIntents.includes(parsed.intent as MessageIntent) ? (parsed.intent as MessageIntent) : "casual";
-
-    return { intent, confidence: MEDIUM_CONFIDENCE, method: "llm", reason: parsed.reason || "llm classification" };
-  } catch (err: unknown) {
-    log(`LLM classification failed: ${err instanceof Error ? err.message : err}`);
-    return { intent: "casual", confidence: LOW_CONFIDENCE, method: "llm", reason: "llm error, defaulting to casual" };
-  }
-}
-
-/**
- * Classify a message's intent. Uses heuristics first, falls back to LLM for ambiguous messages.
- */
-export async function classifyIntent(
-  text: string,
-  senderName: string,
-  isGroup: boolean,
-): Promise<IntentClassification> {
-  if (!text || text.trim().length === 0) {
-    return { intent: "noise", confidence: HIGH_CONFIDENCE, method: "heuristic", reason: "empty message" };
-  }
-
-  const heuristicResult = classifyWithHeuristics(text, senderName, isGroup);
-
-  if (heuristicResult && heuristicResult.confidence >= AMBIGUOUS_THRESHOLD) {
-    log(`Intent: ${heuristicResult.intent} (${heuristicResult.confidence.toFixed(2)}, heuristic) for "${text.slice(0, 60)}"`);
-    return heuristicResult;
-  }
-
-  // Ambiguous — use LLM fallback
-  log(`Heuristic ambiguous for "${text.slice(0, 60)}", falling back to LLM`);
-  const llmResult = await classifyWithLLM(text, senderName);
-  log(`Intent: ${llmResult.intent} (${llmResult.confidence.toFixed(2)}, llm) for "${text.slice(0, 60)}"`);
-  return llmResult;
-}
-
-/**
- * Synchronous heuristic-only classification (no LLM fallback).
- * Returns "casual" for ambiguous messages.
+ * Synchronous heuristic-only classification.
+ * Returns "casual" at low confidence for ambiguous messages.
  */
 export function classifyIntentSync(
   text: string,
@@ -215,5 +144,3 @@ export function classifyIntentSync(
 
   return { intent: "casual", confidence: LOW_CONFIDENCE, method: "heuristic", reason: "no strong patterns, defaulting to casual" };
 }
-
-// Lightweight LLM for intent classification — uses shared LlmRunner.

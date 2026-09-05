@@ -11,13 +11,16 @@
  */
 
 import { randomUUID } from "crypto";
-import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
+import { MergedStore } from "./utils/merged-store.js";
+import { zonedDateTimeToDate, localYmd } from "./utils/timezone.js";
 import { createLogger } from "./logger.js";
 import { getActionMode } from "./contact-whitelist.js";
+import { getBrainConfig } from "./brain-config.js";
 import { createEvent } from "./integrations/calendar.js";
 import { loadAccounts } from "./integrations/gmail.js";
 import type { ActionableSignal, ActionableCategory } from "./actionable.js";
 import type { Observation } from "./observer.js";
+import type { DetectedEvent } from "./prompt-detector.js";
 import { BRAIN_DIR } from "./config.js";
 
 const log = createLogger("actionable-tracker");
@@ -48,20 +51,34 @@ export interface ActionableRequest {
   eventId?: string;
 }
 
-// ── Write-through cache ──
+// ── Merge-aware cache (two overlapping instances share /data) ──
 
-let cache: ActionableRequest[] | null = null;
+const store = new MergedStore<ActionableRequest[]>({
+  filePath: REQUESTS_FILE,
+  defaultValue: () => [],
+});
 
 function load(): ActionableRequest[] {
-  if (cache) return cache;
-  cache = safeReadJSON<ActionableRequest[]>(REQUESTS_FILE, []);
-  return cache;
+  const data = store.get();
+  return Array.isArray(data) ? data : [];
 }
 
-function save(requests: ActionableRequest[]): void {
-  ensureDir(BRAIN_DIR);
-  atomicWriteJSON(REQUESTS_FILE, requests);
-  cache = requests;
+function updateRequests(fn: (requests: ActionableRequest[]) => ActionableRequest[]): ActionableRequest[] {
+  return store.update(current => fn(Array.isArray(current) ? current : []));
+}
+
+function setRequestStatus(id: string, status: ActionableRequestStatus): ActionableRequest {
+  const req = load().find(r => r.id === id);
+  if (!req) throw new Error(`Request ${id} not found`);
+  if (req.status !== "pending_confirmation") throw new Error(`Request ${id} is ${req.status}, not pending`);
+  const resolved: ActionableRequest = { ...req, status, resolvedAt: Date.now() };
+  updateRequests(list => list.map(r => (r.id === id ? resolved : r)));
+  return resolved;
+}
+
+function setEventId(id: string, eventIds: string[]): void {
+  if (eventIds.length === 0) return;
+  updateRequests(list => list.map(r => (r.id === id ? { ...r, eventId: eventIds.join(",") } : r)));
 }
 
 // ── Core functions ──
@@ -104,9 +121,7 @@ export function processObservation(obs: Observation): void {
     status,
   };
 
-  const requests = load();
-  requests.push(request);
-  save(requests);
+  updateRequests(list => [...list, request]);
 
   log(`Tracked ${status} request from ${obs.sender}: ${categories.join(", ")} — "${obs.text.slice(0, 80)}"`);
 
@@ -333,6 +348,81 @@ export function extractMultipleEvents(text: string, signals: ActionableSignal[])
   }];
 }
 
+// ── Calendar event windows (owner timezone) ──
+
+const DEFAULT_EVENT_TIME = "10:00";
+const DEFAULT_EVENT_DURATION_MS = 60 * 60 * 1000;
+
+export interface EventWindow {
+  start: Date;
+  end: Date;
+  summary: string;
+  location?: string;
+}
+
+function ownerTimezone(): string {
+  return getBrainConfig().ownerTimezone || "Europe/Amsterdam";
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/**
+ * Build the start/end instants for an event given wall-clock date/time in the
+ * owner's timezone. The container runs in UTC, so a naive Date would land one
+ * or two hours off in the calendar. Returns null for unparseable input.
+ */
+export function buildEventWindow(
+  ymd: string,
+  time: string | null,
+  endTime: string | null,
+  timeZone: string,
+): { start: Date; end: Date } | null {
+  const start = zonedDateTimeToDate(ymd, time || DEFAULT_EVENT_TIME, timeZone);
+  if (!start) return null;
+  const explicitEnd = endTime ? zonedDateTimeToDate(ymd, endTime, timeZone) : null;
+  const end = explicitEnd && explicitEnd > start ? explicitEnd : new Date(start.getTime() + DEFAULT_EVENT_DURATION_MS);
+  return { start, end };
+}
+
+function windowsFromDetection(events: DetectedEvent[], sender: string, timeZone: string): EventWindow[] {
+  const windows: EventWindow[] = [];
+  for (const evt of events) {
+    const w = buildEventWindow(evt.date, evt.time, evt.endTime, timeZone);
+    if (!w) {
+      log(`Invalid date from prompt detection: ${evt.date} ${evt.time} — skipping`);
+      continue;
+    }
+    windows.push({ ...w, summary: `${sender}: ${evt.summary}`.slice(0, 120), location: evt.location || undefined });
+  }
+  return windows;
+}
+
+function windowsFromParsed(events: ParsedEvent[], sender: string, timeZone: string): EventWindow[] {
+  const windows: EventWindow[] = [];
+  for (const evt of events) {
+    const w = buildEventWindow(localYmd(evt.date), `${pad2(evt.hours)}:${pad2(evt.minutes)}`, null, timeZone);
+    if (!w) continue;
+    windows.push({ ...w, summary: `${sender}: ${evt.summary}`.slice(0, 120) });
+  }
+  return windows;
+}
+
+async function createEvents(accountId: string, requestId: string, windows: EventWindow[]): Promise<string[]> {
+  const eventIds: string[] = [];
+  for (const w of windows) {
+    const result = await createEvent(accountId, w.summary, w.start.toISOString(), w.end.toISOString(), w.location);
+    if (result.success && result.eventId) {
+      eventIds.push(result.eventId);
+      log(`Auto-created calendar event ${result.eventId} for request ${requestId}: ${w.summary}`);
+    } else {
+      log(`Calendar event creation failed for ${requestId}: ${result.error}`);
+    }
+  }
+  return eventIds;
+}
+
 /**
  * Attempt to create calendar event(s) for an auto_executed event request.
  * Supports multiple events in a single message.
@@ -347,97 +437,19 @@ async function executeEventCreation(request: ActionableRequest, obs: Observation
     return;
   }
 
-  // If prompt detection provided structured events, use them directly (more reliable)
-  if (obs.promptDetectionResult?.events?.length) {
-    const eventIds: string[] = [];
-    for (const evt of obs.promptDetectionResult.events) {
-      const startDate = new Date(`${evt.date}T${evt.time || "10:00"}:00`);
-      // Ensure valid date
-      if (isNaN(startDate.getTime())) {
-        log(`Invalid date from prompt detection: ${evt.date} ${evt.time} — skipping`);
-        continue;
-      }
-      const endDate = new Date(startDate);
-      if (evt.endTime) {
-        const [eh, em] = evt.endTime.split(":").map(Number);
-        endDate.setHours(eh, em, 0, 0);
-      } else {
-        endDate.setHours(endDate.getHours() + 1);
-      }
+  const timeZone = ownerTimezone();
+  const detected = obs.promptDetectionResult?.events ?? [];
+  // Structured events from prompt detection are more reliable than regex parsing
+  const windows = detected.length > 0
+    ? windowsFromDetection(detected, obs.sender, timeZone)
+    : windowsFromParsed(extractMultipleEvents(obs.text, request.signals.filter(s => s.category === "event")), obs.sender, timeZone);
 
-      const summary = `${obs.sender}: ${evt.summary}`.slice(0, 120);
-
-      const result = await createEvent(
-        account.id,
-        summary,
-        startDate.toISOString(),
-        endDate.toISOString(),
-        evt.location || undefined,
-      );
-
-      if (result.success && result.eventId) {
-        eventIds.push(result.eventId);
-        log(`Auto-created calendar event ${result.eventId} for request ${request.id}: ${summary}`);
-      } else {
-        log(`Calendar event creation failed for ${request.id}: ${result.error}`);
-      }
-    }
-
-    if (eventIds.length > 0) {
-      const requests = load();
-      const tracked = requests.find(r => r.id === request.id);
-      if (tracked) {
-        tracked.eventId = eventIds.join(",");
-        save(requests);
-      }
-    }
-    return; // Skip regex-based parsing
-  }
-
-  const eventSignals = request.signals.filter(s => s.category === "event");
-
-  // Try to extract multiple events from the full message text
-  const events = extractMultipleEvents(obs.text, eventSignals);
-
-  if (events.length === 0) {
-    log(`Could not parse any events from signals for ${request.id} — skipping event creation`);
+  if (windows.length === 0) {
+    log(`Could not parse any events for ${request.id} — skipping event creation`);
     return;
   }
 
-  const eventIds: string[] = [];
-
-  for (const evt of events) {
-    const startDate = new Date(evt.date);
-    startDate.setHours(evt.hours, evt.minutes, 0, 0);
-    const endDate = new Date(startDate);
-    endDate.setHours(endDate.getHours() + 1); // default 1h duration
-
-    const summary = `${obs.sender}: ${evt.summary}`.slice(0, 120);
-
-    const result = await createEvent(
-      account.id,
-      summary,
-      startDate.toISOString(),
-      endDate.toISOString(),
-    );
-
-    if (result.success && result.eventId) {
-      eventIds.push(result.eventId);
-      log(`Auto-created calendar event ${result.eventId} for request ${request.id}: ${summary}`);
-    } else {
-      log(`Calendar event creation failed for ${request.id}: ${result.error}`);
-    }
-  }
-
-  // Update the request record with the created eventId(s)
-  if (eventIds.length > 0) {
-    const requests = load();
-    const tracked = requests.find(r => r.id === request.id);
-    if (tracked) {
-      tracked.eventId = eventIds.join(",");
-      save(requests);
-    }
-  }
+  setEventId(request.id, await createEvents(account.id, request.id, windows));
 }
 
 /**
@@ -453,13 +465,7 @@ export function getActionableRequests(statusFilter?: ActionableRequestStatus): A
  * Approve a pending request.
  */
 export function approveRequest(id: string): ActionableRequest {
-  const requests = load();
-  const req = requests.find(r => r.id === id);
-  if (!req) throw new Error(`Request ${id} not found`);
-  if (req.status !== "pending_confirmation") throw new Error(`Request ${id} is ${req.status}, not pending`);
-  req.status = "approved";
-  req.resolvedAt = Date.now();
-  save(requests);
+  const req = setRequestStatus(id, "approved");
   log(`Approved request ${id} from ${req.senderName}`);
   return req;
 }
@@ -468,13 +474,7 @@ export function approveRequest(id: string): ActionableRequest {
  * Reject a pending request.
  */
 export function rejectRequest(id: string): ActionableRequest {
-  const requests = load();
-  const req = requests.find(r => r.id === id);
-  if (!req) throw new Error(`Request ${id} not found`);
-  if (req.status !== "pending_confirmation") throw new Error(`Request ${id} is ${req.status}, not pending`);
-  req.status = "rejected";
-  req.resolvedAt = Date.now();
-  save(requests);
+  const req = setRequestStatus(id, "rejected");
   log(`Rejected request ${id} from ${req.senderName}`);
   return req;
 }
@@ -506,21 +506,18 @@ export function createFlaggedRequest(flag: {
     status: "pending_confirmation",
   };
 
-  const requests = load();
-
   // Deduplicate: skip if same sender + similar text already pending
-  const isDupe = requests.some(r =>
+  const isDupe = (list: ActionableRequest[]) => list.some(r =>
     r.status === "pending_confirmation" &&
     r.senderJid === flag.senderJid &&
     r.text === flag.text,
   );
-  if (isDupe) {
+  if (isDupe(load())) {
     log(`Skipped duplicate flagged request from ${flag.senderName}`);
     return request;
   }
 
-  requests.push(request);
-  save(requests);
+  updateRequests(list => (isDupe(list) ? list : [...list, request]));
   log(`Brain-flagged request from ${flag.senderName}: "${flag.text.slice(0, 80)}" (${flag.reason})`);
   return request;
 }
@@ -536,9 +533,8 @@ export function getPendingCount(): number {
  * Clear all tracked requests. Returns the number of requests removed.
  */
 export function clearAllRequests(): number {
-  const existing = load();
-  const count = existing.length;
-  save([]);
+  const count = load().length;
+  updateRequests(() => []);
   log(`Cleared all ${count} actionable requests`);
   return count;
 }
@@ -548,13 +544,11 @@ export function clearAllRequests(): number {
  */
 export function pruneRequests(daysToKeep = 30): number {
   const cutoff = Date.now() - daysToKeep * 86400000;
-  const requests = load();
-  const kept = requests.filter(r =>
-    r.status === "pending_confirmation" || r.timestamp > cutoff,
-  );
-  const pruned = requests.length - kept.length;
+  const keep = (r: ActionableRequest) => r.status === "pending_confirmation" || r.timestamp > cutoff;
+  const before = load().length;
+  const pruned = before - load().filter(keep).length;
   if (pruned > 0) {
-    save(kept);
+    updateRequests(list => list.filter(keep));
     log(`Pruned ${pruned} old actionable requests`);
   }
   return pruned;

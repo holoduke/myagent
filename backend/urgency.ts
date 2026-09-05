@@ -45,20 +45,40 @@ const URGENCY_KEYWORDS: Record<string, number> = {
   politie: 0.7, // police
 };
 
+// Keywords whose plain word-boundary match still yields common false
+// positives get an extra negative lookahead (e.g. "brand new" is English,
+// not a Dutch fire report).
+const KEYWORD_EXCLUSIONS: Record<string, string> = {
+  brand: "(?![\\s-]*new(?![\\p{L}\\p{N}]))",
+};
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Compile a keyword into a Unicode-aware whole-word pattern: the match may
+ * not be preceded or followed by a letter or digit. This keeps "112" from
+ * matching inside phone numbers, "ziek" out of "muziek" and "sos" out of
+ * "Sosa". Multi-word keywords accept any whitespace run between words.
+ */
+export function compileKeywordPattern(keyword: string): RegExp {
+  const body = keyword.trim().split(/\s+/).map(escapeRegex).join("\\s+");
+  const exclusion = KEYWORD_EXCLUSIONS[keyword] ?? "";
+  return new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])${exclusion}`, "iu");
+}
+
 // Pre-compiled regex patterns sorted by score descending.
 // Compiled once at module load time so scoreUrgency() can early-exit
 // on the first match — any remaining patterns have equal or lower scores.
 const COMPILED_URGENCY_PATTERNS: { pattern: RegExp; score: number }[] = Object.entries(URGENCY_KEYWORDS)
   .sort(([, a], [, b]) => b - a)
-  .map(([keyword, score]) => ({
-    pattern: new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"),
-    score,
-  }));
+  .map(([keyword, score]) => ({ pattern: compileKeywordPattern(keyword), score }));
 
 import { OWNER_NAME as RAW_OWNER_NAME } from "./config.js";
 
 const OWNER_NAME = RAW_OWNER_NAME.toLowerCase();
-const OWNER_NAME_PATTERN = new RegExp(`\\b${OWNER_NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+const OWNER_NAME_PATTERN = compileKeywordPattern(OWNER_NAME);
 
 // ── High-signal email sender content gating ──
 // Emails from Dutch gov / banking / insurance domains often get an intuitive
@@ -344,6 +364,24 @@ export function scoreObservations(observations: Observation[]): void {
   pendingUrgency = maxUrgency;
 }
 
+/** Person-to-person channels where a non-group message counts as a direct message. */
+const DIRECT_MESSAGE_SOURCES: ReadonlySet<string> = new Set(["whatsapp", "slack", "twilio"]);
+
+/**
+ * Only observations that come from a trusted party, or that are direct
+ * (non-group) messages on a person-to-person channel, may interrupt the
+ * brain. RSS items, email and untrusted group chatter can still be scored
+ * (the score feeds the next scheduled tick) but never trigger an immediate
+ * tick — an interrupt is an expensive, attention-grabbing action and those
+ * sources are exactly where injected "EMERGENCY" text comes from.
+ */
+export function isInterruptEligible(obs: Observation): boolean {
+  if (obs.isFromMe) return false;
+  if (obs.trustLevel === "owner" || obs.trustLevel === "trusted") return true;
+  const source = obs.source || "whatsapp";
+  return DIRECT_MESSAGE_SOURCES.has(source) && !obs.isGroup;
+}
+
 /**
  * Score a single observation and trigger an urgency interrupt if it exceeds the threshold.
  * Called at observation-record time so high-urgency messages trigger an immediate brain tick
@@ -354,10 +392,15 @@ export function scoreAndMaybeInterrupt(obs: Observation): void {
   obs.urgency = urgency;
   pendingUrgency = Math.max(pendingUrgency, urgency);
 
-  if (urgency >= urgencyInterruptThreshold && urgencyInterruptHandler) {
-    log(`High urgency ${urgency.toFixed(2)} from ${obs.sender} — triggering interrupt`);
-    urgencyInterruptHandler(urgency);
+  if (urgency < urgencyInterruptThreshold || !urgencyInterruptHandler) return;
+
+  if (!isInterruptEligible(obs)) {
+    log(`High urgency ${urgency.toFixed(2)} from ${obs.sender} [${obs.source || "whatsapp"}${obs.isGroup ? "/group" : ""}, ${obs.trustLevel || "unclassified"}] — interrupt suppressed (not a trusted or direct source)`);
+    return;
   }
+
+  log(`High urgency ${urgency.toFixed(2)} from ${obs.sender} — triggering interrupt`);
+  urgencyInterruptHandler(urgency);
 }
 
 export function getPendingUrgency(): number {
