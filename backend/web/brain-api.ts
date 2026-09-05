@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync, statSync, openSync, readSync, 
 import { spawn } from "child_process";
 import { listWorkerLogs, openWorkerLog, WORKER_LOGS_DIR } from "../worker-logs.js";
 import { getBrainConfig, saveBrainConfig, getActivePreset, BRAIN_PRESETS, CHARACTER_PRESETS } from "../brain-config.js";
-import { resetConsecutiveFailures } from "../brain.js";
+import { resetConsecutiveFailures, getBrainHealth } from "../brain.js";
 import { getDefaultDetectionPrompt } from "../prompt-detector.js";
 import type { BrainConfig } from "../brain-config.js";
 import {
@@ -132,6 +132,12 @@ export function getAriaStatus(): Record<string, unknown> {
   try {
     const f = `${BRAIN_DIR}/state.json`;
     if (existsSync(f)) status.brainState = JSON.parse(readFileSync(f, "utf-8"));
+  } catch { /* expected: state file may not exist yet */ }
+
+  try {
+    // Stable, compact health block (incl. lastTickFailure root-cause field)
+    // so the dashboard doesn't have to dig through the raw brainState dump.
+    status.health = getBrainHealth();
   } catch { /* expected: state file may not exist yet */ }
 
   try {

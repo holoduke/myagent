@@ -15,7 +15,7 @@ import { getObservationsSince, pruneObservations, ensureBrainDir } from "./obser
 import type { Observation } from "./observer.js";
 import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
-import type { BrainState } from "./memory/types.js";
+import type { BrainState, TickFailureSummary } from "./memory/types.js";
 import { loadWorkingMemory, saveWorkingMemory, populateTemporalContext, updateConversationThreads, scanFollowUpsForResolution } from "./memory/working-memory.js";
 import { scoreObservations, getPendingUrgency, clearPendingUrgency, setUrgencyInterruptHandler } from "./urgency.js";
 import { getDueRecurringTasks, markExecuted } from "./recurring.js";
@@ -152,6 +152,7 @@ export function getBrainHealth(): {
   consecutiveFailures: number;
   pendingSelfMod: boolean;
   lastSuccessfulTick: number;
+  lastTickFailure: TickFailureSummary | null;
   nodeCount: number;
   edgeCount: number;
 } {
@@ -161,6 +162,7 @@ export function getBrainHealth(): {
     consecutiveFailures: state.consecutiveFailures,
     pendingSelfMod: state.pendingSelfMod,
     lastSuccessfulTick: state.lastSuccessfulTick,
+    lastTickFailure: state.lastTickFailure ?? null,
     nodeCount: state.nodeCount,
     edgeCount: state.edgeCount,
   };
@@ -387,6 +389,14 @@ export function startBrainLoop(
   startWatchdog({
     getLastSuccessfulTick: () => loadState().lastSuccessfulTick,
     isBrainEnabled: () => getBrainConfig().enabled,
+    // Only surface a failure that is newer than the last success — a stale
+    // summary from a long-resolved incident would mislabel a fresh stall.
+    getLastTickFailure: () => {
+      const s = loadState();
+      return s.lastTickFailure && s.lastTickFailure.ts > s.lastSuccessfulTick
+        ? s.lastTickFailure
+        : null;
+    },
     // ALERTs escalate to Gillis via the scheduled-messages queue, whose 60s
     // delivery loop needs no Claude API call — the one output path that
     // survives an API outage (root cause of the jun–aug silent failure).
@@ -759,6 +769,16 @@ async function tick(
       ? ` [${lastTickError.context.phase}, transient=${lastTickError.context.transient}]`
       : "";
     log(`Tick failed${errInfo} (${state.consecutiveFailures} consecutive failures)`);
+    // Persist a compact failure summary so the watchdog alert and dashboard
+    // can name the root cause even after a restart (lastTickError is
+    // module-local and lost otherwise).
+    state.lastTickFailure = {
+      ts: now,
+      phase: lastTickError?.context.phase ?? tickType ?? "unknown",
+      message: (lastTickError?.message ?? "tick returned failure without an exception").slice(0, 200),
+      transient: lastTickError?.context.transient ?? false,
+      consecutiveFailures: state.consecutiveFailures,
+    };
   } else {
     clearPendingUrgency();
     state.consecutiveFailures = 0;
@@ -815,6 +835,7 @@ async function tick(
   freshState.lastObservationTime = state.lastObservationTime;
   freshState.consecutiveFailures = state.consecutiveFailures;
   freshState.lastSuccessfulTick = state.lastSuccessfulTick;
+  freshState.lastTickFailure = state.lastTickFailure;
   freshState.messagesTodayDate = state.messagesTodayDate;
   freshState.recurringBudgetDate = state.recurringBudgetDate;
   freshState.lastBrainMessage = state.lastBrainMessage;
