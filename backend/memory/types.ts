@@ -218,7 +218,17 @@ export interface BrainState {
   lastOwnerMessageTime?: number;
 
   // observations
+  /** "Consumed up to" cursor into observations.jsonl: everything newer is the
+   *  pending think queue. Advanced ONLY when a think tick has processed the
+   *  batch, so a restart never loses observations. */
   lastObservationTime: number;
+  /** Cursor for the free observe pass (node reinforcement, thread tracking).
+   *  Advances every tick that sees new observations; independent of consumption. */
+  lastObservedAt?: number;
+  /** Start of the most recent LLM tick attempt (think/consolidate/reflect),
+   *  successful or not. The circuit breaker backs off from this, so failures
+   *  before the LLM call (context selection, prompt building) count too. */
+  lastTickAttemptAt?: number;
 
   // stats
   totalThinks: number;
