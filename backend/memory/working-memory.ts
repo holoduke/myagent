@@ -82,19 +82,59 @@ function newFollowUpId(): string {
 
 const normalizeQuestion = (q: string): string => q.trim().toLowerCase().replace(/\s+/g, " ");
 
+// ── Fuzzy Near-Duplicate Matching ──
+// The brain often re-emits a follow-up with fresh wording and no id, so exact
+// question matching alone stores near-duplicates ("Paardenmarkt agenda-events
+// aanmaken..." existed in three variants). Token-set Jaccard catches those.
+
+const FUZZY_MATCH_THRESHOLD = 0.6;
+const FUZZY_MIN_TOKEN_LEN = 4;
+
+/** Keyword token set for fuzzy matching: stop words removed, short tokens dropped. */
+function followUpTokens(question: string): Set<string> {
+  return new Set(extractKeywordsFromText(question).filter(t => t.length >= FUZZY_MIN_TOKEN_LEN));
+}
+
+/** Jaccard similarity of two token sets. Empty sets never match. */
+function tokenSetJaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let inter = 0;
+  for (const t of a) if (b.has(t)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+/** Id of the most similar existing follow-up at or above the threshold, if any. */
+function findFuzzyFollowUpMatch(question: string, candidates: Iterable<PendingFollowUp>): string | undefined {
+  const tokens = followUpTokens(question);
+  let bestId: string | undefined;
+  let bestScore = FUZZY_MATCH_THRESHOLD;
+  for (const fu of candidates) {
+    const score = tokenSetJaccard(tokens, followUpTokens(fu.question));
+    if (score >= bestScore) {
+      bestScore = score;
+      bestId = fu.id;
+    }
+  }
+  return bestId;
+}
+
 /**
  * Merge follow-ups the brain returned into the existing list. The LLM tends to
  * echo only the items it is thinking about, so omitted items are kept; an item
  * is only dropped when it comes back with `resolved: true`. Incoming items
- * match existing ones by id, or by identical question text when the brain
- * re-emitted one without its id. Capped at MAX_PENDING_FOLLOWUPS (oldest go).
+ * match existing ones by id, by identical question text, or by fuzzy token
+ * similarity when the brain re-emitted one with fresh wording — the existing
+ * id/createdAt survive, the question updates to the newer wording. Capped at
+ * MAX_PENDING_FOLLOWUPS (oldest go).
  */
 export function mergePendingFollowUps(existing: PendingFollowUp[], incoming: PendingFollowUp[]): PendingFollowUp[] {
   const byId = new Map(existing.map(fu => [fu.id, fu]));
   const idByQuestion = new Map(existing.map(fu => [normalizeQuestion(fu.question), fu.id]));
 
   for (const item of incoming) {
-    const matchId = byId.has(item.id) ? item.id : idByQuestion.get(normalizeQuestion(item.question));
+    const matchId = byId.has(item.id)
+      ? item.id
+      : idByQuestion.get(normalizeQuestion(item.question)) ?? findFuzzyFollowUpMatch(item.question, byId.values());
     if (item.resolved) {
       if (matchId) byId.delete(matchId);
       continue;
@@ -153,9 +193,33 @@ export function updateWorkingMemory(
 const MAX_TRACKING_ITEMS = 25;
 const MAX_FOLLOWUP_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-export function cleanupWorkingMemory(wm: WorkingMemory): { trackingTrimmed: number; followUpsPruned: number } {
+/**
+ * Collapse near-duplicate follow-ups already in the stored list (exact or
+ * fuzzy question match). The survivor keeps the oldest id/createdAt and the
+ * newest wording/fields.
+ */
+export function dedupeFollowUps(followUps: PendingFollowUp[]): PendingFollowUp[] {
+  const kept: { fu: PendingFollowUp; norm: string; tokens: Set<string> }[] = [];
+  for (const fu of followUps) {
+    const norm = normalizeQuestion(fu.question);
+    const tokens = followUpTokens(fu.question);
+    const match = kept.find(k => k.norm === norm || tokenSetJaccard(tokens, k.tokens) >= FUZZY_MATCH_THRESHOLD);
+    if (!match) {
+      kept.push({ fu, norm, tokens });
+      continue;
+    }
+    const [older, newer] = match.fu.createdAt <= fu.createdAt ? [match.fu, fu] : [fu, match.fu];
+    match.fu = { ...newer, id: older.id, createdAt: older.createdAt };
+    match.norm = normalizeQuestion(match.fu.question);
+    match.tokens = followUpTokens(match.fu.question);
+  }
+  return kept.map(k => k.fu);
+}
+
+export function cleanupWorkingMemory(wm: WorkingMemory): { trackingTrimmed: number; followUpsPruned: number; followUpsMerged: number } {
   let trackingTrimmed = 0;
   let followUpsPruned = 0;
+  let followUpsMerged = 0;
   const now = Date.now();
 
   // Cap shortTermTracking to most recent items
@@ -173,9 +237,17 @@ export function cleanupWorkingMemory(wm: WorkingMemory): { trackingTrimmed: numb
       return true;
     });
     followUpsPruned = before - wm.pendingFollowUps.length;
+
+    // Collapse historical near-duplicates that predate fuzzy merge matching
+    const beforeDedup = wm.pendingFollowUps.length;
+    wm.pendingFollowUps = dedupeFollowUps(wm.pendingFollowUps);
+    followUpsMerged = beforeDedup - wm.pendingFollowUps.length;
+    if (followUpsMerged > 0) {
+      log(`Follow-up dedup: merged ${followUpsMerged} near-duplicate(s)`);
+    }
   }
 
-  return { trackingTrimmed, followUpsPruned };
+  return { trackingTrimmed, followUpsPruned, followUpsMerged };
 }
 
 // ── Follow-Up Auto-Resolution Detection ──
