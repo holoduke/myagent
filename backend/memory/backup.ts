@@ -8,11 +8,13 @@
  * Backups are stored as plain JSON copies in /data/brain/backups/backup_<timestamp>/
  */
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync, statSync, copyFileSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync, statSync, copyFileSync, renameSync, unlinkSync } from "fs";
 import { join } from "path";
 import { createLogger } from "../logger.js";
 import { BRAIN_DIR } from "../config.js";
-import { ensureDir } from "../utils/file-store.js";
+import { ensureDir, strictReadJSON, uniqueTmpPath } from "../utils/file-store.js";
+import { readGeneration, writeGeneration } from "./graph-persistence.js";
+import { requestGraphReload } from "./graph-inbox.js";
 
 const log = createLogger("backup");
 
@@ -204,11 +206,46 @@ export function getBackup(timestamp: string): BackupDetail | null {
   }
 }
 
+interface StagedCopy {
+  src: string;
+  tmp: string;
+  dst: string;
+}
+
+/** Plan which backup files exist and where they go. */
+function planRestore(dir: string): { src: string; dst: string }[] {
+  const graphCopies = [...GRAPH_FILES, ...OPTIONAL_GRAPH_FILES]
+    .map(file => ({ src: join(dir, file), dst: join(GRAPH_DIR, file) }));
+  const wmCopy = { src: join(dir, "working-memory.json"), dst: WM_FILE };
+  return [...graphCopies, wmCopy].filter(c => existsSync(c.src));
+}
+
+/** Copy every source next to its destination (same filesystem) so the final step is a pure rename. */
+function stageCopies(copies: { src: string; dst: string }[]): StagedCopy[] {
+  const staged: StagedCopy[] = [];
+  try {
+    for (const { src, dst } of copies) {
+      strictReadJSON(src); // a backup file that doesn't parse must never replace a live one
+      const tmp = uniqueTmpPath(dst);
+      copyFileSync(src, tmp);
+      staged.push({ src, tmp, dst });
+    }
+    return staged;
+  } catch (err) {
+    for (const s of staged) {
+      try { unlinkSync(s.tmp); } catch { /* already gone */ }
+    }
+    throw new Error(`Restore aborted before touching live files — could not stage an atomic copy: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+}
+
 /**
- * Restore a backup by copying files back to their live locations.
- * After restoration, the graph needs to be reloaded by the brain loop
- * (which happens naturally on the next tick since MemoryGraph.load() is
- * called at startup, and we can trigger a reload by writing a marker).
+ * Restore a backup. Every file is first copied to a temp path beside its
+ * destination (validated as JSON on the way), and only when all copies are
+ * staged are they renamed into place — so a failure part-way leaves the live
+ * graph untouched. The graph generation is bumped so any process still
+ * holding the old graph refuses to save over the restore, and a reload marker
+ * tells the brain to pick up the restored files at its next tick.
  */
 export function restoreBackup(timestamp: string): void {
   const ts = Number(timestamp);
@@ -216,28 +253,17 @@ export function restoreBackup(timestamp: string): void {
 
   const dir = backupDirForTimestamp(ts);
   if (!existsSync(dir)) throw new Error("Backup not found");
-
-  const metaFile = join(dir, "meta.json");
-  if (!existsSync(metaFile)) throw new Error("Backup meta not found");
+  if (!existsSync(join(dir, "meta.json"))) throw new Error("Backup meta not found");
 
   ensureDir(GRAPH_DIR);
-
-  // Copy graph files back
-  for (const file of [...GRAPH_FILES, ...OPTIONAL_GRAPH_FILES]) {
-    const src = join(dir, file);
-    const dst = join(GRAPH_DIR, file);
-    if (existsSync(src)) {
-      copyFileSync(src, dst);
-    }
+  const staged = stageCopies(planRestore(dir));
+  for (const { tmp, dst } of staged) {
+    renameSync(tmp, dst);
   }
 
-  // Copy working memory back
-  const wmSrc = join(dir, "working-memory.json");
-  if (existsSync(wmSrc)) {
-    copyFileSync(wmSrc, WM_FILE);
-  }
-
-  log(`Backup restored from ${dir} (timestamp=${ts})`);
+  writeGeneration(readGeneration() + 1);
+  requestGraphReload(`restore backup_${ts}`);
+  log(`Backup restored from ${dir} (timestamp=${ts}, ${staged.length} files) — brain reload requested`);
 }
 
 /**

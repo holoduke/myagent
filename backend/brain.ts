@@ -22,6 +22,8 @@ import { getObservationsSince, pruneObservations, ensureBrainDir } from "./obser
 import type { Observation } from "./observer.js";
 import type { MessageQueue } from "./queue.js";
 import { MemoryGraph } from "./memory/graph.js";
+import { drainGraphInbox, consumeReloadRequest } from "./memory/graph-inbox.js";
+import { flushEmbeddings } from "./memory/embeddings.js";
 import type { BrainState, TickFailureSummary } from "./memory/types.js";
 import { loadWorkingMemory, saveWorkingMemory, populateTemporalContext, updateConversationThreads, scanFollowUpsForResolution } from "./memory/working-memory.js";
 import { scoreObservations, getPendingUrgency, clearPendingUrgency, setUrgencyInterruptHandler } from "./urgency.js";
@@ -342,6 +344,7 @@ export function startBrainLoop(
   }, cfg.urgencyInterruptThreshold);
 
   graph.load();
+  drainGraphInbox(graph); // ops queued by other processes while we were down
   migrateNotebook(graph);
   bootstrapIdentity(graph);
 
@@ -408,6 +411,7 @@ export function stopBrainLoop(): void {
   } catch (err) {
     log(`Failed to save graph on shutdown: ${err}`);
   }
+  flushEmbeddings();
 
   if (brainInterval) {
     clearInterval(brainInterval);
@@ -520,6 +524,13 @@ async function runTick(queue: MessageQueue, sendMessage: SendFn, ownerJid: strin
   if (!cfg.enabled) {
     return;
   }
+
+  // ── Graph sync: honour a restore-from-backup reload, then apply ops queued by other processes ──
+  if (consumeReloadRequest()) {
+    log("Reload requested — reloading graph from disk");
+    graph.load();
+  }
+  drainGraphInbox(graph);
 
   const state = loadState();
   const now = Date.now();
