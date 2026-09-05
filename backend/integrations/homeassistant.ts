@@ -72,6 +72,8 @@ export interface HASpeechConfig {
   effect: "none" | "reverb" | "computer";
   /** Speaking rate for providers that support it (0.7–1.5, 1 = normal). */
   speed: number;
+  /** Delivery tags wrapped around the text for providers that support them (Grok: soft, low, whisper, loud, high, sing). */
+  speechTags: string[];
 }
 
 /** Which button press fires a reflex. */
@@ -138,6 +140,7 @@ export const DEFAULT_SPEECH: HASpeechConfig = {
   apiKey: "",
   effect: "none",
   speed: 1,
+  speechTags: [],
 };
 
 const VOICE_EFFECTS = new Set<HASpeechConfig["effect"]>(["none", "reverb", "computer"]);
@@ -222,6 +225,7 @@ export function withDefaults(partial: Partial<HAConfig> | null | undefined): HAC
     apiKey: typeof speechRaw.apiKey === "string" ? speechRaw.apiKey : "",
     effect: speechRaw.effect && VOICE_EFFECTS.has(speechRaw.effect) ? speechRaw.effect : DEFAULT_SPEECH.effect,
     speed: clampNumber(speechRaw.speed, DEFAULT_SPEECH.speed, 0.7, 1.5),
+    speechTags: Array.isArray(speechRaw.speechTags) ? speechRaw.speechTags.filter((t): t is string => typeof t === "string" && /^[a-z]{2,12}$/.test(t)) : DEFAULT_SPEECH.speechTags,
   };
   const weather = normalizeRule(legacy, DEFAULT_WEATHER_REFLEX);
   return {

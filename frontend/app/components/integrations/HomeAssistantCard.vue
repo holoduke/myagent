@@ -76,6 +76,9 @@
           <label class="intg-label">Speed (0.7–1.5)
             <input v-model.number="speech.speed" type="number" min="0.7" max="1.5" step="0.05" class="intg-input intg-input-sm" />
           </label>
+          <label v-if="speech.provider === 'grok'" class="intg-label">Delivery tags (Grok: soft, low, whisper, loud, high)
+            <input v-model="speechTagsText" class="intg-input" placeholder="soft, low" />
+          </label>
         </template>
       </div>
       <p class="ha-hint">Premium voices are generated on the server and streamed to the speaker from ARIA's URL; if the provider fails, the Home Assistant engine speaks instead.</p>
@@ -193,7 +196,7 @@ const busy = ref(false)
 const showToken = ref(false)
 const preview = ref('')
 
-const DEFAULT_SPEECH: HASpeechConfig = { mediaPlayer: 'media_player.wiim_amp_ultra_3d72', ttsEngine: 'google_translate', language: 'nl', ttsVolume: 0.3, provider: 'homeassistant', voiceId: 'JBFqnCBsd6RMkjVDRZzb', model: 'eleven_multilingual_v2', style: '', apiKey: '', effect: 'none', speed: 1 }
+const DEFAULT_SPEECH: HASpeechConfig = { mediaPlayer: 'media_player.wiim_amp_ultra_3d72', ttsEngine: 'google_translate', language: 'nl', ttsVolume: 0.3, provider: 'homeassistant', voiceId: 'JBFqnCBsd6RMkjVDRZzb', model: 'eleven_multilingual_v2', style: '', apiKey: '', effect: 'none', speed: 1, speechTags: [] }
 const DEFAULT_WEATHER: HAWeatherReflexConfig = { enabled: true, device: 'Ikea switch 3 silver', actions: ['on', 'off', 'arrow_left_click'], eveningHour: 14, weatherEntity: 'weather.buienradar', pushTts: false }
 const DEFAULT_MIND: HAButtonRule = { enabled: true, device: 'Ikea switch 3 silver', actions: ['arrow_right_click'], pushTts: false }
 
@@ -201,12 +204,14 @@ const speech = reactive<HASpeechConfig>({ ...DEFAULT_SPEECH })
 const weather = reactive<HAWeatherReflexConfig>({ ...DEFAULT_WEATHER })
 const mind = reactive<HAButtonRule>({ ...DEFAULT_MIND })
 const weatherActions = ref(DEFAULT_WEATHER.actions.join(', '))
+const speechTagsText = ref('')
 const mindActions = ref(DEFAULT_MIND.actions.join(', '))
 const conn = reactive({ mode: 'webhook' as 'webhook' | 'direct_api' | 'cloud', url: '', token: '' })
 
 watch(() => props.ha.config, (cfg) => {
   if (!cfg) return
   Object.assign(speech, cfg.speech ?? DEFAULT_SPEECH)
+  speechTagsText.value = (cfg.speech?.speechTags ?? []).join(', ')
   Object.assign(weather, cfg.reflexes?.weatherBriefing ?? DEFAULT_WEATHER)
   Object.assign(mind, cfg.reflexes?.mindBriefing ?? DEFAULT_MIND)
   weatherActions.value = weather.actions.join(', ')
@@ -254,7 +259,7 @@ function splitActions(text: string): string[] {
 
 function saveSpeech() {
   return run('Save speech', async () => {
-    await api('/api/homeassistant/config', { method: 'PUT', body: { speech: { ...speech } } })
+    await api('/api/homeassistant/config', { method: 'PUT', body: { speech: { ...speech, speechTags: splitActions(speechTagsText.value) } } })
     emit('info', 'Speech settings saved')
     emit('reload')
   })

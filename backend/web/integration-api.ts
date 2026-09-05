@@ -594,6 +594,7 @@ function parseSpeech(raw: unknown, current: HASpeechConfig): HASpeechConfig {
     apiKey: typeof r.apiKey === "string" && r.apiKey !== "***" ? r.apiKey.trim() : current.apiKey,
     effect: r.effect === undefined ? current.effect : parseVoiceEffect(r.effect),
     speed: r.speed === undefined ? current.speed : parseSpeed(r.speed),
+    speechTags: Array.isArray(r.speechTags) ? r.speechTags.filter((t): t is string => typeof t === "string" && /^[a-z]{2,12}$/.test(t)) : current.speechTags,
   };
 }
 
