@@ -3,29 +3,26 @@
  *
  * Consolidates the repeated patterns of:
  *   - ensureDir / mkdirSync(recursive)
- *   - atomic writes (write to .tmp, rename)
+ *   - atomic, durable writes (unique tmp → fsync → rename → dir fsync)
  *   - JSON load with error handling and fallback defaults
  *   - JSON save with optional pretty printing
+ *   - rolling JSONL logs (append, then trim to the last N entries)
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import {
+  readFileSync,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  openSync,
+  writeSync,
+  fsyncSync,
+  closeSync,
+  unlinkSync,
+  appendFileSync,
+} from "fs";
 import { dirname } from "path";
-
-// ── Write lock for concurrent write protection ──
-//
-// Maps file path → tail of an in-flight Promise chain. Each new write awaits
-// the prior tail and replaces it with its own promise. This serializes writes
-// to the same path even when callers come from different modules (HTTP API,
-// brain ticks, workers) that don't share an outer mutex.
-//
-// Note: only synchronous writes use this; the public API (`atomicWriteJSON`)
-// remains synchronous to keep call sites simple. The lock is therefore
-// best-effort within a single tick of the event loop and serves as a soft
-// barrier rather than a hard mutex. For genuine cross-async serialization
-// callers should use `atomicWriteJSONAsync`.
-
-const writeLocks = new Map<string, boolean>();
-const asyncWriteChains = new Map<string, Promise<void>>();
+import { randomBytes } from "crypto";
 
 // ── Standalone utility functions ──
 
@@ -41,67 +38,54 @@ export function ensureParentDir(filePath: string): void {
   ensureDir(dirname(filePath));
 }
 
+/** Unique temp path next to the target so the final rename stays on one filesystem. */
+export function uniqueTmpPath(filePath: string): string {
+  return `${filePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+}
+
+/** fsync a directory so a just-renamed entry survives a crash. Best-effort. */
+function fsyncDir(dirPath: string): void {
+  try {
+    const fd = openSync(dirPath, "r");
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // Directory fsync is unsupported on some platforms/filesystems — durability
+    // of the rename is then only as good as the OS guarantees. Non-fatal.
+  }
+}
+
 /**
- * Atomic write: writes content to a .tmp file then renames.
- * Ensures the parent directory exists.
+ * Atomic, durable write: content goes to a unique temp file (pid + random so
+ * two processes sharing the directory never clobber each other's temp file),
+ * is fsynced, then renamed over the target. Ensures the parent directory exists.
  */
 export function atomicWriteFile(filePath: string, content: string): void {
   ensureParentDir(filePath);
-  const tmp = filePath + ".tmp";
-  writeFileSync(tmp, content);
+  const tmp = uniqueTmpPath(filePath);
+  const fd = openSync(tmp, "w");
+  try {
+    writeSync(fd, content);
+    fsyncSync(fd);
+  } catch (err) {
+    closeSync(fd);
+    try { unlinkSync(tmp); } catch { /* temp already gone */ }
+    throw err;
+  }
+  closeSync(fd);
   renameSync(tmp, filePath);
+  fsyncDir(dirname(filePath));
 }
 
 /**
  * Atomic JSON write with pretty printing (2-space indent by default).
  * Set `indent` to 0 for compact output, or any number for custom spacing.
- *
- * Uses a per-file write lock to detect concurrent write attempts.
- * The actual write is atomic (write-to-tmp + rename), so data won't corrupt,
- * but the lock prevents interleaving of read-modify-write sequences.
  */
 export function atomicWriteJSON<T>(filePath: string, data: T, indent: number = 2): void {
-  if (writeLocks.get(filePath)) {
-    // Another write is in progress -- atomic rename is still safe,
-    // but log for visibility into potential read-modify-write races
-    // eslint-disable-next-line no-console
-    console.warn(`[file-store] Concurrent write detected for ${filePath}`);
-  }
-  writeLocks.set(filePath, true);
-  try {
-    atomicWriteFile(filePath, JSON.stringify(data, null, indent));
-  } finally {
-    writeLocks.delete(filePath);
-  }
-}
-
-/**
- * Async serialized JSON write. Chains writes to the same path so concurrent
- * callers from different modules can't interleave their saves.
- *
- * Callers that already hold an outer mutex (e.g. brain `tickLock`) can use
- * the synchronous `atomicWriteJSON` for simplicity. Callers from HTTP routes
- * or worker pickups should prefer this async form.
- */
-export async function atomicWriteJSONAsync<T>(
-  filePath: string,
-  data: T,
-  indent: number = 2,
-): Promise<void> {
-  const prior = asyncWriteChains.get(filePath) ?? Promise.resolve();
-  const next = prior
-    .catch(() => { /* prior failure shouldn't block subsequent writes */ })
-    .then(() => {
-      atomicWriteFile(filePath, JSON.stringify(data, null, indent));
-    });
-  asyncWriteChains.set(filePath, next);
-  try {
-    await next;
-  } finally {
-    if (asyncWriteChains.get(filePath) === next) {
-      asyncWriteChains.delete(filePath);
-    }
-  }
+  atomicWriteFile(filePath, JSON.stringify(data, null, indent));
 }
 
 /**
@@ -115,7 +99,10 @@ export function strictReadJSON<T>(filePath: string): T | null {
   try {
     return JSON.parse(raw) as T;
   } catch (err) {
-    throw new Error(`Failed to parse JSON at ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `Failed to parse JSON at ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
   }
 }
 
@@ -137,6 +124,38 @@ export function safeReadJSON<T>(filePath: string, fallback: T): T {
     // Corrupted or unreadable — fall back silently
   }
   return fallback;
+}
+
+// ── Rolling JSONL ──
+
+/**
+ * Append one JSON entry to a JSONL log and trim it to the last `maxEntries`
+ * lines. The trim is an atomic rewrite, so a crash mid-trim never truncates
+ * the log to garbage. Throws on I/O failure — callers decide how loud to be.
+ */
+export function appendRollingJsonl<T>(filePath: string, entry: T, maxEntries: number): void {
+  ensureParentDir(filePath);
+  appendFileSync(filePath, JSON.stringify(entry) + "\n", "utf-8");
+  const lines = readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
+  if (lines.length > maxEntries) {
+    atomicWriteFile(filePath, lines.slice(lines.length - maxEntries).join("\n") + "\n");
+  }
+}
+
+/** Read and parse a JSONL file; malformed lines are skipped (count returned). */
+export function readJsonl<T>(filePath: string): { entries: T[]; malformed: number } {
+  if (!existsSync(filePath)) return { entries: [], malformed: 0 };
+  const entries: T[] = [];
+  let malformed = 0;
+  for (const line of readFileSync(filePath, "utf-8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      entries.push(JSON.parse(line) as T);
+    } catch {
+      malformed++;
+    }
+  }
+  return { entries, malformed };
 }
 
 // ── FileStore class ──

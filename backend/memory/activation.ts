@@ -1,60 +1,17 @@
 import type { MemoryGraph } from "./graph.js";
 import type { MemoryNode, RejectedEdge, WorkingMemory } from "./types.js";
+import { ARCHIVE_RECALL_STRENGTH_FLOOR, PINNED_CONTEXT_SHARE } from "./types.js";
 import type { Observation } from "../observer.js";
 import { createLogger } from "../logger.js";
 import { getBrainConfig } from "../brain-config.js";
 import { semanticSearchDiverse } from "./embeddings.js";
+import { STOP_WORDS, extractKeywordsFromText, tagOverlapCount } from "./text-utils.js";
 
 const log = createLogger("activation");
 
 // ── Keyword Extraction ──
 
-const STOP_WORDS = new Set([
-  // English
-  "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-  "have", "has", "had", "do", "does", "did", "will", "would", "could",
-  "should", "may", "might", "shall", "can", "need", "dare", "ought",
-  "i", "me", "my", "we", "our", "you", "your", "he", "him", "his",
-  "she", "her", "it", "its", "they", "them", "their", "this", "that",
-  "these", "those", "am", "to", "of", "in", "for", "on", "with", "at",
-  "by", "from", "as", "into", "about", "like", "through", "after",
-  "over", "between", "out", "against", "during", "without", "before",
-  "under", "around", "among", "but", "and", "or", "nor", "not", "so",
-  "very", "just", "also", "then", "than", "too", "both", "each",
-  "all", "any", "few", "more", "most", "some", "such", "no", "only",
-  "own", "same", "here", "there", "when", "where", "why", "how",
-  "what", "which", "who", "whom", "if", "because", "until", "while",
-  "ok", "okay", "yes", "no", "yeah", "nah", "lol", "haha", "hmm",
-  "oh", "ah", "um", "uh", "well", "hey", "hi", "hello", "bye",
-  "got", "get", "go", "going", "went", "come", "came", "make", "made",
-  "take", "took", "give", "gave", "say", "said", "tell", "told",
-  "know", "knew", "think", "thought", "see", "saw", "want", "let",
-  "thing", "things", "one", "two", "don", "doesn", "didn", "won",
-  "gonna", "wanna", "gotta", "kinda", "really", "actually", "maybe",
-  // Dutch stop words
-  "de", "het", "een", "van", "dat", "die", "voor", "niet", "zijn", "nog",
-  "maar", "met", "ook", "naar", "dan", "wat", "als", "bij", "uit", "aan",
-  "kan", "wel", "zou", "ik", "je", "hij", "zij", "wij", "jij",
-  "mij", "hem", "haar", "ons", "hun", "dit", "deze", "hoe", "waar",
-  "wie", "waarom", "wanneer", "weer", "veel", "meer", "goed",
-  "heb", "heeft", "ben", "was", "moet", "wil",
-  "doe", "doet", "deed", "gaat", "ging", "kom", "komt", "kwam",
-  "laat", "laten", "geeft", "geven", "zegt", "zei", "zien", "zag",
-  "nee", "ja", "nou", "toch", "even", "echt", "best", "heel",
-  "denk", "weet", "iets", "niets", "alles", "ander", "eigen",
-  "steeds", "graag", "gewoon", "helemaal", "eigenlijk", "geweldig",
-  "leuk", "prima", "mooi", "fijn", "lekker",
-]);
-
-/** Extract unique lowercase keywords (3+ chars, no stop words) from plain text */
-export function extractKeywordsFromText(text: string): string[] {
-  return [...new Set(
-    text.toLowerCase()
-      .replace(/[^\p{L}0-9\s'-]/gu, " ")
-      .split(/\s+/)
-      .filter(w => w.length > 2 && !STOP_WORDS.has(w))
-  )];
-}
+export { extractKeywordsFromText };
 
 export function extractKeywords(observations: Observation[]): string[] {
   const freqs = new Map<string, number>();
@@ -312,7 +269,7 @@ export async function selectContextForThink(
         if (tagsLower.some(t => t.includes(term))) score += 0.5 * weight;
       }
       if (score > 0) {
-        score *= archived.strength;
+        score *= Math.max(archived.strength, ARCHIVE_RECALL_STRENGTH_FLOOR);
         if (score >= RECALL_THRESHOLD) {
           recalled.push({ id: archived.id, score });
         }
@@ -448,10 +405,12 @@ export async function selectContextForThink(
     }
   }
 
-  // Include all pinned nodes (core identity)
-  const pinned = graph.allNodes().filter(
+  // Pinned nodes (core identity) ride along, but capped to a share of the
+  // budget so a pile of pins can't crowd out everything situational.
+  const pinnedCandidates = graph.allNodes().filter(
     n => n.pinned && !activated.some(a => a.node.id === n.id) && !wmNodes.some(w => w.id === n.id),
   );
+  const pinned = selectPinnedForBudget(pinnedCandidates, budget);
 
   const result = [
     ...pinned,
@@ -460,8 +419,23 @@ export async function selectContextForThink(
     ...wmNodes.slice(0, 5),
   ];
 
-  log(`Think context selected: ${result.length} nodes (${pinned.length} pinned, ${conceptNodes.length} concepts, ${activated.length} activated, ${wmNodes.length} from WM), budget: ${budget}`);
+  log(`Think context selected: ${result.length} nodes (${pinned.length}/${pinnedCandidates.length} pinned, ${conceptNodes.length} concepts, ${activated.length} activated, ${wmNodes.length} from WM), budget: ${budget}`);
   return result.slice(0, budget);
+}
+
+/**
+ * Pinned nodes get at most PINNED_CONTEXT_SHARE of the budget (never fewer
+ * than one when any exist). Highest importance, then strength, wins.
+ */
+export function selectPinnedForBudget(pinned: MemoryNode[], budget: number): MemoryNode[] {
+  if (pinned.length === 0) return [];
+  const cap = Math.max(1, Math.floor(budget * PINNED_CONTEXT_SHARE));
+  if (pinned.length <= cap) return pinned;
+  const ranked = [...pinned].sort((a, b) =>
+    ((b.importance ?? 0) - (a.importance ?? 0)) || (b.strength - a.strength),
+  );
+  log(`Pinned cap: ${pinned.length} pinned nodes, only ${cap} fit in ${Math.round(PINNED_CONTEXT_SHARE * 100)}% of budget ${budget}`);
+  return ranked.slice(0, cap);
 }
 
 export function selectContextForConsolidate(graph: MemoryGraph): {
@@ -495,10 +469,7 @@ export function selectContextForConsolidate(graph: MemoryGraph): {
   for (const [, nodes] of byType) {
     for (let i = 0; i < nodes.length && duplicateCandidates.length < 10; i++) {
       for (let j = i + 1; j < nodes.length && duplicateCandidates.length < 10; j++) {
-        const overlap = nodes[i].tags.filter(t =>
-          nodes[j].tags.some(t2 => t2.toLowerCase() === t.toLowerCase()),
-        );
-        if (overlap.length >= 2) {
+        if (tagOverlapCount(nodes[i].tags, nodes[j].tags) >= 2) {
           duplicateCandidates.push([nodes[i], nodes[j]]);
         }
       }

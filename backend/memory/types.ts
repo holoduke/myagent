@@ -119,6 +119,8 @@ export interface PendingFollowUp {
   dueAt?: number;
   potentiallyResolved?: boolean;
   potentiallyResolvedAt?: number;
+  /** Set by the brain to explicitly close a follow-up; the item is then dropped on merge. */
+  resolved?: boolean;
 }
 
 export interface ConversationThread {
@@ -474,39 +476,45 @@ export interface GhostNode {
 
 export const MAX_GHOST_NODES = 5000;
 
-// ── Write-Ahead Log (WAL) ──
-// Append-only log recording every graph mutation for forensic reconstruction.
-
-export type WALOperationType =
-  | "add_node"
-  | "remove_node"
-  | "update_node"
-  | "strengthen"
-  | "weaken"
-  | "add_edge"
-  | "remove_edge"
-  | "update_edge"
-  | "merge_nodes"
-  | "archive"
-  | "restore"
-  | "reject_edge"
-  | "prune_rejected_edges";
-
-export interface WALEntry {
-  ts: number;                    // unix ms
-  op: WALOperationType;
-  nodeId?: string;               // primary node involved
-  nodeIds?: string[];            // for merge: source node IDs
-  edgeFrom?: string;             // for edge ops
-  edgeTo?: string;               // for edge ops
-  meta?: Record<string, unknown>; // minimal metadata (type, reason, etc.)
-}
-
-/** Max WAL file size in bytes before rolling (default 10MB) */
-export const WAL_MAX_BYTES = 10 * 1024 * 1024;
+// ── Limits ──
 
 export const PRUNE_NODE_THRESHOLD = 0.05;
 export const PRUNE_EDGE_THRESHOLD = 0.03;
 export const ORPHAN_GRACE_HOURS = 24;
 export const MAX_NODES_SOFT = 500;
 export const MAX_NODES_HARD = 2000;
+/** Emergency prune trims to this fraction of MAX_NODES_HARD — never further. */
+export const EMERGENCY_PRUNE_TARGET_RATIO = 0.9;
+/** Cold storage cap; overflow is evicted (lowest importance, then strength) to the ghost graph. */
+export const MAX_ARCHIVE_NODES = 2000;
+
+/** Hard cap on pinned nodes — pins beyond this are ignored (with a log). */
+export const MAX_PINNED_NODES = 60;
+/** Pinning through LLM operations requires at least this importance. */
+export const MIN_PIN_IMPORTANCE = 0.7;
+/** Pinned nodes may take at most this share of the think-context budget. */
+export const PINNED_CONTEXT_SHARE = 0.3;
+/** Tags per node after auto-enrichment are capped here. */
+export const MAX_TAGS_PER_NODE = 12;
+/** Max remove_node + merge_nodes operations honoured per applyOperations batch. */
+export const MAX_DESTRUCTIVE_OPS_PER_BATCH = 5;
+/** Node content longer than this is truncated at the operation boundary. */
+export const MAX_NODE_CONTENT_CHARS = 12_000;
+
+/** Restored archive nodes come back with strength in this window. */
+export const RESTORE_STRENGTH_FLOOR = 0.3;
+export const RESTORE_STRENGTH_CEILING = 0.6;
+/** Archived strength is floored here when scoring recall so decay-archived nodes stay findable. */
+export const ARCHIVE_RECALL_STRENGTH_FLOOR = 0.2;
+
+/** Working memory keeps at most this many pending follow-ups. */
+export const MAX_PENDING_FOLLOWUPS = 50;
+
+export const NODE_TYPES: readonly NodeType[] = [
+  "person", "event", "insight", "fact", "emotion", "plan", "meta", "goal",
+  "concept", "preference", "belief", "procedure", "reflection",
+];
+
+export const EDGE_TYPES: readonly EdgeType[] = [
+  "causal", "temporal", "social", "topical", "emotional", "contradicts", "hierarchical",
+];

@@ -1,5 +1,5 @@
-import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { dirname } from "path";
+import { appendRollingJsonl } from "../utils/file-store.js";
+import { clusterByTagOverlap } from "./text-utils.js";
 import type { MemoryGraph } from "./graph.js";
 import type { MemoryNode, RetentionTier, WorkingMemory } from "./types.js";
 import { createLogger } from "../logger.js";
@@ -78,20 +78,7 @@ export interface ConsolidationLogEntry {
 
 export function appendConsolidationLog(entry: ConsolidationLogEntry): void {
   try {
-    const dir = dirname(CONSOLIDATION_LOG_PATH);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-    appendFileSync(CONSOLIDATION_LOG_PATH, JSON.stringify(entry) + "\n");
-
-    // Rolling cap: trim to last CONSOLIDATION_LOG_MAX_ENTRIES lines
-    if (existsSync(CONSOLIDATION_LOG_PATH)) {
-      const content = readFileSync(CONSOLIDATION_LOG_PATH, "utf-8");
-      const lines = content.trimEnd().split("\n");
-      if (lines.length > CONSOLIDATION_LOG_MAX_ENTRIES) {
-        const trimmed = lines.slice(lines.length - CONSOLIDATION_LOG_MAX_ENTRIES);
-        writeFileSync(CONSOLIDATION_LOG_PATH, trimmed.join("\n") + "\n");
-      }
-    }
+    appendRollingJsonl(CONSOLIDATION_LOG_PATH, entry, CONSOLIDATION_LOG_MAX_ENTRIES);
   } catch (err) {
     log(`Failed to write consolidation log: ${err}`);
   }
@@ -99,6 +86,9 @@ export function appendConsolidationLog(entry: ConsolidationLogEntry): void {
 
 // ── Episodic→Semantic Gist Extraction ──
 
+const GIST_MIN_AGE_MS = 7 * 24 * 3600000;
+const GIST_MAX_CANDIDATES_PER_TYPE = 80; // bounds the per-type clustering work
+const GIST_MAX_CLUSTERS = 5;
 
 /**
  * Detect clusters of similar nodes that could be summarized into semantic gist nodes.
@@ -107,63 +97,25 @@ export function appendConsolidationLog(entry: ConsolidationLogEntry): void {
  */
 export function detectGistClusters(graph: MemoryGraph): MemoryNode[][] {
   const now = Date.now();
-  const MIN_AGE_MS = 7 * 24 * 3600000;
-  const MAX_CANDIDATES_PER_TYPE = 80; // Cap per-type candidates to bound O(n²)
-
   const candidates = graph.allNodes()
-    .filter(n => !n.pinned && n.strength < 0.5 && (now - n.createdAt) > MIN_AGE_MS);
+    .filter(n => !n.pinned && n.strength < 0.5 && (now - n.createdAt) > GIST_MIN_AGE_MS);
 
   const byType = new Map<string, MemoryNode[]>();
   for (const node of candidates) {
-    if (!byType.has(node.type)) byType.set(node.type, []);
-    const group = byType.get(node.type)!;
-    if (group.length < MAX_CANDIDATES_PER_TYPE) group.push(node);
+    const group = byType.get(node.type) ?? [];
+    if (group.length < GIST_MAX_CANDIDATES_PER_TYPE) byType.set(node.type, [...group, node]);
   }
 
   const clusters: MemoryNode[][] = [];
-
-  for (const [, nodes] of byType) {
-    if (nodes.length < 3) continue;
-
-    // Build tag→node index to avoid O(n²) pairwise comparison
-    const tagIndex = new Map<string, Set<number>>();
-    for (let i = 0; i < nodes.length; i++) {
-      for (const tag of nodes[i].tags) {
-        const key = tag.toLowerCase();
-        if (!tagIndex.has(key)) tagIndex.set(key, new Set());
-        tagIndex.get(key)!.add(i);
-      }
-    }
-
-    const used = new Set<string>();
-
-    for (let i = 0; i < nodes.length && clusters.length < 5; i++) {
-      if (used.has(nodes[i].id)) continue;
-
-      // Find candidates sharing at least one tag via index
-      const neighborCounts = new Map<number, number>();
-      for (const tag of nodes[i].tags) {
-        const key = tag.toLowerCase();
-        const matches = tagIndex.get(key);
-        if (!matches) continue;
-        for (const j of matches) {
-          if (j <= i || used.has(nodes[j].id)) continue;
-          neighborCounts.set(j, (neighborCounts.get(j) ?? 0) + 1);
-        }
-      }
-
-      const cluster = [nodes[i]];
-      for (const [j, overlapCount] of neighborCounts) {
-        if (overlapCount >= 2) {
-          cluster.push(nodes[j]);
-        }
-      }
-
-      if (cluster.length >= 3) {
-        for (const n of cluster) used.add(n.id);
-        clusters.push(cluster.slice(0, 8));
-      }
-    }
+  for (const nodes of byType.values()) {
+    if (clusters.length >= GIST_MAX_CLUSTERS) break;
+    const found = clusterByTagOverlap(nodes, {
+      minSharedTags: 2,
+      minClusterSize: 3,
+      maxClusterSize: 8,
+      maxClusters: GIST_MAX_CLUSTERS - clusters.length,
+    });
+    clusters.push(...found.map(c => c.nodes));
   }
 
   if (clusters.length > 0) {
@@ -207,7 +159,7 @@ export function runConsolidation(graph: MemoryGraph, wm?: WorkingMemory): Consol
     const nodeResult = applyDecay(graph, tierCache);
     const edgeResult = applyEdgeDecay(graph);
     const orphansPruned = pruneOrphans(graph);
-    const emergencyPruned = emergencyPrune(graph, 500, tierCache);
+    const emergencyPruned = emergencyPrune(graph, tierCache);
     pruneRejectedEdges(graph);
 
     // Periodic archive rescan — check if any archived memories match current context

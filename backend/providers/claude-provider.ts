@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { getSystemPrompt, getMessageMemoryContext, resetMemoryContextTracker } from "../system-prompt.js";
 import { getRecentConversationRecap, getHistory } from "../history.js";
 import { ensureValidToken } from "../auth-refresh.js";
-import { MemoryGraph } from "../memory/graph.js";
+import { appendGraphOps } from "../memory/graph-inbox.js";
 import type { AgentResult, AgentStats, ProviderAskOptions, ClaudeConfig } from "./types.js";
 import { BaseProvider } from "./base-provider.js";
 import { resolveClaudeModel } from "./llm-runner.js";
@@ -125,26 +125,21 @@ export class ClaudeProvider extends BaseProvider {
         return `${role}: ${content}`;
       }).join("\n");
 
-      const now = Date.now();
       const dateStr = new Date(sessionStart).toISOString().slice(0, 10);
       const nodeId = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
 
-      const graph = new MemoryGraph();
-      graph.load();
-      graph.addNode({
+      // The chat process never writes graph files — queue the node for the brain.
+      appendGraphOps([{
+        op: "add_node",
         id: nodeId,
         type: "meta",
         content: `Conversation digest (${dateStr}, ${sessionMessages.length} messages, $${stats.cumulativeCostUsd.toFixed(2)}, reset: ${reasons.join("; ")}):\n${digest}`,
         tags: ["conversation-digest", "auto-compacted", "session-archive"],
         strength: 0.9,
         pinned: true,
-        createdAt: now,
-        lastAccessedAt: now,
-        accessCount: 1,
         importance: 0.8,
-      });
-      graph.save();
-      log(`Saved conversation digest: ${nodeId} (${sessionMessages.length} messages)`);
+      }], "claude-provider:digest");
+      log(`Queued conversation digest: ${nodeId} (${sessionMessages.length} messages)`);
     } catch (err) {
       log(`Failed to save conversation digest: ${err}`);
     }

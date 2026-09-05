@@ -30,10 +30,11 @@ import {
 import { detectInitiativeSignals } from "../initiative.js";
 import { GoalTracker } from "../goals.js";
 import { MemoryGraph } from "../memory/graph.js";
+import { appendGraphOps } from "../memory/graph-inbox.js";
 import { loadWorkingMemory } from "../memory/working-memory.js";
 import type { MemoryNode, MemoryEdge } from "../memory/types.js";
 import type { GoalData, RetentionTier } from "../memory/types.js";
-import { classifyRetentionTier } from "../memory/decay.js";
+import { classifyRetentionTier } from "../memory/retention.js";
 import { loadSnapshot, detectDrift } from "../memory/drift-detection.js";
 import { getEmbeddingCount } from "../memory/embeddings.js";
 import { getChannelHealth } from "../integrations/channel-adapter.js";
@@ -832,11 +833,13 @@ async function handleBrainRecurringUpdate(req: IncomingMessage, res: ServerRespo
 
 // -- Brain goal handlers --
 
+// The web process never writes the graph files itself (the brain is the single
+// writer). Goal changes are queued in the graph-ops inbox and applied by the
+// brain at the start of its next tick.
+
 const handleBrainGoalCreate = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
   if (!data.title || !data.description) throw new ApiError(400, "title and description are required");
-  const graph = loadBrainGraph();
-  const tracker = new GoalTracker(graph);
-  tracker.applyGoalOps([{
+  appendGraphOps([], "web:goal-create", [{
     op: "create_goal" as const,
     title: data.title as string,
     description: data.description as string,
@@ -845,38 +848,34 @@ const handleBrainGoalCreate = apiHandler(async (_req, _res, data: Record<string,
     checkpoints: data.checkpoints as string[] | undefined,
     createdBy: "owner" as const,
   }]);
-  graph.save();
-  return { ok: true };
+  return { ok: true, queued: true };
 });
 
 async function handleBrainGoalUpdate(req: IncomingMessage, res: ServerResponse, nodeId: string) {
   const handler = apiHandler(async (_req, _res, data: Record<string, unknown>) => {
-    const graph = loadBrainGraph();
-    const tracker = new GoalTracker(graph);
-    tracker.applyGoalOps([{
+    if (!loadBrainGraph().getNode(nodeId)) throw new ApiError(404, "Goal not found");
+    appendGraphOps([], "web:goal-update", [{
       op: "update_goal" as const,
       nodeId,
       progress: data.progress as number | undefined,
       status: data.status as "active" | "completed" | "abandoned" | "paused" | undefined,
       checkpoints: data.checkpoints as { label: string; done: boolean }[] | undefined,
     }]);
-    graph.save();
-    return { ok: true };
+    return { ok: true, queued: true };
   });
   await handler(req, res);
 }
 
 function handleBrainGoalAction(res: ServerResponse, nodeId: string, action: "complete" | "abandon") {
   try {
-    const graph = loadBrainGraph();
-    const tracker = new GoalTracker(graph);
-    if (action === "complete") {
-      tracker.applyGoalOps([{ op: "complete_goal", nodeId }]);
-    } else {
-      tracker.applyGoalOps([{ op: "abandon_goal", nodeId }]);
+    if (!loadBrainGraph().getNode(nodeId)) {
+      respondJson(res, 404, { error: "Goal not found" });
+      return;
     }
-    graph.save();
-    respondJson(res, 200, { ok: true });
+    appendGraphOps([], `web:goal-${action}`, [
+      action === "complete" ? { op: "complete_goal", nodeId } : { op: "abandon_goal", nodeId },
+    ]);
+    respondJson(res, 200, { ok: true, queued: true });
   } catch (err) {
     log(`Goal ${action} error: ${err}`);
     respondJson(res, 400, { error: "Invalid request" });
@@ -891,9 +890,10 @@ const handleBackupCreate = apiGetHandler(() => {
 
 function handleBackupRestore(_req: IncomingMessage, res: ServerResponse, ts: string) {
   try {
-    restoreBackup(ts);
-    respondJson(res, 200, { ok: true });
+    restoreBackup(ts); // atomic tmp+rename per file, then asks the brain to reload
+    respondJson(res, 200, { ok: true, reloadRequested: true });
   } catch (err) {
+    log(`Backup restore error: ${err}`);
     respondJson(res, 400, { error: err instanceof Error ? err.message : "Restore failed" });
   }
 }

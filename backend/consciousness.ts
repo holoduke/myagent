@@ -7,8 +7,8 @@
  * response → write. ARIA owns the format and can evolve it freely.
  */
 
-import { readFileSync, existsSync, appendFileSync } from "fs";
-import { atomicWriteFile, ensureDir } from "./utils/file-store.js";
+import { readFileSync, existsSync } from "fs";
+import { atomicWriteFile, ensureDir, appendRollingJsonl } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
 import { BRAIN_DIR } from "./config.js";
 
@@ -17,8 +17,8 @@ const log = createLogger("consciousness");
 const CONSCIOUSNESS_FILE = `${BRAIN_DIR}/consciousness.dat`;
 const HISTORY_FILE = `${BRAIN_DIR}/consciousness-history.jsonl`;
 
-/** Max size in characters before truncation warning */
-const MAX_SIZE = 4000;
+/** Hard cap in characters — longer content is truncated on save */
+export const MAX_SIZE = 4000;
 
 /** Max history entries to retain */
 const MAX_HISTORY_ENTRIES = 50;
@@ -70,56 +70,52 @@ export function loadConsciousness(): string {
 function appendToHistory(content: string): void {
   try {
     ensureDir(BRAIN_DIR);
-    const entry = JSON.stringify({
-      timestamp: Date.now(),
-      length: content.length,
-      content,
-    });
-    appendFileSync(HISTORY_FILE, entry + "\n", "utf-8");
-
-    // Trim if over limit
-    if (existsSync(HISTORY_FILE)) {
-      const lines = readFileSync(HISTORY_FILE, "utf-8").split("\n").filter(Boolean);
-      if (lines.length > MAX_HISTORY_ENTRIES) {
-        const trimmed = lines.slice(lines.length - MAX_HISTORY_ENTRIES);
-        atomicWriteFile(HISTORY_FILE, trimmed.join("\n") + "\n");
-        log(`Trimmed consciousness history to ${MAX_HISTORY_ENTRIES} entries`);
-      }
-    }
+    appendRollingJsonl(HISTORY_FILE, { timestamp: Date.now(), length: content.length, content }, MAX_HISTORY_ENTRIES);
   } catch (err) {
     log(`Failed to append consciousness history: ${err}`);
   }
 }
 
 /**
+ * The shortest new content the length guard accepts. Normally 60% of the
+ * current content; when the current content is already over MAX_SIZE the
+ * ratchet is measured against MAX_SIZE instead, so ARIA is allowed to shrink
+ * back under the cap.
+ */
+export function minAcceptedLength(currentLength: number): number {
+  return Math.min(currentLength, MAX_SIZE) * MIN_LENGTH_RATIO;
+}
+
+/**
  * Write consciousness state to disk (atomic).
  *
- * Includes a length guard: if the new content is less than 60% of the current
- * content length, the save is skipped to prevent shallow ticks from flattening
- * deep state. Pass `force: true` to bypass the guard.
- *
- * Before overwriting, the current content is archived to the rolling history log.
+ * Enforces MAX_SIZE (over-long content is truncated) and a length guard: if
+ * the new content is shorter than the ratchet allows, the save is skipped to
+ * prevent shallow ticks from flattening deep state. Pass `force: true` to
+ * bypass the guard. Before overwriting, the current content is archived to
+ * the rolling history log.
  */
 export function saveConsciousness(content: string, { force = false }: { force?: boolean } = {}): void {
   try {
     ensureDir(BRAIN_DIR);
+    const bounded = content.length > MAX_SIZE ? content.slice(0, MAX_SIZE) : content;
+    if (bounded.length < content.length) {
+      log.warn(`Consciousness content truncated from ${content.length} to ${MAX_SIZE} chars`);
+    }
 
-    // Archive current content before overwriting
     if (existsSync(CONSCIOUSNESS_FILE)) {
       const current = readFileSync(CONSCIOUSNESS_FILE, "utf-8");
-
-      // Length guard — skip save if new content is suspiciously short
-      if (!force && current.length > 0 && content.length < current.length * MIN_LENGTH_RATIO) {
+      const minLength = minAcceptedLength(current.length);
+      if (!force && current.length > 0 && bounded.length < minLength) {
         log.warn(
-          `Consciousness length guard triggered: new ${content.length} chars < ${Math.round(MIN_LENGTH_RATIO * 100)}% of current ${current.length} chars — skipping save`
+          `Consciousness length guard triggered: new ${bounded.length} chars < ${Math.round(minLength)} (${Math.round(MIN_LENGTH_RATIO * 100)}% of ${Math.min(current.length, MAX_SIZE)}) — skipping save`,
         );
         return;
       }
-
       appendToHistory(current);
     }
 
-    atomicWriteFile(CONSCIOUSNESS_FILE, content);
+    atomicWriteFile(CONSCIOUSNESS_FILE, bounded);
   } catch (err) {
     log(`Failed to save consciousness: ${err}`);
   }

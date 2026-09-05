@@ -59,20 +59,25 @@ const SUB_AGENT_STALE_TIMEOUT = 20 * 60 * 1000; // 20 minutes
 
 // ── Shared helpers ──
 
+/**
+ * Record a self-improvement meta node on the brain's graph. Goes through the
+ * validated operation boundary and never saves mid-tick: every caller runs in
+ * the brain process (in-tick, or a background merge on the same instance), and
+ * the tick's end-of-cycle save persists it — the brain is the single writer.
+ */
 function addMetaNode(graph: MemoryGraph, content: string, tags: string[], pinned: boolean): void {
   try {
-    graph.addNode({
+    const result = graph.applyOperations([{
+      op: "add_node",
       id: `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`,
       type: "meta",
       content,
       tags: ["self-improvement", ...tags],
       strength: pinned ? 1.0 : 0.9,
       pinned,
-      createdAt: Date.now(),
-      lastAccessedAt: Date.now(),
-      accessCount: 1,
-    });
-    graph.save();
+      ...(pinned ? { importance: 0.9 } : {}),
+    }]);
+    if (result.applied === 0) log(`Meta node (${tags.join(",")}) was not applied (skipped=${result.skipped}, dropped=${result.dropped})`);
   } catch (err) {
     log(`Failed to record meta node (${tags.join(",")}): ${err}`);
   }

@@ -1,11 +1,12 @@
 import type { MemoryGraph } from "./graph.js";
-import type { MemoryNode, RetentionTier } from "./types.js";
+import type { MemoryNode, RetentionTier, EdgeType } from "./types.js";
 import {
   DECAY_LAMBDA,
   PRUNE_NODE_THRESHOLD,
   PRUNE_EDGE_THRESHOLD,
   ORPHAN_GRACE_HOURS,
   MAX_NODES_HARD,
+  EMERGENCY_PRUNE_TARGET_RATIO,
   RETENTION_MULTIPLIER,
   TIER_TAG_SIGNALS,
   TIER_CONTENT_SIGNALS,
@@ -189,13 +190,13 @@ export function applyDecay(graph: MemoryGraph, tierCache?: Map<string, Retention
 export function applyEdgeDecay(graph: MemoryGraph): { decayed: number; pruned: number } {
   let decayed = 0;
   let pruned = 0;
-  const toRemove: { from: string; to: string }[] = [];
+  const toRemove: { from: string; to: string; type: EdgeType }[] = [];
 
   for (const edge of graph.allEdges()) {
     const fromNode = graph.getNode(edge.from);
     const toNode = graph.getNode(edge.to);
     if (!fromNode || !toNode) {
-      toRemove.push({ from: edge.from, to: edge.to });
+      toRemove.push({ from: edge.from, to: edge.to, type: edge.type });
       continue;
     }
 
@@ -226,13 +227,14 @@ export function applyEdgeDecay(graph: MemoryGraph): { decayed: number; pruned: n
     }
 
     if (edge.weight < PRUNE_EDGE_THRESHOLD) {
-      toRemove.push({ from: edge.from, to: edge.to });
+      toRemove.push({ from: edge.from, to: edge.to, type: edge.type });
     }
   }
 
-  for (const { from, to } of toRemove) {
-    graph.removeEdge(from, to);
-    pruned++;
+  // Pass the type: two nodes can share edges of several types, and only the
+  // decayed one should go.
+  for (const { from, to, type } of toRemove) {
+    if (graph.removeEdge(from, to, type)) pruned++;
   }
 
   log(`Edge decay: ${decayed} decayed, ${pruned} pruned (below ${PRUNE_EDGE_THRESHOLD})`);
@@ -290,12 +292,17 @@ export const TIER_SORT_PRIORITY: Record<RetentionTier, number> = {
   ephemeral: 4,
 };
 
+/** Emergency pruning stops once the graph is back at this size. */
+export const EMERGENCY_PRUNE_TARGET = Math.floor(MAX_NODES_HARD * EMERGENCY_PRUNE_TARGET_RATIO);
+
 /**
- * Emergency pruning when node count exceeds hard limit.
- * Removes weakest non-pinned nodes, but respects retention tiers:
- * ephemeral nodes are pruned first, then standard, then work, etc.
+ * Emergency pruning when node count exceeds the hard limit. Archives the
+ * weakest non-pinned nodes (ephemeral tier first, then standard, work, …)
+ * until the graph is back at EMERGENCY_PRUNE_TARGET — 90% of the hard cap,
+ * never further: trimming to the soft limit used to wipe three quarters of
+ * memory in one pass.
  */
-export function emergencyPrune(graph: MemoryGraph, softLimit: number, tierCache?: Map<string, RetentionTier>): number {
+export function emergencyPrune(graph: MemoryGraph, tierCache?: Map<string, RetentionTier>): number {
   const count = graph.nodeCount;
   if (count <= MAX_NODES_HARD) return 0;
 
@@ -310,7 +317,7 @@ export function emergencyPrune(graph: MemoryGraph, softLimit: number, tierCache?
     });
 
   let pruned = 0;
-  const target = softLimit;
+  const target = EMERGENCY_PRUNE_TARGET;
   for (const { node } of nodes) {
     if (graph.nodeCount <= target) break;
     graph.archiveNode(node.id, "emergency");

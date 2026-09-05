@@ -13,6 +13,7 @@ import {
   createGistNode,
   buildGistSummary,
   runReflectiveConsolidation,
+  isConsolidationExempt,
 } from "../backend/reflective-consolidation.js";
 import type { MemoryNode } from "../backend/memory/types.js";
 
@@ -122,39 +123,82 @@ describe("buildGistSummary", () => {
   });
 });
 
-describe("createGistNode", () => {
-  it("creates gist node and weakens originals", () => {
-    const ops: any[] = [];
-    const mockGraph = {
+function mockWritableGraph(nodes: MemoryNode[]) {
+  const ops: any[] = [];
+  const updates: { id: string; tags?: string[] }[] = [];
+  const archived: { id: string; reason: string }[] = [];
+  return {
+    ops,
+    updates,
+    archived,
+    graph: {
+      allNodes: vi.fn().mockReturnValue(nodes),
       applyOperations: vi.fn().mockImplementation((o: any) => {
         ops.push(...o);
-        return { applied: o.length, skipped: 0 };
+        return { applied: o.length, skipped: 0, dropped: 0 };
       }),
-    } as any;
+      updateNode: vi.fn().mockImplementation((id: string, u: { tags?: string[] }) => { updates.push({ id, ...u }); }),
+      archiveNode: vi.fn().mockImplementation((id: string, reason: string) => { archived.push({ id, reason }); return true; }),
+    } as any,
+  };
+}
+
+describe("createGistNode", () => {
+  it("creates gist node, tags originals with the gist id and archives them", () => {
+    const nodes = [
+      makeNode({ id: "n1", type: "event" as any, tags: ["alice", "project"] }),
+      makeNode({ id: "n2", type: "event" as any, tags: ["alice", "project"] }),
+      makeNode({ id: "n3", type: "event" as any, tags: ["alice", "project"] }),
+    ];
+    const { graph, ops, updates, archived } = mockWritableGraph(nodes);
 
     const candidate = {
-      nodes: [
-        makeNode({ id: "n1", type: "event" as any, tags: ["alice", "project"] }),
-        makeNode({ id: "n2", type: "event" as any, tags: ["alice", "project"] }),
-        makeNode({ id: "n3", type: "event" as any, tags: ["alice", "project"] }),
-      ],
+      nodes,
       sharedTags: ["alice", "project"],
       averageStrength: 0.15,
       totalContent: "combined text",
     };
 
-    const result = createGistNode(mockGraph, candidate, "Test summary");
+    const result = createGistNode(graph, candidate, "Test summary");
     expect(result.nodesConsolidated).toBe(3);
     expect(result.summary).toBe("Test summary");
 
-    // Should have 1 add_node (gist) + 3 weaken ops
     const addOps = ops.filter((o: any) => o.op === "add_node");
-    const weakenOps = ops.filter((o: any) => o.op === "weaken");
     expect(addOps.length).toBe(1);
-    expect(weakenOps.length).toBe(3);
+    expect(addOps[0].type).toBe("insight"); // events distil into an insight
     expect(addOps[0].content).toContain("[gist]");
     expect(addOps[0].tags).toContain("gist");
     expect(addOps[0].tags).toContain("reflective-consolidation");
+
+    expect(updates.map(u => u.id).sort()).toEqual(["n1", "n2", "n3"]);
+    for (const u of updates) {
+      expect(u.tags).toContain(`consolidated:${result.gistNodeId}`);
+      expect(u.tags).toContain("alice"); // original tags preserved
+    }
+    expect(archived).toEqual([
+      { id: "n1", reason: "consolidation" },
+      { id: "n2", reason: "consolidation" },
+      { id: "n3", reason: "consolidation" },
+    ]);
+    expect(ops.some((o: any) => o.op === "weaken" || o.op === "remove_node")).toBe(false);
+  });
+});
+
+describe("consolidation exemptions", () => {
+  it("never clusters gist nodes or already-consolidated nodes", () => {
+    const mockGraph = {
+      allNodes: vi.fn().mockReturnValue([
+        makeNode({ id: "g1", tags: ["alice", "project", "gist"], strength: 0.1 }),
+        makeNode({ id: "c1", tags: ["alice", "project", "consolidated:gist_abc"], strength: 0.1 }),
+        makeNode({ id: "n1", tags: ["alice", "project"], strength: 0.1 }),
+        makeNode({ id: "n2", tags: ["alice", "project"], strength: 0.1 }),
+      ]),
+    } as any;
+    // Only n1 + n2 are eligible — below the cluster minimum of 3
+    expect(findConsolidationCandidates(mockGraph)).toEqual([]);
+    expect(isConsolidationExempt(makeNode({ tags: ["Gist"] }))).toBe(true);
+    expect(isConsolidationExempt(makeNode({ tags: ["consolidated:x"] }))).toBe(true);
+    expect(isConsolidationExempt(makeNode({ tags: ["work"] }))).toBe(false);
   });
 });
 
@@ -169,18 +213,16 @@ describe("runReflectiveConsolidation", () => {
   });
 
   it("creates gist nodes for found clusters", () => {
-    const mockGraph = {
-      allNodes: vi.fn().mockReturnValue([
-        makeNode({ id: "n1", tags: ["alice", "project", "work"], strength: 0.15 }),
-        makeNode({ id: "n2", tags: ["alice", "project", "meeting"], strength: 0.1 }),
-        makeNode({ id: "n3", tags: ["alice", "project", "deadline"], strength: 0.2 }),
-      ]),
-      applyOperations: vi.fn().mockReturnValue({ applied: 1, skipped: 0 }),
-    } as any;
+    const { graph, archived } = mockWritableGraph([
+      makeNode({ id: "n1", tags: ["alice", "project", "work"], strength: 0.15 }),
+      makeNode({ id: "n2", tags: ["alice", "project", "meeting"], strength: 0.1 }),
+      makeNode({ id: "n3", tags: ["alice", "project", "deadline"], strength: 0.2 }),
+    ]);
 
-    const results = runReflectiveConsolidation(mockGraph);
+    const results = runReflectiveConsolidation(graph);
     expect(results.length).toBe(1);
     expect(results[0].nodesConsolidated).toBe(3);
     expect(results[0].summary).toContain("alice");
+    expect(archived.length).toBe(3);
   });
 });

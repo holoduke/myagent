@@ -17,7 +17,7 @@ import type { MemoryGraph } from "./memory/graph.js";
 import type { WorkingMemory, BrainState, GoalOperation, ImprovementProposal } from "./memory/types.js";
 import type { InitiativeSignal } from "./initiative.js";
 import { getRecentDeliveries, getRecentDeliveryLog, getScheduledMessages } from "./scheduler.js";
-import { runConsolidation, detectGistClusters } from "./memory/decay.js";
+import { runConsolidation, detectGistClusters } from "./memory/consolidation.js";
 import { loadWorkingMemory, saveWorkingMemory, updateWorkingMemory, populateTemporalContext, compileWeeklySummary, cleanupWorkingMemory } from "./memory/working-memory.js";
 import { selectContextForConsolidate, selectContextForReflect } from "./memory/activation.js";
 import { GoalTracker } from "./goals.js";

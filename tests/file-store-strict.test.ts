@@ -1,8 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync, readdirSync, readFileSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { strictReadJSON, atomicWriteJSONAsync } from "../backend/utils/file-store.js";
+import { strictReadJSON, atomicWriteFile, atomicWriteJSON, appendRollingJsonl, readJsonl, uniqueTmpPath } from "../backend/utils/file-store.js";
 
 let dir: string;
 beforeEach(() => {
@@ -36,27 +36,54 @@ describe("strictReadJSON", () => {
   });
 });
 
-describe("atomicWriteJSONAsync", () => {
-  it("serializes concurrent writes to the same path", async () => {
-    const path = join(dir, "concurrent.json");
-    // Fire 50 writes interleaved — final state must equal one of them, not garbage.
-    const writes = Array.from({ length: 50 }, (_, i) =>
-      atomicWriteJSONAsync(path, { i }),
-    );
-    await Promise.all(writes);
-    const final = strictReadJSON<{ i: number }>(path);
-    expect(final).not.toBeNull();
-    expect(typeof final!.i).toBe("number");
-    expect(final!.i).toBeGreaterThanOrEqual(0);
-    expect(final!.i).toBeLessThan(50);
+describe("atomicWriteFile", () => {
+  it("writes the content and leaves no temp file behind", () => {
+    const path = join(dir, "nested", "out.txt");
+    atomicWriteFile(path, "hello");
+    expect(readFileSync(path, "utf-8")).toBe("hello");
+    expect(readdirSync(join(dir, "nested"))).toEqual(["out.txt"]);
   });
 
-  it("does not throw on subsequent writes if a prior write fails", async () => {
-    // Path is a directory — first write fails with EISDIR
-    await expect(atomicWriteJSONAsync(dir, { a: 1 })).rejects.toThrow();
-    // But the chain machinery should let a later, valid write succeed
-    const goodPath = join(dir, "good.json");
-    await atomicWriteJSONAsync(goodPath, { a: 2 });
-    expect(strictReadJSON(goodPath)).toEqual({ a: 2 });
+  it("uses a pid + random temp name so concurrent processes never share one", () => {
+    const a = uniqueTmpPath(join(dir, "x.json"));
+    const b = uniqueTmpPath(join(dir, "x.json"));
+    expect(a).not.toBe(b);
+    expect(a).toMatch(new RegExp(`x\\.json\\.${process.pid}\\.[0-9a-f]{8}\\.tmp$`));
+  });
+
+  it("replaces existing content atomically (old content never mixed with new)", () => {
+    const path = join(dir, "swap.json");
+    atomicWriteJSON(path, { v: 1 });
+    atomicWriteJSON(path, { v: 2, extra: "x".repeat(1000) });
+    expect(strictReadJSON(path)).toEqual({ v: 2, extra: "x".repeat(1000) });
+  });
+
+  it("propagates write failures and cleans up its temp file", () => {
+    expect(() => atomicWriteFile(dir, "nope")).toThrow();
+    expect(readdirSync(dir).filter(f => f.endsWith(".tmp"))).toEqual([]);
+  });
+});
+
+describe("appendRollingJsonl", () => {
+  it("appends entries and trims to the newest maxEntries", () => {
+    const path = join(dir, "log.jsonl");
+    for (let i = 0; i < 7; i++) appendRollingJsonl(path, { i }, 3);
+    const { entries, malformed } = readJsonl<{ i: number }>(path);
+    expect(entries.map(e => e.i)).toEqual([4, 5, 6]);
+    expect(malformed).toBe(0);
+    expect(readFileSync(path, "utf-8").endsWith("\n")).toBe(true);
+  });
+
+  it("readJsonl skips malformed lines and counts them", () => {
+    const path = join(dir, "mixed.jsonl");
+    writeFileSync(path, '{"ok":1}\nnot json\n\n{"ok":2}\n');
+    const { entries, malformed } = readJsonl<{ ok: number }>(path);
+    expect(entries).toEqual([{ ok: 1 }, { ok: 2 }]);
+    expect(malformed).toBe(1);
+  });
+
+  it("readJsonl returns empty for a missing file", () => {
+    expect(readJsonl(join(dir, "absent.jsonl"))).toEqual({ entries: [], malformed: 0 });
+    expect(existsSync(join(dir, "absent.jsonl"))).toBe(false);
   });
 });
