@@ -387,6 +387,10 @@ export function startBrainLoop(
         ? s.lastTickFailure
         : null;
     },
+    // Fallback diagnosis when no failure is recorded: ticks that never ran
+    // (scheduler silent) or exited before recordTickOutcome (skip/gate loop)
+    // leave lastTickFailure empty but do stamp lastTickAttemptAt.
+    getLastTickAttemptAt: () => loadState().lastTickAttemptAt ?? 0,
     // ALERTs escalate to Gillis via the scheduled-messages queue, whose 60s
     // delivery loop needs no Claude API call — the one output path that
     // survives an API outage (root cause of the jun–aug silent failure).

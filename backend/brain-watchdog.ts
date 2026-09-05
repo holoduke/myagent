@@ -68,6 +68,13 @@ export interface WatchdogOptions {
    * ("laatste fout: ...") instead of only pointing at dashboard/logs.
    */
   getLastTickFailure?: () => TickFailureSummary | null;
+  /**
+   * Function returning the epoch ms of the last tick *attempt* (successful or
+   * not; 0 = unknown). Used as fallback diagnosis when there is no failure
+   * summary: recent attempts without a recorded failure point at a skip/gate
+   * loop, no attempts at all point at a silent scheduler.
+   */
+  getLastTickAttemptAt?: () => number;
 }
 
 export interface WatchdogStatus {
@@ -164,18 +171,56 @@ function describeLastFailure(getLastTickFailure?: () => TickFailureSummary | nul
   }
 }
 
+/**
+ * Fallback diagnosis for the "no lastTickFailure" alert class: ticks that were
+ * never attempted or skipped before running leave no failure summary behind
+ * (recordTickOutcome only runs when the tick ran). Distinguishes:
+ *  - attempts happening recently (< 2x tickInterval) while success stays stale
+ *    → the tick loop is alive but every tick exits early (skip/gate loop);
+ *  - the last attempt itself being stale → the scheduler is silent.
+ * Pure so it stays unit-testable; never returns an empty string.
+ */
+export function formatNoFailureSuffix(
+  lastTickAttemptAt: number,
+  tickIntervalMs: number,
+  now: number,
+): string {
+  if (lastTickAttemptAt <= 0) {
+    return " — geen tick-poging geregistreerd (scheduler stil?)";
+  }
+  const sinceAttempt = now - lastTickAttemptAt;
+  if (sinceAttempt < 2 * tickIntervalMs) {
+    return " — ticks worden gepoogd maar geen fout geregistreerd (skip/gate-lus? pendingSelfMod?)";
+  }
+  const since = sinceAttempt >= 3_600_000
+    ? `${Math.round(sinceAttempt / 3_600_000)}h`
+    : `${Math.max(1, Math.round(sinceAttempt / 60_000))}m`;
+  return ` — geen tick-poging sinds ${since} (scheduler stil)`;
+}
+
+function describeMissingFailure(getLastTickAttemptAt?: () => number): string {
+  try {
+    return formatNoFailureSuffix(getLastTickAttemptAt?.() ?? 0, getBrainConfig().tickInterval, Date.now());
+  } catch (err) {
+    // Diagnostics must never block the alert itself.
+    log(`Could not build no-failure diagnosis for alert: ${err}`);
+    return " — check dashboard/logs";
+  }
+}
+
 function escalateAlert(
   ownerJid: string,
   msSinceSuccess: number,
   getLastTickFailure?: () => TickFailureSummary | null,
+  getLastTickAttemptAt?: () => number,
 ): void {
   try {
     const state = loadNotifyState();
     if (state.alertNotified && Date.now() - state.lastAlertNotifiedAt < ALERT_RENOTIFY_MS) return;
     if (hasQueuedWatchdogMessage()) return;
     const hours = Math.round(msSinceSuccess / 3600000);
-    const failureSuffix = describeLastFailure(getLastTickFailure);
-    queueWatchdogMessage(ownerJid, `aria heartbeat: geen succesvolle brain tick in ${hours}h${failureSuffix || " — check dashboard/logs"}`);
+    const suffix = describeLastFailure(getLastTickFailure) || describeMissingFailure(getLastTickAttemptAt);
+    queueWatchdogMessage(ownerJid, `aria heartbeat: geen succesvolle brain tick in ${hours}h${suffix}`);
     saveNotifyState({ lastAlertNotifiedAt: Date.now(), alertNotified: true });
     log(`ALERT escalated to scheduled-messages queue for ${ownerJid}`);
   } catch (err) {
@@ -217,7 +262,7 @@ function checkOnce(opts: WatchdogOptions, warnAfterMs: number, alertAfterMs: num
   if (status.level === "alert") {
     log(`!! ALERT: no successful tick in ${Math.round(status.msSinceSuccess / 60000)}m — brain may be stalled`);
     lastLoggedLevel = "alert";
-    if (opts.ownerJid) escalateAlert(opts.ownerJid, status.msSinceSuccess, opts.getLastTickFailure);
+    if (opts.ownerJid) escalateAlert(opts.ownerJid, status.msSinceSuccess, opts.getLastTickFailure, opts.getLastTickAttemptAt);
   } else if (status.level === "warn" && lastLoggedLevel !== "warn" && lastLoggedLevel !== "alert") {
     log(`WARN: no successful tick in ${Math.round(status.msSinceSuccess / 60000)}m`);
     lastLoggedLevel = "warn";
