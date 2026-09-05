@@ -46,8 +46,11 @@ export class MemoryGraph {
   // Key: `${from}|${to}|${type ?? "*"}` for fast lookup.
   private rejectedEdges = new Map<string, RejectedEdge>();
 
-  // Pending observations buffer (for observe ticks)
+  // In-memory mirror of the pending think queue. The durable queue is
+  // observations.jsonl past state.lastObservationTime; brain.ts re-syncs this
+  // mirror from the file every tick, so adds must be idempotent.
   private pending: Observation[] = [];
+  private pendingKeys = new Set<string>();
 
   // ── Persistence ──
 
@@ -1113,16 +1116,22 @@ export class MemoryGraph {
 
   // ── Pending Observations ──
 
+  /** Idempotent: re-adding an observation already in the mirror is a no-op. */
   addPendingObservation(obs: Observation): void {
-    this.pending.push(obs);
+    const key = `${obs.timestamp}|${obs.senderJid}|${obs.text.slice(0, 120)}`;
+    if (this.pendingKeys.has(key)) return;
+    this.pendingKeys.add(key);
+    this.pending = [...this.pending, obs];
   }
 
+  /** Snapshot copy — callers cannot mutate the mirror through it. */
   getPendingObservations(): Observation[] {
-    return this.pending;
+    return [...this.pending];
   }
 
   clearPendingObservations(): void {
     this.pending = [];
+    this.pendingKeys = new Set();
   }
 
   // ── Batch Apply Operations from Claude ──

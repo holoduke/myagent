@@ -1,15 +1,22 @@
 /**
  * Brain orchestrator — main loop, tick scheduling, observation handling, recurring tasks.
  *
- * Claude-calling tick implementations are in brain-ticks.ts.
+ * Claude-calling tick implementations are in brain-ticks.ts / brain-think.ts.
  * Scheduled message delivery is in brain-delivery.ts.
  * Self-improve + sub-agent worker management is in brain-workers.ts.
+ * Recurring tasks (messages, think/digest triggers) are in brain-recurring.ts.
+ * State persistence (patchState) is in brain-state.ts; pure scheduling
+ * policy in brain-policy.ts; the observation queue in brain-observations.ts.
+ *
+ * State discipline: after the legacy worker section at the top of a tick,
+ * every state change is a patchState call at the moment of change. The tick
+ * never saves a snapshot it loaded earlier — LLM ticks may outlive their
+ * budget and land results later, and the scheduler poller writes concurrently.
  */
 
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { execSync } from "child_process";
 import { randomUUID } from "crypto";
-import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
 import { createLogger } from "./logger.js";
 import { getObservationsSince, pruneObservations, ensureBrainDir } from "./observer.js";
 import type { Observation } from "./observer.js";
@@ -18,17 +25,17 @@ import { MemoryGraph } from "./memory/graph.js";
 import type { BrainState, TickFailureSummary } from "./memory/types.js";
 import { loadWorkingMemory, saveWorkingMemory, populateTemporalContext, updateConversationThreads, scanFollowUpsForResolution } from "./memory/working-memory.js";
 import { scoreObservations, getPendingUrgency, clearPendingUrgency, setUrgencyInterruptHandler } from "./urgency.js";
-import { getDueRecurringTasks, markExecuted } from "./recurring.js";
-import { detectInitiativeSignals, canTriggerInitiativeThink, recordInitiativeThink } from "./initiative.js";
+import { detectInitiativeSignals, canTriggerInitiativeThink } from "./initiative.js";
+import type { InitiativeSignal } from "./initiative.js";
 import { recordObserveHeartbeat } from "./downtime-tracker.js";
-import { withTimeout } from "./utils/async.js";
+import { withTimeout, TimeoutError } from "./utils/async.js";
 import { ensureSSHKey } from "./integrations/ssh.js";
-import { verify } from "./action-verifier.js";
 import { BrainError, wrapError } from "./brain-errors.js";
 import { getBrainConfig, getOwnerLocalDate, getOwnerLocalTime } from "./brain-config.js";
+import type { BrainConfig } from "./brain-config.js";
 
 import { BRAIN_DIR, OWNER_NAME, GITHUB_REPO } from "./config.js";
-import { createBackup, shouldRunBackup, BACKUP_INTERVAL } from "./memory/backup.js";
+import { createBackup, shouldRunBackup } from "./memory/backup.js";
 import { shouldRunNewsDigest, runNewsDigest } from "./news-digest.js";
 import { shouldRunPlayStoreDigest, runPlayStoreDigest } from "./playstore-digest.js";
 import { shouldRunReplay, replayAndCompare } from "./memory/retrieval-replay.js";
@@ -37,7 +44,7 @@ import { loadConsciousness } from "./consciousness.js";
 // ── Extracted modules ──
 import { thinkTick, consolidateTick, reflectTick } from "./brain-ticks.js";
 import { pollScheduledMessages } from "./brain-delivery.js";
-import { getRecentDeliveries, cancelScheduledMessages } from "./scheduler.js";
+import { getRecentDeliveries } from "./scheduler.js";
 import {
   pickUpImproveResult,
   interceptDirectTask,
@@ -48,21 +55,25 @@ import {
 import { loadQueue, getWeeklyCompletedCount, getDailyCompletedCount, getConsecutiveFailuresToday } from "./self-improve-queue.js";
 import { getForcedReflectsToday, recordForcedReflect } from "./self-improve-state.js";
 import { startWatchdog, stopWatchdog } from "./brain-watchdog.js";
+import { loadState, saveState, patchState } from "./brain-state.js";
+import { decideTickKind, computeBackoffMs, tickTimeoutFor } from "./brain-policy.js";
+import type { LlmTickKind, TickDecision } from "./brain-policy.js";
+import { isSyntheticTrigger, selectUnobserved } from "./brain-observations.js";
+import { handleRecurringTasks } from "./brain-recurring.js";
+import { cloneSignalState } from "./brain-tick-shared.js";
 
 const log = createLogger("brain");
 
 // ── Config from env ──
 
 const TIME_AWARENESS_INTERVAL = 4 * 60 * 60 * 1000; // 4h — idle think ticks when no observations
-const TICK_TIMEOUT = Number(process.env.BRAIN_TICK_TIMEOUT) || 120_000;
+const TICK_TIMEOUT_ENV = Number(process.env.BRAIN_TICK_TIMEOUT) || 0; // can only raise the per-kind floor
 const CB_MAX_FAILURES = Number(process.env.BRAIN_CB_MAX_FAILURES) || 3;
 const CB_MAX_BACKOFF = Number(process.env.BRAIN_CB_MAX_BACKOFF) || 30 * 60 * 1000;
 const URGENCY_BYPASS_THRESHOLD = 0.6;
-const URGENCY_MIN_COOLDOWN = 60000;
-const MAX_RECURRING_THINKS_PER_DAY = 3;
+const URGENCY_MIN_COOLDOWN = 5 * 60 * 1000; // minimum spacing between urgency-bypass thinks
 
 // ── File paths ──
-const STATE_FILE = `${BRAIN_DIR}/state.json`;
 const NOTEBOOK_FILE = `${BRAIN_DIR}/notebook.md`;
 const IMPROVE_TASK_FILE = `${BRAIN_DIR}/improve-task.json`;
 const IMPROVE_RESULT_FILE = `${BRAIN_DIR}/improve-result.json`;
@@ -73,47 +84,7 @@ const QUEUED_MARKER_FILE = `${BRAIN_DIR}/improve-task.queued`;
 
 const SCHEDULER_POLL_INTERVAL = 10_000;
 
-// ── State Management ──
-
-function defaultState(): BrainState {
-  return {
-    lastObserveTick: 0,
-    lastThinkTick: 0,
-    lastConsolidateTick: 0,
-    lastReflectTick: 0,
-    lastMessageTime: 0,
-    messagesToday: 0,
-    messagesTodayDate: "",
-    lastObservationTime: 0,
-    totalThinks: 0,
-    totalCost: 0,
-    nodeCount: 0,
-    edgeCount: 0,
-    recurringThinksToday: 0,
-    recurringBudgetDate: "",
-    initiativeThinksToday: 0,
-    initiativeBudgetDate: "",
-    consecutiveFailures: 0,
-    lastSuccessfulTick: 0,
-    pendingSelfMod: false,
-    lastBackupTick: 0,
-    lastNewsDigestTick: 0,
-    lastPlayStoreDigestTick: 0,
-  };
-}
-
-function loadState(): BrainState {
-  return { ...defaultState(), ...safeReadJSON<Partial<BrainState>>(STATE_FILE, {}) };
-}
-
-function saveState(state: BrainState): void {
-  try {
-    ensureDir(BRAIN_DIR);
-    atomicWriteJSON(STATE_FILE, state);
-  } catch (err) {
-    log(`Failed to save state: ${err}`);
-  }
-}
+type SendFn = (jid: string, text: string, source?: string) => Promise<void>;
 
 // ── Delivery Feedback Verification ──
 
@@ -124,26 +95,31 @@ function saveState(state: BrainState): void {
  * failure. This closes the loop that let the brain build false memories of
  * contact (message returned by a think tick but never actually delivered).
  */
-function verifyLastBrainMessageDelivery(state: BrainState, tickInterval: number): void {
+function verifyLastBrainMessageDelivery(state: BrainState, tickInterval: number): BrainState {
   const lbm = state.lastBrainMessage;
-  if (!lbm || lbm.verified || lbm.status !== "sent") return;
+  if (!lbm || lbm.verified || lbm.status !== "sent") return state;
   try {
     const found = getRecentDeliveries().some(
       d => d.jid === lbm.targetJid && d.messageSnippet === lbm.snippet && d.timestamp >= lbm.at - 60_000,
     );
     if (found) {
-      lbm.verified = true;
-      return;
+      return patchState({ lastBrainMessage: { ...lbm, verified: true } });
     }
     if (Date.now() - lbm.at >= tickInterval) {
-      lbm.status = "failed";
-      lbm.detail = "reported as sent but never appeared in delivery-log.json within one tick";
-      lbm.verified = true;
       log(`⚠ DELIVERY FAILURE: brain message to ${lbm.targetJid} ("${lbm.snippet.slice(0, 60)}") reported sent at ${new Date(lbm.at).toISOString()} but never appeared in delivery-log.json within one tick — treating as NOT delivered`);
+      return patchState({
+        lastBrainMessage: {
+          ...lbm,
+          status: "failed",
+          detail: "reported as sent but never appeared in delivery-log.json within one tick",
+          verified: true,
+        },
+      });
     }
   } catch (err) {
     log(`Delivery verification error (non-fatal): ${err}`);
   }
+  return state;
 }
 
 // ── Health & Boot Helpers ──
@@ -174,9 +150,7 @@ export function getBrainHealth(): {
  * Called via API when the operator manually clears the unhealthy state.
  */
 export function resetConsecutiveFailures(): void {
-  const state = loadState();
-  state.consecutiveFailures = 0;
-  saveState(state);
+  patchState({ consecutiveFailures: 0 });
   log("Consecutive failures reset by operator");
 }
 
@@ -319,6 +293,29 @@ const graph = new MemoryGraph();
 // ── Urgency Interrupt State ──
 let lastUrgencyInterruptTime = 0;
 const URGENCY_INTERRUPT_COOLDOWN = 60_000;
+/** An interrupt arrived while a tick held the lock; the next tick serves it. */
+let pendingInterrupt = false;
+
+function handleUrgencyInterrupt(queue: MessageQueue, sendMessage: SendFn, ownerJid: string, urgencyScore: number): void {
+  const now = Date.now();
+  if (now - lastUrgencyInterruptTime < URGENCY_INTERRUPT_COOLDOWN) {
+    log(`Urgency interrupt: suppressed (last interrupt ${Math.round((now - lastUrgencyInterruptTime) / 1000)}s ago, cooldown ${URGENCY_INTERRUPT_COOLDOWN / 1000}s)`);
+    return;
+  }
+  log(`Urgency interrupt TRIGGERED: score ${urgencyScore.toFixed(2)} — scheduling immediate tick`);
+  tick(queue, sendMessage, ownerJid).then((ran) => {
+    if (ran) {
+      lastUrgencyInterruptTime = Date.now();
+      return;
+    }
+    // Only update the cooldown timestamp when the tick actually ran; a tick
+    // skipped by tickLock is remembered and served by the next one.
+    pendingInterrupt = true;
+    log("Urgency interrupt: tick busy — deferred to the next tick");
+  }).catch((err) => {
+    log(`Urgency interrupt tick error: ${err}`);
+  });
+}
 
 export function startBrainLoop(
   queue: MessageQueue,
@@ -341,18 +338,7 @@ export function startBrainLoop(
   const ownerJid = `${process.env.OWNER_PHONE}@s.whatsapp.net`;
 
   setUrgencyInterruptHandler((urgencyScore: number) => {
-    const now = Date.now();
-    if (now - lastUrgencyInterruptTime < URGENCY_INTERRUPT_COOLDOWN) {
-      log(`Urgency interrupt: suppressed (last interrupt ${Math.round((now - lastUrgencyInterruptTime) / 1000)}s ago, cooldown ${URGENCY_INTERRUPT_COOLDOWN / 1000}s)`);
-      return;
-    }
-    // Only update timestamp after confirming tick actually ran (not skipped by tickLock)
-    log(`Urgency interrupt TRIGGERED: score ${urgencyScore.toFixed(2)} — scheduling immediate tick`);
-    tick(queue, sendMessage, ownerJid).then(() => {
-      lastUrgencyInterruptTime = Date.now();
-    }).catch((err) => {
-      log(`Urgency interrupt tick error: ${err}`);
-    });
+    handleUrgencyInterrupt(queue, sendMessage, ownerJid, urgencyScore);
   }, cfg.urgencyInterruptThreshold);
 
   graph.load();
@@ -441,15 +427,20 @@ export function stopBrainLoop(): void {
 
 // ── Tick Concurrency Guards ──
 let tickLock = false;
-let thinkRunning = false;
-let consolidateRunning = false;
-let reflectRunning = false;
 let newsDigestRunning = false;
 let lastNewsDigestAttempt = 0;
 const NEWS_DIGEST_RETRY_MS = 30 * 60 * 1000; // failed/skipped runs retry at most every 30 min
 let playStoreDigestRunning = false;
 let lastPlayStoreDigestAttempt = 0;
 const PLAYSTORE_DIGEST_RETRY_MS = 30 * 60 * 1000;
+
+/**
+ * An LLM tick that outlived its budget and is still running. Its results land
+ * via patchState when it finishes; until then no new LLM tick is started so
+ * two expensive calls never overlap. Ignored after twice the budget in case
+ * the provider's own timeout never fires.
+ */
+let orphanedTick: { kind: LlmTickKind; startedAt: number } | null = null;
 
 // ── Hourly Stats Tracking ──
 interface TickStats {
@@ -463,10 +454,19 @@ interface TickStats {
   periodStart: number;
 }
 
-let hourlyStats: TickStats = {
-  thinks: 0, consolidates: 0, reflects: 0, failures: 0,
-  costUsd: 0, observations: 0, selfImproves: 0, periodStart: Date.now(),
-};
+function freshHourlyStats(): TickStats {
+  return { thinks: 0, consolidates: 0, reflects: 0, failures: 0, costUsd: 0, observations: 0, selfImproves: 0, periodStart: Date.now() };
+}
+
+let hourlyStats: TickStats = freshHourlyStats();
+
+function bumpHourlyStats(delta: Partial<TickStats>): void {
+  const next = { ...hourlyStats };
+  for (const [key, value] of Object.entries(delta) as [keyof TickStats, number][]) {
+    next[key] = next[key] + value;
+  }
+  hourlyStats = next;
+}
 
 function logHourlyStats(): void {
   const elapsed = (Date.now() - hourlyStats.periodStart) / 3600_000;
@@ -481,27 +481,39 @@ function logHourlyStats(): void {
     `cost: $${s.costUsd.toFixed(4)}, self-improves: ${s.selfImproves}, ` +
     `total ticks: ${totalTicks} in ${elapsed.toFixed(1)}h`,
   );
-
-  // Reset for next hour
-  hourlyStats = {
-    thinks: 0, consolidates: 0, reflects: 0, failures: 0,
-    costUsd: 0, observations: 0, selfImproves: 0, periodStart: Date.now(),
-  };
+  hourlyStats = freshHourlyStats();
 }
 
 // ── Tick Scheduler ──
 
+/** Returns true when the tick ran, false when it was skipped because one is already running. */
 async function tick(
   queue: MessageQueue,
-  sendMessage: (jid: string, text: string) => Promise<void>,
+  sendMessage: SendFn,
   ownerJid: string,
-): Promise<void> {
+): Promise<boolean> {
   if (tickLock) {
     log("Skipping tick — previous tick still running");
-    return;
+    return false;
   }
   tickLock = true;
   try {
+    await runTick(queue, sendMessage, ownerJid);
+    return true;
+  } finally {
+    tickLock = false;
+  }
+}
+
+interface TickContext {
+  queue: MessageQueue;
+  sendMessage: SendFn;
+  ownerJid: string;
+  cfg: BrainConfig;
+  now: number;
+}
+
+async function runTick(queue: MessageQueue, sendMessage: SendFn, ownerJid: string): Promise<void> {
   const cfg = getBrainConfig();
 
   // ── Master kill switch: skip ALL brain operations when disabled ──
@@ -512,9 +524,6 @@ async function tick(
   const state = loadState();
   const now = Date.now();
   const today = getOwnerLocalDate(cfg.ownerTimezone);
-
-  // ── Delivery feedback: cross-check last brain message against delivery log ──
-  verifyLastBrainMessageDelivery(state, cfg.tickInterval);
 
   // ── Pick up self-improve results from worker ──
   pickUpImproveResult(state, graph, saveState, IMPROVE_RESULT_FILE, IMPROVE_TASK_FILE, QUEUED_MARKER_FILE);
@@ -529,7 +538,7 @@ async function tick(
   // after MAX_CONSECUTIVE_FAILED_PROPOSALS failed proposals in a row today —
   // a brain that keeps proposing broken changes should stop, not try harder.
   try {
-    const ownerHourNow = Number(new Date().toLocaleString("en-US", { timeZone: cfg.ownerTimezone, hour: "numeric", hour12: false }));
+    const ownerHourNow = getOwnerLocalTime(cfg.ownerTimezone).hour;
     const NUDGE_SPACING_MS = 90 * 60 * 1000;
     const MAX_FORCED_REFLECTS_PER_DAY = 2;
     const MAX_CONSECUTIVE_FAILED_PROPOSALS = 3;
@@ -582,17 +591,10 @@ async function tick(
   pickUpSubAgentResults();
   checkAndSpawnSubAgentWorkers();
 
-  // Reset daily counter
-  if (state.messagesTodayDate !== today) {
-    state.messagesToday = 0;
-    state.messagesTodayDate = today;
-  }
-
-  // Reset recurring task budget
-  if (state.recurringBudgetDate !== today) {
-    state.recurringBudgetDate = today;
-    state.recurringThinksToday = 0;
-  }
+  // ── From here on: patchState at the moment of change, no snapshot saves ──
+  const ctx: TickContext = { queue, sendMessage, ownerJid, cfg, now };
+  let st = rollDailyCounters(loadState(), today);
+  st = verifyLastBrainMessageDelivery(st, cfg.tickInterval);
 
   // Daily pruning of old observations
   if (lastPruneDate !== today) {
@@ -600,437 +602,443 @@ async function tick(
     pruneObservations();
   }
 
-  const newObs = getObservationsSince(state.lastObservationTime);
-  hourlyStats.observations += newObs.length;
+  const observed = await runObservationCycle(st, ctx);
+  st = observed.state;
+
+  // ── Detect initiative signals ──
+  const signals = detectSignals(st, graph);
+  st = loadState();
+  const highPrioritySignals = signals.filter(s => s.priority >= 0.5);
+
+  if (circuitBreakerOpen(st, cfg, now)) return;
+
+  const initiativeTriggered = highPrioritySignals.length > 0
+    && observed.pending.length === 0
+    && now - st.lastThinkTick >= cfg.thinkCooldown
+    && initiativeBudgetAvailable(st);
+
+  const decision = decideTickKind({
+    now,
+    lastThinkTick: st.lastThinkTick,
+    lastConsolidateTick: st.lastConsolidateTick,
+    lastReflectTick: st.lastReflectTick,
+    thinkCooldown: cfg.thinkCooldown,
+    consolidateInterval: cfg.consolidateInterval,
+    reflectInterval: cfg.reflectInterval,
+    timeAwarenessInterval: TIME_AWARENESS_INTERVAL,
+    nodeCount: graph.nodeCount,
+    hasPending: observed.pending.length > 0,
+    hasTriggerPending: observed.pending.some(isSyntheticTrigger),
+    pendingUrgency: getPendingUrgency(),
+    urgencyBypassThreshold: URGENCY_BYPASS_THRESHOLD,
+    urgencyMinCooldown: URGENCY_MIN_COOLDOWN,
+    pendingInterrupt,
+    initiativeTriggered,
+  });
+  if (pendingInterrupt && observed.pending.length === 0) pendingInterrupt = false; // nothing left to serve
+
+  // Defer to owner messages
+  if (!queue.idle || decision.kind === null) return;
+
+  await runDecidedTick(decision, st, observed.pending, signals, initiativeTriggered, ctx);
+  graph.save();
+  logHourlyStats();
+}
+
+// ── Tick helpers ──
+
+/** Reset the per-day counters when the owner-local date rolled over. */
+function rollDailyCounters(state: BrainState, today: string): BrainState {
+  const patch: Partial<BrainState> = {};
+  if (state.messagesTodayDate !== today) {
+    patch.messagesToday = 0;
+    patch.messagesTodayDate = today;
+  }
+  if (state.recurringBudgetDate !== today) {
+    patch.recurringBudgetDate = today;
+    patch.recurringThinksToday = 0;
+  }
+  return Object.keys(patch).length > 0 ? patchState(patch) : state;
+}
+
+interface ObservationCycle {
+  state: BrainState;
+  /** Unconsumed queue: everything in observations.jsonl past the consumed cursor, plus fresh triggers. */
+  pending: Observation[];
+}
+
+/**
+ * Read the durable queue, run the free observe pass over what it has not seen
+ * yet, inject due recurring triggers and mirror the queue into the graph.
+ */
+async function runObservationCycle(state: BrainState, ctx: TickContext): Promise<ObservationCycle> {
+  const pendingFromFile = getObservationsSince(state.lastObservationTime);
+  const newObs = selectUnobserved(pendingFromFile, state.lastObservedAt ?? state.lastObservationTime);
+  bumpHourlyStats({ observations: newObs.length });
 
   // Heartbeat: record that the observation pipeline is alive. Gaps in this
   // history are system downtime — silence detectors consult it so they don't
   // mistake ARIA being deaf for contacts being quiet. Seeded from
   // lastObserveTick so an outage predating the heartbeat file is still visible.
-  recordObserveHeartbeat(now, state.lastObserveTick || state.lastObservationTime);
+  recordObserveHeartbeat(ctx.now, state.lastObserveTick || state.lastObservationTime);
 
+  let st = state;
   if (newObs.length > 0) {
     scoreObservations(newObs);
+    st = observeTick(newObs, ctx.now);
   }
 
-  // ── Observe tick (always, free) ──
-  if (newObs.length > 0) {
-    observeTick(state, newObs);
+  const recurring = await handleRecurringTasks(st, ctx);
+  const pending = [...pendingFromFile, ...recurring.injected];
+  for (const obs of pending) graph.addPendingObservation(obs);
+  if (pending.length > 0) {
+    log(`Observe: ${newObs.length} new, ${pending.length} pending (${graph.getPendingObservations().length} mirrored)`);
   }
+  return { state: recurring.state, pending };
+}
 
-  // ── Handle recurring tasks ──
-  await handleRecurringTasks(state, queue, sendMessage, ownerJid, newObs);
-
-  // ── Detect initiative signals ──
+/** detectInitiativeSignals purges expired snoozes in place — run it on a copy and patch the result. */
+function detectSignals(state: BrainState, g: MemoryGraph): InitiativeSignal[] {
   const wm = loadWorkingMemory();
   populateTemporalContext(wm);
-  const signals = detectInitiativeSignals(graph, wm, state);
-  const highPrioritySignals = signals.filter(s => s.priority >= 0.5);
+  const scratch: BrainState = { ...state, ...cloneSignalState(state) };
+  const signals = detectInitiativeSignals(g, wm, scratch);
   saveWorkingMemory(wm);
+  patchState({ signalSnoozes: scratch.signalSnoozes, signalSurfacedCounts: scratch.signalSurfacedCounts });
+  return signals;
+}
 
-  // ── Circuit breaker ──
-  if (state.consecutiveFailures >= CB_MAX_FAILURES) {
-    const clampedExp = Math.min(state.consecutiveFailures, 30);
-    const backoffMs = Math.min(
-      Math.pow(2, clampedExp) * cfg.tickInterval,
-      CB_MAX_BACKOFF,
-    );
-    const timeSinceLastTick = now - Math.max(state.lastThinkTick, state.lastConsolidateTick, state.lastReflectTick);
-    if (timeSinceLastTick < backoffMs) {
-      log(`Circuit breaker OPEN: backing off (${state.consecutiveFailures} failures, next attempt in ${Math.round((backoffMs - timeSinceLastTick) / 1000)}s)`);
-      saveState(state);
-      return;
-    }
-    log(`Circuit breaker HALF-OPEN: ${state.consecutiveFailures} failures, backoff elapsed — retrying one tick`);
+/** canTriggerInitiativeThink resets the daily budget in place — patch the rollover if it happened. */
+function initiativeBudgetAvailable(state: BrainState): boolean {
+  const scratch = { ...state };
+  const allowed = canTriggerInitiativeThink(scratch);
+  if (scratch.initiativeBudgetDate !== state.initiativeBudgetDate) {
+    patchState({ initiativeBudgetDate: scratch.initiativeBudgetDate, initiativeThinksToday: scratch.initiativeThinksToday });
   }
+  return allowed;
+}
 
-  const timeSinceReflect = now - state.lastReflectTick;
-  const timeSinceConsolidate = now - state.lastConsolidateTick;
-  const timeSinceThink = now - state.lastThinkTick;
-  const hasNewObs = newObs.length > 0;
-
-  const urgency = getPendingUrgency();
-  const urgentBypass = urgency >= URGENCY_BYPASS_THRESHOLD && timeSinceThink >= URGENCY_MIN_COOLDOWN;
-  if (urgentBypass) {
-    log(`Urgency bypass: score ${urgency.toFixed(2)} >= ${URGENCY_BYPASS_THRESHOLD}, bypassing ${cfg.thinkCooldown / 1000}s cooldown`);
+/**
+ * Circuit breaker: after CB_MAX_FAILURES consecutive failures, back off
+ * exponentially from the last ATTEMPT (not the last completed tick), so
+ * failures before the LLM call engage the backoff too.
+ */
+function circuitBreakerOpen(state: BrainState, cfg: BrainConfig, now: number): boolean {
+  if (state.consecutiveFailures < CB_MAX_FAILURES) return false;
+  const backoffMs = computeBackoffMs(state.consecutiveFailures, cfg.tickInterval, CB_MAX_BACKOFF);
+  const lastAttempt = state.lastTickAttemptAt
+    ?? Math.max(state.lastThinkTick, state.lastConsolidateTick, state.lastReflectTick);
+  const sinceAttempt = now - lastAttempt;
+  if (sinceAttempt < backoffMs) {
+    log(`Circuit breaker OPEN: backing off (${state.consecutiveFailures} failures, next attempt in ${Math.round((backoffMs - sinceAttempt) / 1000)}s)`);
+    return true;
   }
+  log(`Circuit breaker HALF-OPEN: ${state.consecutiveFailures} failures, backoff elapsed — retrying one tick`);
+  return false;
+}
 
-  const initiativeTriggered = highPrioritySignals.length > 0
-    && !hasNewObs
-    && timeSinceThink >= cfg.thinkCooldown
-    && canTriggerInitiativeThink(state);
+interface TickOutcome {
+  ran: boolean;
+  succeeded: boolean;
+  error: BrainError | null;
+}
 
-  // Defer to owner messages
-  if (!queue.idle) {
-    saveState(state);
-    return;
+function orphanStillRunning(now: number): boolean {
+  if (!orphanedTick) return false;
+  if (now - orphanedTick.startedAt >= 2 * tickTimeoutFor(orphanedTick.kind, TICK_TIMEOUT_ENV)) {
+    log(`Orphaned ${orphanedTick.kind} tick from ${new Date(orphanedTick.startedAt).toISOString()} never settled — ignoring it`);
+    orphanedTick = null;
+    return false;
   }
+  return true;
+}
 
-  let tickSucceeded = false;
-  let tickRan = false;
-  let tickType: "think" | "consolidate" | "reflect" | null = null;
-  let lastTickError: BrainError | null = null;
-
+/** Race one LLM tick against its budget; a timed-out tick is tracked as orphaned until it settles. */
+async function runWithBudget(kind: LlmTickKind, work: (signal: AbortSignal) => Promise<boolean>): Promise<TickOutcome> {
+  const now = Date.now();
+  if (orphanStillRunning(now)) {
+    log(`Skipping ${kind} tick — orphaned ${orphanedTick!.kind} tick still running (${Math.round((now - orphanedTick!.startedAt) / 1000)}s)`);
+    return { ran: false, succeeded: false, error: null };
+  }
+  const controller = new AbortController();
+  const promise = work(controller.signal);
   try {
-    if (timeSinceReflect >= cfg.reflectInterval && graph.nodeCount > 0) {
-      if (reflectRunning) {
-        log("Skipping reflectTick — previous invocation still running");
-      } else {
-        tickRan = true;
-        tickType = "reflect";
-        reflectRunning = true;
-        try {
-          tickSucceeded = await withTimeout(
-            reflectTick(state, queue, sendMessage, ownerJid, graph, signals),
-            Math.max(TICK_TIMEOUT, 600_000),
-            "reflectTick",
-          );
-        } finally {
-          reflectRunning = false;
-        }
-      }
-    } else if (timeSinceConsolidate >= cfg.consolidateInterval && graph.nodeCount > 0) {
-      if (consolidateRunning) {
-        log("Skipping consolidateTick — previous invocation still running");
-      } else {
-        tickRan = true;
-        tickType = "consolidate";
-        consolidateRunning = true;
-        try {
-          tickSucceeded = await withTimeout(
-            consolidateTick(state, queue, graph),
-            TICK_TIMEOUT,
-            "consolidateTick",
-          );
-        } finally {
-          consolidateRunning = false;
-        }
-
-        // After consolidation, check if new observations arrived during it.
-        // Without this, ARIA goes blind for up to a full tick interval after a long consolidate.
-        if (tickSucceeded && !thinkRunning) {
-          const postConsolidateObs = getObservationsSince(state.lastObservationTime);
-          if (postConsolidateObs.length > 0) {
-            log(`Post-consolidate: ${postConsolidateObs.length} new observations arrived, chaining think tick`);
-            scoreObservations(postConsolidateObs);
-            observeTick(state, postConsolidateObs);
-            thinkRunning = true;
-            try {
-              const thinkOk = await withTimeout(
-                thinkTick(state, postConsolidateObs, queue, sendMessage, ownerJid, graph, signals),
-                TICK_TIMEOUT,
-                "thinkTick (post-consolidate)",
-              );
-              if (thinkOk) tickSucceeded = true;
-            } catch (err) {
-              log(`Post-consolidate think failed: ${err}`);
-            } finally {
-              thinkRunning = false;
-            }
-          }
-        }
-      }
-    } else if (
-      (hasNewObs && timeSinceThink >= cfg.thinkCooldown) ||
-      (hasNewObs && urgentBypass) ||
-      timeSinceThink >= TIME_AWARENESS_INTERVAL ||
-      initiativeTriggered
-    ) {
-      if (thinkRunning) {
-        log("Skipping thinkTick — previous invocation still running");
-      } else {
-        tickRan = true;
-        tickType = "think";
-        const isInitiativeThink = initiativeTriggered && !hasNewObs;
-        if (isInitiativeThink) {
-          log(`Initiative-triggered think (${highPrioritySignals.length} high-priority signals)`);
-        }
-        thinkRunning = true;
-        try {
-          tickSucceeded = await withTimeout(
-            thinkTick(state, newObs, queue, sendMessage, ownerJid, graph, signals),
-            TICK_TIMEOUT,
-            "thinkTick",
-          );
-          // Only consume initiative budget after successful execution.
-          // Previously, budget was consumed before the tick ran, so if the
-          // queue wasn't idle or the tick failed, budget was wasted.
-          if (isInitiativeThink && tickSucceeded) {
-            recordInitiativeThink(state);
-          }
-        } finally {
-          thinkRunning = false;
-        }
-      }
-    }
+    const succeeded = await withTimeout(promise, tickTimeoutFor(kind, TICK_TIMEOUT_ENV), `${kind}Tick`, controller);
+    return { ran: true, succeeded, error: null };
   } catch (err) {
-    tickRan = true;
-    tickSucceeded = false;
-    const wrapped = err instanceof BrainError ? err : wrapError(err, "think", `Tick execution error: ${err}`);
+    if (err instanceof TimeoutError) {
+      orphanedTick = { kind, startedAt: now };
+      promise.then(
+        (ok) => { log(`Orphaned ${kind} tick finished late (${ok ? "success" : "failure"}) — results persisted by the tick itself`); },
+        (late) => { log(`Orphaned ${kind} tick failed late: ${late}`); },
+      ).finally(() => { orphanedTick = null; });
+    }
+    const wrapped = err instanceof BrainError ? err : wrapError(err, kind, `Tick execution error: ${err}`);
     const structured = wrapped.toStructuredLog();
     log(`Tick execution error [${structured.phase}]: ${structured.message} (transient=${structured.transient}, elapsed=${structured.elapsedMs ?? "?"}ms)`);
     if (structured.cause) log(`  cause: ${structured.cause}`);
-    lastTickError = wrapped;
+    return { ran: true, succeeded: false, error: wrapped };
   }
+}
 
-  if (!tickRan) {
-    saveState(state);
+async function runDecidedTick(
+  decision: TickDecision,
+  state: BrainState,
+  pending: Observation[],
+  signals: InitiativeSignal[],
+  initiativeTriggered: boolean,
+  ctx: TickContext,
+): Promise<void> {
+  const kind = decision.kind!;
+  const { queue, sendMessage, ownerJid, now } = ctx;
+  const prevCost = state.totalCost;
+  log(`${kind} tick: ${decision.reason}`);
+  if (decision.urgentBypass) pendingInterrupt = false;
+  patchState({ lastTickAttemptAt: now });
+
+  const outcome = await runWithBudget(kind, async (signal) => {
+    if (kind === "reflect") return reflectTick(state, queue, sendMessage, ownerJid, graph, signals, signal);
+    if (kind === "consolidate") {
+      const ok = await consolidateTick(state, queue, graph, signal);
+      return ok ? await chainPostConsolidateThink(ctx, signals, signal) || ok : ok;
+    }
+    const ok = await thinkTick(state, pending, queue, sendMessage, ownerJid, graph, signals, signal);
+    // Only consume initiative budget after successful execution.
+    if (ok && initiativeTriggered && pending.length === 0) {
+      const next = patchState(s => ({ initiativeThinksToday: s.initiativeThinksToday + 1 }));
+      log(`Initiative think #${next.initiativeThinksToday} today (${signals.filter(s => s.priority >= 0.5).length} high-priority signals)`);
+    }
+    return ok;
+  });
+  if (!outcome.ran) return;
+
+  recordTickOutcome(outcome, kind, now);
+  const after = patchState({ nodeCount: graph.nodeCount, edgeCount: graph.edgeCount });
+  bumpHourlyStats({ costUsd: Math.max(0, after.totalCost - prevCost) });
+  runPostTickChores(after, ctx);
+}
+
+/**
+ * After consolidation, check whether new observations arrived during it.
+ * Without this, ARIA goes blind for up to a full tick interval after a long consolidate.
+ */
+async function chainPostConsolidateThink(ctx: TickContext, signals: InitiativeSignal[], signal: AbortSignal): Promise<boolean> {
+  const state = loadState();
+  const postObs = getObservationsSince(state.lastObservationTime);
+  if (postObs.length === 0) return false;
+  log(`Post-consolidate: ${postObs.length} pending observations, chaining think tick`);
+  const fresh = selectUnobserved(postObs, state.lastObservedAt ?? state.lastObservationTime);
+  if (fresh.length > 0) {
+    scoreObservations(fresh);
+    observeTick(fresh, Date.now());
+  }
+  for (const obs of postObs) graph.addPendingObservation(obs);
+  try {
+    return await thinkTick(loadState(), postObs, ctx.queue, ctx.sendMessage, ctx.ownerJid, graph, signals, signal);
+  } catch (err) {
+    log(`Post-consolidate think failed: ${err}`);
+    return false;
+  }
+}
+
+/** Track success/failure for health, urgency and stats. */
+function recordTickOutcome(outcome: TickOutcome, kind: LlmTickKind, now: number): void {
+  // Pending urgency is cleared either way: a failed tick must not keep
+  // bypassing the cooldown every minute — the backoff owns the retry cadence.
+  clearPendingUrgency();
+  if (!outcome.succeeded) {
+    // Persist a compact failure summary so the watchdog alert and dashboard
+    // can name the root cause even after a restart.
+    const next = patchState(s => {
+      const consecutiveFailures = s.consecutiveFailures + 1;
+      const lastTickFailure: TickFailureSummary = {
+        ts: now,
+        phase: outcome.error?.context.phase ?? kind,
+        message: (outcome.error?.message ?? "tick returned failure without an exception").slice(0, 200),
+        transient: outcome.error?.context.transient ?? false,
+        consecutiveFailures,
+      };
+      return { consecutiveFailures, lastTickFailure };
+    });
+    bumpHourlyStats({ failures: 1 });
+    const errInfo = outcome.error ? ` [${outcome.error.context.phase}, transient=${outcome.error.context.transient}]` : "";
+    log(`Tick failed${errInfo} (${next.consecutiveFailures} consecutive failures)`);
     return;
   }
+  patchState({ consecutiveFailures: 0, lastSuccessfulTick: now });
+  bumpHourlyStats(kind === "think" ? { thinks: 1 } : kind === "consolidate" ? { consolidates: 1 } : { reflects: 1 });
 
-  // ── Track success/failure for health ──
-  const prevCost = state.totalCost;
-  if (!tickSucceeded) {
-    state.consecutiveFailures++;
-    hourlyStats.failures++;
-    const errInfo = lastTickError
-      ? ` [${lastTickError.context.phase}, transient=${lastTickError.context.transient}]`
-      : "";
-    log(`Tick failed${errInfo} (${state.consecutiveFailures} consecutive failures)`);
-    // Persist a compact failure summary so the watchdog alert and dashboard
-    // can name the root cause even after a restart (lastTickError is
-    // module-local and lost otherwise).
-    state.lastTickFailure = {
-      ts: now,
-      phase: lastTickError?.context.phase ?? tickType ?? "unknown",
-      message: (lastTickError?.message ?? "tick returned failure without an exception").slice(0, 200),
-      transient: lastTickError?.context.transient ?? false,
-      consecutiveFailures: state.consecutiveFailures,
-    };
-  } else {
-    clearPendingUrgency();
-    state.consecutiveFailures = 0;
-    state.lastSuccessfulTick = now;
-    // Track tick type for hourly stats
-    if (tickType === "think") hourlyStats.thinks++;
-    else if (tickType === "consolidate") hourlyStats.consolidates++;
-    else if (tickType === "reflect") hourlyStats.reflects++;
+  if (!firstSuccessfulTickDone) {
+    firstSuccessfulTickDone = true;
+    resetBootCounter();
+    saveLastGoodCommit();
+    log("First successful tick — boot counter reset, last good commit saved");
+  }
+  // Only check for self-modification on consolidate/reflect ticks (not every think tick)
+  if (kind !== "think") recordSelfModification(now);
+}
 
-    if (!firstSuccessfulTickDone) {
-      firstSuccessfulTickDone = true;
-      resetBootCounter();
-      saveLastGoodCommit();
-      log("First successful tick — boot counter reset, last good commit saved");
+function recordSelfModification(now: number): void {
+  const selfModChanges = checkSelfMod();
+  if (!selfModChanges) return;
+  let alreadyTracked = false;
+  try {
+    if (existsSync(SELF_MOD_MARKER_FILE)) {
+      const marker = JSON.parse(readFileSync(SELF_MOD_MARKER_FILE, "utf-8"));
+      alreadyTracked = marker.changes === selfModChanges;
     }
-
-    // Only check for self-modification on consolidate/reflect ticks (not every think tick)
-    const selfModChanges = (tickType === "consolidate" || tickType === "reflect") ? checkSelfMod() : null;
-    if (selfModChanges) {
-      let alreadyTracked = false;
-      try {
-        if (existsSync(SELF_MOD_MARKER_FILE)) {
-          const marker = JSON.parse(readFileSync(SELF_MOD_MARKER_FILE, "utf-8"));
-          alreadyTracked = marker.changes === selfModChanges;
-        }
-      } catch { /* ignore parse errors */ }
-      if (alreadyTracked) {
-        // Same uncommitted changes already recorded — skip duplicate node
-      } else {
-        log(`Self-modification detected:\n${selfModChanges}`);
-        writeSelfModMarker(selfModChanges);
-        const id = `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
-        graph.addNode({
-          id,
-          type: "meta",
-          content: `Self-modification detected during brain tick:\n${selfModChanges}`,
-          tags: ["self-modification", "auto-detected"],
-          strength: 0.9,
-          pinned: false,
-          createdAt: now,
-          lastAccessedAt: now,
-          accessCount: 1,
-        });
-      }
-    }
+  } catch (err) {
+    log(`Self-mod marker unreadable (treating as new): ${err}`);
   }
+  if (alreadyTracked) return; // Same uncommitted changes already recorded — skip duplicate node
+  log(`Self-modification detected:\n${selfModChanges}`);
+  writeSelfModMarker(selfModChanges);
+  graph.addNode({
+    id: `n_${randomUUID().replace(/-/g, "").slice(0, 8)}`,
+    type: "meta",
+    content: `Self-modification detected during brain tick:\n${selfModChanges}`,
+    tags: ["self-modification", "auto-detected"],
+    strength: 0.9,
+    pinned: false,
+    createdAt: now,
+    lastAccessedAt: now,
+    accessCount: 1,
+  });
+}
 
-  // ── Selective state save ──
-  const freshState = loadState();
-
-  freshState.lastThinkTick = state.lastThinkTick;
-  freshState.lastConsolidateTick = state.lastConsolidateTick;
-  freshState.lastReflectTick = state.lastReflectTick;
-  freshState.lastObservationTime = state.lastObservationTime;
-  freshState.consecutiveFailures = state.consecutiveFailures;
-  freshState.lastSuccessfulTick = state.lastSuccessfulTick;
-  freshState.lastTickFailure = state.lastTickFailure;
-  freshState.messagesTodayDate = state.messagesTodayDate;
-  freshState.recurringBudgetDate = state.recurringBudgetDate;
-  freshState.lastBrainMessage = state.lastBrainMessage;
-
-  // Initiative signal snoozes & surfaced counts are mutated during ticks
-  // (applySignalOps / recordSignalsSurfaced / expiry purge in
-  // detectInitiativeSignals). They must be carried through this selective
-  // save — otherwise brain-issued snoozes are silently dropped on the final
-  // saveState(freshState) and the same signals re-fire every tick.
-  freshState.signalSnoozes = state.signalSnoozes;
-  freshState.signalSurfacedCounts = state.signalSurfacedCounts;
-
-  freshState.nodeCount = graph.nodeCount;
-  freshState.edgeCount = graph.edgeCount;
-
-  freshState.totalThinks = Math.max(freshState.totalThinks, state.totalThinks);
-  freshState.totalCost = Math.max(freshState.totalCost, state.totalCost);
-  freshState.recurringThinksToday = Math.max(freshState.recurringThinksToday, state.recurringThinksToday);
-  freshState.initiativeThinksToday = Math.max(freshState.initiativeThinksToday, state.initiativeThinksToday);
-
-  if (state.messagesToday > freshState.messagesToday) {
-    freshState.messagesToday = state.messagesToday;
-  }
-  if (state.lastMessageTime > freshState.lastMessageTime) {
-    freshState.lastMessageTime = state.lastMessageTime;
-  }
-
-  // Track cost delta for hourly stats
-  hourlyStats.costUsd += Math.max(0, freshState.totalCost - prevCost);
-
-  // ── Daily backup check ──
-  if (shouldRunBackup(freshState.lastBackupTick ?? 0)) {
+/** Backup, retrieval-drift replay and the once-a-day digests (all after a completed LLM tick). */
+function runPostTickChores(state: BrainState, ctx: TickContext): void {
+  if (shouldRunBackup(state.lastBackupTick ?? 0)) {
     try {
       createBackup("auto");
-      freshState.lastBackupTick = Date.now();
+      patchState({ lastBackupTick: Date.now() });
       log("Daily memory backup completed");
     } catch (err) {
       log(`Daily backup failed: ${err}`);
     }
   }
 
-  // ── Weekly retrieval-drift replay (structural, no Claude call) ──
-  // Replays a frozen set of canonical prompts through the activation
-  // pipeline and compares top-K node sets against a stored baseline.
-  // External, non-circular drift signal distinct from source-code and
-  // pinned-node drift.
+  // Weekly retrieval-drift replay (structural, no Claude call): replays a
+  // frozen set of canonical prompts through the activation pipeline and
+  // compares top-K node sets against a stored baseline.
   if (shouldRunReplay()) {
     try {
       const replayReport = replayAndCompare(graph);
-      if (replayReport?.alert) {
-        log(`⚠ RETRIEVAL REPLAY ALERT: ${replayReport.alert}`);
-      }
+      if (replayReport?.alert) log(`⚠ RETRIEVAL REPLAY ALERT: ${replayReport.alert}`);
     } catch (err) {
       log(`Retrieval replay failed (non-fatal): ${err}`);
     }
   }
 
-  // ── Daily news digest (once/day after configured local hour, silent) ──
+  runDailyNewsDigest(state, ctx.cfg);
+  runDailyPlayStoreDigest(state, ctx);
+}
+
+/** Daily news digest (once/day after configured local hour, silent, fire-and-forget). */
+function runDailyNewsDigest(state: BrainState, cfg: BrainConfig): void {
   if (
-    shouldRunNewsDigest(freshState.lastNewsDigestTick ?? 0, cfg.ownerTimezone) &&
-    !newsDigestRunning &&
-    Date.now() - lastNewsDigestAttempt >= NEWS_DIGEST_RETRY_MS
-  ) {
-    newsDigestRunning = true;
-    lastNewsDigestAttempt = Date.now();
-    // Fire-and-forget: the digest is context-only, so nothing in this tick needs
-    // its result and awaiting it would hold the tick lock for up to ~75s.
-    // The day's slot is only consumed on success — failed runs retry after
-    // NEWS_DIGEST_RETRY_MS instead of going dark until tomorrow.
-    runNewsDigest(graph)
-      .then((digest) => {
-        if (!digest.stored) return;
-        const state = loadState();
-        state.lastNewsDigestTick = Date.now();
-        saveState(state);
-        log(`Daily news digest stored (${digest.itemCount} items reviewed)`);
-      })
-      .catch((err) => log(`News digest failed (non-fatal): ${err}`))
-      .finally(() => { newsDigestRunning = false; });
-  }
+    !shouldRunNewsDigest(state.lastNewsDigestTick ?? 0, cfg.ownerTimezone) ||
+    newsDigestRunning ||
+    Date.now() - lastNewsDigestAttempt < NEWS_DIGEST_RETRY_MS
+  ) return;
+  newsDigestRunning = true;
+  lastNewsDigestAttempt = Date.now();
+  // The digest is context-only, so nothing in this tick needs its result and
+  // awaiting it would hold the tick lock for up to ~75s. The day's slot is
+  // only consumed on success — failed runs retry after NEWS_DIGEST_RETRY_MS.
+  runNewsDigest(graph)
+    .then((digest) => {
+      if (!digest.stored) return;
+      patchState({ lastNewsDigestTick: Date.now() });
+      log(`Daily news digest stored (${digest.itemCount} items reviewed)`);
+    })
+    .catch((err) => log(`News digest failed (non-fatal): ${err}`))
+    .finally(() => { newsDigestRunning = false; });
+}
 
-  // ── Daily Play Store report (once/day after configured local hour, via WhatsApp) ──
+/** Daily Play Store report (once/day after configured local hour, via WhatsApp, fire-and-forget). */
+function runDailyPlayStoreDigest(state: BrainState, ctx: TickContext): void {
   if (
-    shouldRunPlayStoreDigest(freshState.lastPlayStoreDigestTick ?? 0, cfg.ownerTimezone) &&
-    !playStoreDigestRunning &&
-    Date.now() - lastPlayStoreDigestAttempt >= PLAYSTORE_DIGEST_RETRY_MS
-  ) {
-    playStoreDigestRunning = true;
-    lastPlayStoreDigestAttempt = Date.now();
-    // Same fire-and-forget pattern as the news digest: the day's slot is only
-    // consumed on a sent report, failed runs retry after the spacing interval.
-    runPlayStoreDigest(sendMessage, ownerJid)
-      .then((result) => {
-        if (!result.consumed) {
-          if (result.reason) log(`Play Store report skipped: ${result.reason}`);
-          return;
-        }
-        const state = loadState();
-        state.lastPlayStoreDigestTick = Date.now();
-        if (result.delivered) {
-          state.lastMessageTime = Date.now();
-          state.messagesToday++;
-        }
-        saveState(state);
-      })
-      .catch((err) => log(`Play Store report failed (non-fatal): ${err}`))
-      .finally(() => { playStoreDigestRunning = false; });
-  }
-
-  saveState(freshState);
-  graph.save();
-
-  // Log hourly stats summary
-  logHourlyStats();
-  } finally {
-    tickLock = false;
-  }
+    !shouldRunPlayStoreDigest(state.lastPlayStoreDigestTick ?? 0, ctx.cfg.ownerTimezone) ||
+    playStoreDigestRunning ||
+    Date.now() - lastPlayStoreDigestAttempt < PLAYSTORE_DIGEST_RETRY_MS
+  ) return;
+  playStoreDigestRunning = true;
+  lastPlayStoreDigestAttempt = Date.now();
+  runPlayStoreDigest(ctx.sendMessage, ctx.ownerJid)
+    .then((result) => {
+      if (!result.consumed) {
+        if (result.reason) log(`Play Store report skipped: ${result.reason}`);
+        return;
+      }
+      patchState(s => ({
+        lastPlayStoreDigestTick: Date.now(),
+        lastMessageTime: result.delivered ? Date.now() : s.lastMessageTime,
+        messagesToday: result.delivered ? s.messagesToday + 1 : s.messagesToday,
+      }));
+    })
+    .catch((err) => log(`Play Store report failed (non-fatal): ${err}`))
+    .finally(() => { playStoreDigestRunning = false; });
 }
 
 // ── Observe Tick (free, no Claude call) ──
 
-function observeTick(state: BrainState, observations: Observation[]): void {
-  for (const obs of observations) {
-    graph.addPendingObservation(obs);
-  }
-
-  // Build name→nodeId index for O(1) sender lookup instead of O(persons×observations)
-  const personNodes = graph.findByType("person");
+/** name/tag/JID → person node ids, for O(1) sender lookup instead of O(persons×observations). */
+function buildPersonNameIndex(): Map<string, string[]> {
   const nameIndex = new Map<string, string[]>();
   const indexKey = (key: string, id: string) => {
     if (key.length < 2) return;
-    const ids = nameIndex.get(key) ?? [];
-    ids.push(id);
-    nameIndex.set(key, ids);
+    nameIndex.set(key, [...(nameIndex.get(key) ?? []), id]);
   };
-  for (const node of personNodes) {
+  for (const node of graph.findByType("person")) {
     // Index by content words and tags. Words are also indexed with surrounding
     // punctuation stripped so identifiers like "(JID 1234-5678)" in node
     // content become matchable against a group chat's JID.
-    const words = node.content.toLowerCase().split(/\s+/);
-    for (const w of words) {
+    for (const w of node.content.toLowerCase().split(/\s+/)) {
       indexKey(w, node.id);
       const cleaned = w.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
       if (cleaned !== w) indexKey(cleaned, node.id);
     }
-    for (const tag of node.tags) {
-      indexKey(tag.toLowerCase(), node.id);
-    }
+    for (const tag of node.tags) indexKey(tag.toLowerCase(), node.id);
   }
+  return nameIndex;
+}
 
+/**
+ * Lookup keys for an observation: sender name — and for group chats also the
+ * group's JID and name, so person nodes representing the group itself are
+ * reinforced by activity from any participant.
+ */
+function observationLookupKeys(obs: Observation): string[] {
+  const keys: string[] = [];
+  if (obs.sender) keys.push(obs.sender.toLowerCase());
+  if (!obs.isGroup) return keys;
+  const groupJid = obs.chatJid ?? (obs.senderJid?.endsWith("@g.us") ? obs.senderJid : undefined);
+  if (groupJid) {
+    keys.push(groupJid.toLowerCase(), groupJid.split("@")[0].toLowerCase()); // bare id, as written in node content
+  }
+  const groupName = obs.groupName || obs.chatName;
+  if (groupName) {
+    const g = groupName.toLowerCase();
+    keys.push(g, g.replace(/\s+/g, "-")); // tag convention: "familie haas" → "familie-haas"
+  }
+  return keys;
+}
+
+/**
+ * Free reinforcement pass over observations the brain has not yet seen:
+ * touches matching person nodes and updates conversation threads. Advances
+ * `lastObservedAt` only — consumption is the think tick's business.
+ */
+function observeTick(observations: Observation[], now: number): BrainState {
+  const nameIndex = buildPersonNameIndex();
   const accessedIds = new Set<string>();
   for (const obs of observations) {
-    // Match by sender name — and for group chats also by the group's JID and
-    // name, so person nodes representing the group itself are reinforced by
-    // activity from any participant (not only nodes matching the sender).
-    const keys: string[] = [];
-    if (obs.sender) keys.push(obs.sender.toLowerCase());
-    if (obs.isGroup) {
-      const groupJid = obs.chatJid ?? (obs.senderJid?.endsWith("@g.us") ? obs.senderJid : undefined);
-      if (groupJid) {
-        keys.push(groupJid.toLowerCase());
-        keys.push(groupJid.split("@")[0].toLowerCase()); // bare id, as written in node content
-      }
-      const groupName = obs.groupName || obs.chatName;
-      if (groupName) {
-        const g = groupName.toLowerCase();
-        keys.push(g, g.replace(/\s+/g, "-")); // tag convention: "familie haas" → "familie-haas"
-      }
-    }
-    for (const key of keys) {
-      const matchedIds = nameIndex.get(key);
-      if (!matchedIds) continue;
-      for (const id of matchedIds) {
-        if (!accessedIds.has(id)) {
-          graph.accessNode(id);
-          accessedIds.add(id);
-        }
+    for (const key of observationLookupKeys(obs)) {
+      for (const id of nameIndex.get(key) ?? []) {
+        if (accessedIds.has(id)) continue;
+        graph.accessNode(id);
+        accessedIds.add(id);
       }
     }
   }
@@ -1043,124 +1051,5 @@ function observeTick(state: BrainState, observations: Observation[]): void {
   }
   saveWorkingMemory(wm);
 
-  state.lastObservationTime = Date.now();
-  state.lastObserveTick = Date.now();
-  log(`Observe: buffered ${observations.length} observations, ${graph.getPendingObservations().length} pending total`);
-}
-
-// ── Recurring Tasks Handler ──
-
-async function handleRecurringTasks(
-  state: BrainState,
-  queue: MessageQueue,
-  sendMessage: (jid: string, text: string, source?: string) => Promise<void>,
-  ownerJid: string,
-  _currentObs: Observation[],
-): Promise<void> {
-  const dueTasks = getDueRecurringTasks(ownerJid);
-  if (dueTasks.length === 0) return;
-
-  for (const task of dueTasks) {
-    try {
-      switch (task.action.type) {
-        case "message": {
-          const action = task.action as { type: "message"; targetJid: string; template: string };
-          const verifyResult = verify({
-            type: "send_recurring",
-            source: "recurring",
-            targetJid: action.targetJid,
-            messageText: action.template,
-            metadata: { taskId: task.id, taskLabel: task.label },
-          });
-          if (verifyResult.verdict === "blocked") {
-            log(`[recurring] Verifier blocked message for "${task.label}": ${verifyResult.reasons.join("; ")}`);
-            // Mark as executed even when blocked to prevent retry loop every tick
-            markExecuted(task.id);
-          } else {
-            await sendMessage(action.targetJid, action.template, "recurring");
-            state.lastMessageTime = Date.now();
-            state.messagesToday++;
-            markExecuted(task.id);
-            log(`[recurring] Sent message for task "${task.label}" to ${action.targetJid}`);
-          }
-          break;
-        }
-
-        case "think_trigger": {
-          if (state.recurringThinksToday >= MAX_RECURRING_THINKS_PER_DAY) {
-            log(`[recurring] Skipping think_trigger "${task.label}": daily budget exhausted (${state.recurringThinksToday}/${MAX_RECURRING_THINKS_PER_DAY})`);
-            break;
-          }
-          const action = task.action as { type: "think_trigger"; topic: string; context?: string };
-          const syntheticObs: Observation = {
-            timestamp: Date.now(),
-            sender: "ARIA (recurring task)",
-            senderJid: "system",
-            isGroup: false,
-            isFromMe: true,
-            text: `[RECURRING TASK: ${task.label}] ${action.topic}${action.context ? `\n${action.context}` : ""}`,
-            source: "whatsapp",
-            trustLevel: "owner",
-          };
-          graph.addPendingObservation(syntheticObs);
-          state.recurringThinksToday++;
-          markExecuted(task.id);
-          log(`[recurring] Injected think trigger for "${task.label}" (${state.recurringThinksToday}/${MAX_RECURRING_THINKS_PER_DAY} today)`);
-          break;
-        }
-
-        case "digest": {
-          if (state.recurringThinksToday >= MAX_RECURRING_THINKS_PER_DAY) {
-            log(`[recurring] Skipping digest "${task.label}": daily budget exhausted`);
-            break;
-          }
-          // A fresh digest supersedes any older one still queued on the
-          // scheduled channel (e.g. rerouted by the autonomy gate and pushed
-          // past this slot by retry backoff) — cancel it so the owner never
-          // gets a stale briefing right after a fresh one.
-          const digestAction = task.action as { type: "digest"; targetJid: string };
-          const staleCount = cancelScheduledMessages(digestAction.targetJid, "digest");
-          if (staleCount > 0) {
-            log(`[recurring] Cancelled ${staleCount} stale queued digest(s) for ${digestAction.targetJid} — superseded by fresh "${task.label}"`);
-          }
-          const { hour } = getOwnerLocalTime(getBrainConfig().ownerTimezone);
-          const isEvening = hour >= 17;
-          const digestPrompt = isEvening
-            ? `[DIGEST REQUEST: ${task.label}] Create a structured evening briefing using these sections:
-
-📅 TODAY'S HIGHLIGHTS — Key events, conversations, and notable happenings today
-📋 FOLLOW-UPS — Open items, pending decisions, things still needing attention
-👥 PEOPLE — Notable interactions, who reached out, any relationship updates
-💡 INSIGHTS — Patterns you noticed, things worth reflecting on
-
-Keep each section to 2-4 bullet points max. Skip empty sections. Be concise and personal.`
-            : `[DIGEST REQUEST: ${task.label}] Create a structured morning briefing using these sections:
-
-📅 CALENDAR — What's scheduled today, upcoming meetings or events
-📋 FOLLOW-UPS — Pending items from yesterday, things needing attention today
-👥 PEOPLE — Who reached out overnight, messages requiring response
-💡 INSIGHTS — Patterns you noticed, initiative signals, anything proactive
-
-Keep each section to 2-4 bullet points max. Skip empty sections. Be concise and personal.`;
-          const digestObs: Observation = {
-            timestamp: Date.now(),
-            sender: "ARIA (digest)",
-            senderJid: "system",
-            isGroup: false,
-            isFromMe: true,
-            text: digestPrompt,
-            source: "whatsapp",
-            trustLevel: "owner",
-          };
-          graph.addPendingObservation(digestObs);
-          state.recurringThinksToday++;
-          markExecuted(task.id);
-          log(`[recurring] Injected digest trigger for "${task.label}"`);
-          break;
-        }
-      }
-    } catch (err) {
-      log(`[recurring] Error handling task "${task.label}": ${err} — will retry on next matching tick`);
-    }
-  }
+  return patchState({ lastObservedAt: now, lastObserveTick: now });
 }

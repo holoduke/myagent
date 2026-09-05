@@ -8,7 +8,9 @@
  * The watchdog runs on its own interval, reads the last-successful-tick timestamp
  * from disk, and emits an escalating log line when too much time has elapsed:
  *  - WARN  if no successful tick in `warnAfterMs`  (default 1h)
- *  - ALERT if no successful tick in `alertAfterMs` (default 4h, > consolidate interval)
+ *  - ALERT if no successful tick in `alertAfterMs` (default 5h — must exceed
+ *    the 4h idle think interval plus the longest tick budget, otherwise a
+ *    perfectly healthy but quiet brain trips the alert)
  *
  * It does not restart anything — humans must decide whether to restart the process.
  *
@@ -16,8 +18,9 @@
  * went unnoticed for ~10 weeks because every other degradation signal routes
  * through the failing Claude API path). When an ALERT fires and `ownerJid` is
  * configured, the watchdog also appends a plain-text message to the
- * scheduled-messages queue — delivered by the scheduler's own 60s poll loop,
- * which needs no Claude API call and thus survives an API outage.
+ * scheduled-messages queue — delivered by the scheduler's own 10s poll loop,
+ * which needs no Claude API call and thus survives an API outage. A message
+ * that would land inside quiet hours is scheduled for quietEnd instead.
  * Dedupe: at most one alert per 24h while the condition persists (persisted in
  * watchdog-state.json so restarts don't re-alert), plus one "recovered" notice
  * when the watchdog clears after having notified.
@@ -27,18 +30,26 @@ import { createLogger } from "./logger.js";
 import { safeReadJSON, atomicWriteJSON } from "./utils/file-store.js";
 import { BRAIN_DIR } from "./config.js";
 import { scheduleMessage, getScheduledMessages, markDelivered } from "./scheduler.js";
+import { getBrainConfig } from "./brain-config.js";
+import { quietEndDeliverAt, ownerLocalClock } from "./brain-quiet-hours.js";
 import type { TickFailureSummary } from "./memory/types.js";
 
 const log = createLogger("watchdog");
 
-const DEFAULT_WARN_AFTER_MS = 60 * 60 * 1000;        // 1h
-const DEFAULT_ALERT_AFTER_MS = 4 * 60 * 60 * 1000;   // 4h
-const DEFAULT_CHECK_INTERVAL_MS = 5 * 60 * 1000;     // 5min
+const IDLE_THINK_INTERVAL_MS = 4 * 60 * 60 * 1000;   // brain.ts TIME_AWARENESS_INTERVAL
+const LONGEST_TICK_BUDGET_MS = 630_000;               // brain-policy.ts reflect budget
+
+export const DEFAULT_WARN_AFTER_MS = 60 * 60 * 1000;                                    // 1h
+export const DEFAULT_ALERT_AFTER_MS = 5 * 60 * 60 * 1000;                               // 5h
+const DEFAULT_CHECK_INTERVAL_MS = 5 * 60 * 1000;                                        // 5min
+
+/** Smallest alert threshold that cannot fire on a healthy, idle brain. */
+export const MIN_ALERT_AFTER_MS = IDLE_THINK_INTERVAL_MS + LONGEST_TICK_BUDGET_MS;
 
 export interface WatchdogOptions {
   /** Minimum ms since lastSuccessfulTick before a WARN is logged. */
   warnAfterMs?: number;
-  /** Minimum ms since lastSuccessfulTick before an ALERT is logged. */
+  /** Minimum ms since lastSuccessfulTick before an ALERT is logged. Clamped to MIN_ALERT_AFTER_MS. */
   alertAfterMs?: number;
   /** How often the watchdog checks. */
   checkIntervalMs?: number;
@@ -78,6 +89,11 @@ export function evaluateWatchdog(
   return { level: "ok", msSinceSuccess };
 }
 
+/** Effective alert threshold: the requested one, but never below the idle-think + tick-budget floor. */
+export function resolveAlertAfterMs(requested: number | undefined): number {
+  return Math.max(requested ?? DEFAULT_ALERT_AFTER_MS, MIN_ALERT_AFTER_MS);
+}
+
 // ── ALERT escalation via the scheduled-messages queue ──
 
 const WATCHDOG_STATE_FILE = `${BRAIN_DIR}/watchdog-state.json`;
@@ -112,6 +128,19 @@ function hasQueuedWatchdogMessage(): boolean {
   }
 }
 
+/** Now, or quietEnd if now falls inside the owner's quiet hours. */
+function watchdogDeliverAt(now: number): number {
+  const cfg = getBrainConfig();
+  return quietEndDeliverAt(now, ownerLocalClock(cfg.ownerTimezone, now), cfg.quietStart, cfg.quietEnd);
+}
+
+function queueWatchdogMessage(ownerJid: string, text: string): string {
+  const now = Date.now();
+  const deliverAt = watchdogDeliverAt(now);
+  if (deliverAt > now) log(`Watchdog message deferred past quiet hours to ${new Date(deliverAt).toISOString()}`);
+  return scheduleMessage(ownerJid, text, deliverAt, WATCHDOG_SOURCE);
+}
+
 /**
  * Format the last tick failure as a message suffix, e.g.
  * " — laatste fout: [think] API timeout (transient, 6x)". Empty string when
@@ -125,6 +154,16 @@ export function formatFailureSuffix(failure: TickFailureSummary | null | undefin
   return ` — laatste fout: [${failure.phase}] ${msg} (${kind}, ${failure.consecutiveFailures}x)`;
 }
 
+function describeLastFailure(getLastTickFailure?: () => TickFailureSummary | null): string {
+  try {
+    return formatFailureSuffix(getLastTickFailure?.());
+  } catch (err) {
+    // Diagnostics must never block the alert itself.
+    log(`Could not read last tick failure for alert: ${err}`);
+    return "";
+  }
+}
+
 function escalateAlert(
   ownerJid: string,
   msSinceSuccess: number,
@@ -135,19 +174,8 @@ function escalateAlert(
     if (state.alertNotified && Date.now() - state.lastAlertNotifiedAt < ALERT_RENOTIFY_MS) return;
     if (hasQueuedWatchdogMessage()) return;
     const hours = Math.round(msSinceSuccess / 3600000);
-    let failureSuffix = "";
-    try {
-      failureSuffix = formatFailureSuffix(getLastTickFailure?.());
-    } catch (err) {
-      // Diagnostics must never block the alert itself.
-      log(`Could not read last tick failure for alert: ${err}`);
-    }
-    scheduleMessage(
-      ownerJid,
-      `aria heartbeat: geen succesvolle brain tick in ${hours}h${failureSuffix || " — check dashboard/logs"}`,
-      Date.now(),
-      WATCHDOG_SOURCE,
-    );
+    const failureSuffix = describeLastFailure(getLastTickFailure);
+    queueWatchdogMessage(ownerJid, `aria heartbeat: geen succesvolle brain tick in ${hours}h${failureSuffix || " — check dashboard/logs"}`);
     saveNotifyState({ lastAlertNotifiedAt: Date.now(), alertNotified: true });
     log(`ALERT escalated to scheduled-messages queue for ${ownerJid}`);
   } catch (err) {
@@ -167,12 +195,7 @@ function notifyRecovered(ownerJid: string): void {
       markDelivered(undelivered.map((m) => m.id));
       log(`Recovery: retracted ${undelivered.length} undelivered watchdog alert(s) from the queue`);
     } else {
-      scheduleMessage(
-        ownerJid,
-        "aria heartbeat: hersteld — brain tick weer succesvol",
-        Date.now(),
-        WATCHDOG_SOURCE,
-      );
+      queueWatchdogMessage(ownerJid, "aria heartbeat: hersteld — brain tick weer succesvol");
       log(`Recovery notice queued for ${ownerJid}`);
     }
     saveNotifyState({ ...state, alertNotified: false });
@@ -184,42 +207,44 @@ function notifyRecovered(ownerJid: string): void {
 let watchdogInterval: ReturnType<typeof setInterval> | null = null;
 let lastLoggedLevel: "ok" | "warn" | "alert" = "ok";
 
+function checkOnce(opts: WatchdogOptions, warnAfterMs: number, alertAfterMs: number): void {
+  if (!opts.isBrainEnabled()) return;
+  const lastSuccess = opts.getLastSuccessfulTick();
+  if (lastSuccess <= 0) return; // brain hasn't had a successful tick yet
+  const status = evaluateWatchdog(Date.now() - lastSuccess, warnAfterMs, alertAfterMs);
+
+  // Only log when the level changes or when we're at alert (re-emit hourly via natural cadence).
+  if (status.level === "alert") {
+    log(`!! ALERT: no successful tick in ${Math.round(status.msSinceSuccess / 60000)}m — brain may be stalled`);
+    lastLoggedLevel = "alert";
+    if (opts.ownerJid) escalateAlert(opts.ownerJid, status.msSinceSuccess, opts.getLastTickFailure);
+  } else if (status.level === "warn" && lastLoggedLevel !== "warn" && lastLoggedLevel !== "alert") {
+    log(`WARN: no successful tick in ${Math.round(status.msSinceSuccess / 60000)}m`);
+    lastLoggedLevel = "warn";
+  } else if (status.level === "ok") {
+    if (lastLoggedLevel !== "ok") {
+      log(`Watchdog cleared — brain ticked successfully`);
+      lastLoggedLevel = "ok";
+    }
+    // Checked every tick (not just on level transitions): recovery usually
+    // happens via a process restart, which resets lastLoggedLevel to "ok".
+    // notifyRecovered no-ops unless the persisted alertNotified flag is set.
+    if (opts.ownerJid) notifyRecovered(opts.ownerJid);
+  }
+}
+
 export function startWatchdog(opts: WatchdogOptions): void {
   if (watchdogInterval) {
     log("Watchdog already running, ignoring duplicate start");
     return;
   }
   const warnAfterMs = opts.warnAfterMs ?? DEFAULT_WARN_AFTER_MS;
-  const alertAfterMs = opts.alertAfterMs ?? DEFAULT_ALERT_AFTER_MS;
+  const alertAfterMs = resolveAlertAfterMs(opts.alertAfterMs);
   const checkIntervalMs = opts.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL_MS;
 
   log(`Watchdog started (warn=${Math.round(warnAfterMs / 60000)}m, alert=${Math.round(alertAfterMs / 60000)}m, check=${Math.round(checkIntervalMs / 60000)}m)`);
 
-  watchdogInterval = setInterval(() => {
-    if (!opts.isBrainEnabled()) return;
-    const lastSuccess = opts.getLastSuccessfulTick();
-    if (lastSuccess <= 0) return; // brain hasn't had a successful tick yet
-    const status = evaluateWatchdog(Date.now() - lastSuccess, warnAfterMs, alertAfterMs);
-
-    // Only log when the level changes or when we're at alert (re-emit hourly via natural cadence).
-    if (status.level === "alert") {
-      log(`!! ALERT: no successful tick in ${Math.round(status.msSinceSuccess / 60000)}m — brain may be stalled`);
-      lastLoggedLevel = "alert";
-      if (opts.ownerJid) escalateAlert(opts.ownerJid, status.msSinceSuccess, opts.getLastTickFailure);
-    } else if (status.level === "warn" && lastLoggedLevel !== "warn" && lastLoggedLevel !== "alert") {
-      log(`WARN: no successful tick in ${Math.round(status.msSinceSuccess / 60000)}m`);
-      lastLoggedLevel = "warn";
-    } else if (status.level === "ok") {
-      if (lastLoggedLevel !== "ok") {
-        log(`Watchdog cleared — brain ticked successfully`);
-        lastLoggedLevel = "ok";
-      }
-      // Checked every tick (not just on level transitions): recovery usually
-      // happens via a process restart, which resets lastLoggedLevel to "ok".
-      // notifyRecovered no-ops unless the persisted alertNotified flag is set.
-      if (opts.ownerJid) notifyRecovered(opts.ownerJid);
-    }
-  }, checkIntervalMs);
+  watchdogInterval = setInterval(() => checkOnce(opts, warnAfterMs, alertAfterMs), checkIntervalMs);
 }
 
 export function stopWatchdog(): void {

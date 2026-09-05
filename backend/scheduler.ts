@@ -1,5 +1,6 @@
 import { safeReadJSON, atomicWriteJSON, ensureDir } from "./utils/file-store.js";
-import { existsSync, statSync } from "fs";
+import { existsSync, statSync, openSync, closeSync, unlinkSync } from "fs";
+import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "./logger.js";
 import { isWhitelisted, resolveCanonicalJid } from "./contact-whitelist.js";
@@ -139,54 +140,181 @@ const BACKOFF_DELAYS_MS = [2 * 60000, 10 * 60000, 30 * 60000, 60 * 60000, 120 * 
  * Does NOT remove messages from the schedule — caller must use markDelivered()
  * after successful delivery to avoid data loss on send failure.
  */
-// In-flight message IDs with timestamps: prevents duplicate delivery and enables timeout cleanup
+// ── In-flight claims (cross-process safe) ──
+//
+// Several processes can poll the same schedule file (the brain loop, a
+// recovery worker, an overlapping container during a deploy). A claim is an
+// entry in scheduled-messages-inflight.json tagged with this process's
+// instance id; the file is only ever rewritten under an exclusive lock file
+// and re-read after writing, so two pollers cannot both believe they own the
+// same message. Claims by another instance are respected for OTHER_CLAIM_TTL_MS
+// (a crashed instance's claims expire after that), our own for IN_FLIGHT_TIMEOUT_MS.
+
+export interface InFlightEntry {
+  id: string;
+  startedAt: number;
+  /** Instance that claimed the message; absent on entries written before instance ids. */
+  instanceId?: string;
+}
+
+export const INSTANCE_ID = `${hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`;
+const IN_FLIGHT_LOCK_FILE = `${IN_FLIGHT_FILE}.lock`;
+const IN_FLIGHT_TIMEOUT_MS = 6 * 60 * 1000;   // our own claim: 5min send timeout + 1min buffer
+/** A message claimed by another live instance within this window is skipped. */
+export const OTHER_CLAIM_TTL_MS = 2 * 60 * 1000;
+const LOCK_STALE_MS = 10_000;
+const LOCK_RETRIES = 10;
+const LOCK_RETRY_MS = 20;
+
+// In-memory view of OUR claims (timeout sweep + fast "already claimed" checks).
 const inFlightIds = new Map<string, number>();
-const IN_FLIGHT_TIMEOUT_MS = 6 * 60 * 1000; // 5min send timeout + 1min buffer
-// Max backoff (2h) + generous buffer for crash recovery staleness check
-const CRASH_RECOVERY_STALENESS_MS = BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1] + IN_FLIGHT_TIMEOUT_MS;
 
-interface InFlightEntry { id: string; startedAt: number; }
+export interface ClaimReconciliation {
+  entries: InFlightEntry[];
+  claimed: string[];
+  skipped: string[];
+}
 
-function saveInFlight(): void {
+/**
+ * Pure claim policy over the on-disk entries: drop expired claims, keep live
+ * claims by other instances (and skip their ids), claim the rest for us.
+ */
+export function reconcileClaims(
+  entries: InFlightEntry[],
+  wantedIds: string[],
+  instanceId: string,
+  now: number,
+  ownTtlMs: number = IN_FLIGHT_TIMEOUT_MS,
+  otherTtlMs: number = OTHER_CLAIM_TTL_MS,
+): ClaimReconciliation {
+  const live = entries.filter(e => {
+    const ttl = e.instanceId === instanceId ? ownTtlMs : otherTtlMs;
+    return now - e.startedAt <= ttl;
+  });
+  const claimedByOther = new Set(live.filter(e => e.instanceId !== instanceId).map(e => e.id));
+  const claimedByUs = new Set(live.filter(e => e.instanceId === instanceId).map(e => e.id));
+  const claimed: string[] = [];
+  const skipped: string[] = [];
+  const added: InFlightEntry[] = [];
+  for (const id of wantedIds) {
+    if (claimedByOther.has(id)) { skipped.push(id); continue; }
+    claimed.push(id);
+    if (!claimedByUs.has(id)) added.push({ id, startedAt: now, instanceId });
+  }
+  return { entries: [...live, ...added], claimed, skipped };
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function acquireInFlightLock(): boolean {
+  ensureDir(BRAIN_DIR);
+  for (let attempt = 0; attempt < LOCK_RETRIES; attempt++) {
+    try {
+      closeSync(openSync(IN_FLIGHT_LOCK_FILE, "wx"));
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+        log(`In-flight lock error: ${err}`);
+        return false;
+      }
+      try {
+        if (Date.now() - statSync(IN_FLIGHT_LOCK_FILE).mtimeMs > LOCK_STALE_MS) {
+          unlinkSync(IN_FLIGHT_LOCK_FILE);
+          log("Removed stale in-flight lock");
+          continue;
+        }
+      } catch (statErr) {
+        if ((statErr as NodeJS.ErrnoException).code !== "ENOENT") log(`In-flight lock stat error: ${statErr}`);
+      }
+      sleepSync(LOCK_RETRY_MS);
+    }
+  }
+  return false;
+}
+
+function releaseInFlightLock(): void {
   try {
-    const entries: InFlightEntry[] = [];
-    for (const [id, startedAt] of inFlightIds) entries.push({ id, startedAt });
-    ensureDir(BRAIN_DIR);
-    atomicWriteJSON(IN_FLIGHT_FILE, entries);
+    unlinkSync(IN_FLIGHT_LOCK_FILE);
   } catch (err) {
-    log(`Warning: failed to persist in-flight state: ${err}`);
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") log(`Failed to release in-flight lock: ${err}`);
+  }
+}
+
+function readInFlightFile(): InFlightEntry[] {
+  const raw = safeReadJSON<unknown>(IN_FLIGHT_FILE, []);
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((e): e is InFlightEntry =>
+    typeof e === "object" && e !== null
+    && typeof (e as InFlightEntry).id === "string"
+    && typeof (e as InFlightEntry).startedAt === "number",
+  );
+}
+
+/** Read-modify-write of the in-flight file under the lock; returns null when the lock could not be taken. */
+function updateInFlightFile(update: (entries: InFlightEntry[]) => InFlightEntry[]): InFlightEntry[] | null {
+  if (!acquireInFlightLock()) {
+    log("Could not acquire in-flight lock — skipping claim update this poll");
+    return null;
+  }
+  try {
+    const next = update(readInFlightFile());
+    atomicWriteJSON(IN_FLIGHT_FILE, next);
+    // Re-read after writing: the rename is atomic, so what is on disk now is what everyone sees.
+    return readInFlightFile();
+  } catch (err) {
+    log(`Warning: failed to update in-flight state: ${err}`);
+    return null;
+  } finally {
+    releaseInFlightLock();
   }
 }
 
 /**
- * On startup, recover in-flight state from disk. Entries older than
- * max-backoff + timeout buffer are considered stale (the process crashed
- * during delivery) and are released so the scheduler can retry them.
+ * Claim `ids` for this instance. Returns the ids we verifiably own after the
+ * write (re-read from disk), never those claimed by another live instance.
+ */
+function claimInFlight(ids: string[], now: number): string[] {
+  if (ids.length === 0) return [];
+  let skipped: string[] = [];
+  const onDisk = updateInFlightFile(entries => {
+    const r = reconcileClaims(entries, ids, INSTANCE_ID, now);
+    skipped = r.skipped;
+    return r.entries;
+  });
+  if (!onDisk) return [];
+  if (skipped.length > 0) log(`Skipping ${skipped.length} message(s) claimed by another live instance: ${skipped.join(", ")}`);
+  const ours = new Set(onDisk.filter(e => e.instanceId === INSTANCE_ID).map(e => e.id));
+  const verified = ids.filter(id => ours.has(id));
+  for (const id of verified) inFlightIds.set(id, now);
+  return verified;
+}
+
+/** Release our claims on `ids` (delivered, failed or blocked). */
+function releaseInFlight(ids: string[]): void {
+  for (const id of ids) inFlightIds.delete(id);
+  if (ids.length === 0) return;
+  const idSet = new Set(ids);
+  updateInFlightFile(entries => entries.filter(e => !(idSet.has(e.id) && e.instanceId === INSTANCE_ID)));
+}
+
+/**
+ * On startup, drop expired entries from the in-flight file. Claims by a
+ * previous incarnation of this process carry a different instance id, so they
+ * are simply "another instance" and expire after OTHER_CLAIM_TTL_MS — a
+ * message mid-send during a crash is not retried within that window.
  */
 function recoverInFlight(): void {
   if (!existsSync(IN_FLIGHT_FILE)) return;
-  const raw = safeReadJSON<unknown>(IN_FLIGHT_FILE, []);
-  if (!Array.isArray(raw)) return;
   const now = Date.now();
-  let recovered = 0;
   let stale = 0;
-  for (const entry of raw) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const e = entry as Record<string, unknown>;
-    if (typeof e.id !== "string" || typeof e.startedAt !== "number") continue;
-    if (now - e.startedAt > CRASH_RECOVERY_STALENESS_MS) {
-      // Too old — release for retry (message is still in schedule file)
-      stale++;
-    } else {
-      // Recent — keep as in-flight (delivery might still be happening in another process? unlikely but safe)
-      inFlightIds.set(e.id, e.startedAt);
-      recovered++;
-    }
-  }
+  updateInFlightFile(entries => {
+    const kept = reconcileClaims(entries, [], INSTANCE_ID, now).entries;
+    stale = entries.length - kept.length;
+    return kept;
+  });
   if (stale > 0) log(`Crash recovery: released ${stale} stale in-flight message(s) for retry`);
-  if (recovered > 0) log(`Crash recovery: preserved ${recovered} recent in-flight message(s)`);
-  // Re-save cleaned state
-  saveInFlight();
 }
 
 // Run crash recovery on module load
@@ -197,37 +325,31 @@ export function getDueMessages(): ScheduledMessage[] {
   const now = Date.now();
 
   // Sweep stale in-flight IDs so stuck messages can be retried
-  let swept = false;
-  for (const [id, startedAt] of inFlightIds) {
-    if (now - startedAt > IN_FLIGHT_TIMEOUT_MS) {
-      log(`In-flight timeout: releasing stuck message ${id} (in-flight for ${Math.round((now - startedAt) / 1000)}s)`);
-      inFlightIds.delete(id);
-      swept = true;
-    }
-  }
-  if (swept) saveInFlight();
+  const stuck = [...inFlightIds].filter(([, startedAt]) => now - startedAt > IN_FLIGHT_TIMEOUT_MS).map(([id]) => id);
+  for (const id of stuck) log(`In-flight timeout: releasing stuck message ${id}`);
+  releaseInFlight(stuck);
 
-  const due = schedule.filter(m => m.deliverAt <= now && !inFlightIds.has(m.id));
+  const candidates = schedule.filter(m => m.deliverAt <= now && !inFlightIds.has(m.id));
+  if (candidates.length === 0) return [];
+
+  // Claim ALL due messages before any other processing (whitelist, etc.) so a
+  // concurrent poller — in this process or another — cannot return the same ones.
+  const claimedIds = new Set(claimInFlight(candidates.map(m => m.id), now));
+  const due = candidates.filter(m => claimedIds.has(m.id));
   if (due.length === 0) return [];
 
   // Defensive normalization: resolve any @lid aliases on already-queued entries
   // (e.g. messages enqueued before the canonicalization fix landed) so the
   // verifier's strict JID-format check doesn't block them at dispatch.
-  for (const m of due) {
+  const normalized = due.map(m => {
     const canonical = resolveCanonicalJid(m.targetJid);
-    if (canonical !== m.targetJid) m.targetJid = canonical;
-  }
-
-  // Mark ALL due messages as in-flight immediately to prevent race conditions.
-  // This must happen before any other processing (whitelist, etc.) to ensure
-  // a concurrent getDueMessages() call cannot return the same messages.
-  for (const m of due) inFlightIds.set(m.id, now);
-  saveInFlight();
+    return canonical === m.targetJid ? m : { ...m, targetJid: canonical };
+  });
 
   // Single-pass partition into allowed / blocked by whitelist status
   const allowed: ScheduledMessage[] = [];
   const blocked: ScheduledMessage[] = [];
-  for (const m of due) {
+  for (const m of normalized) {
     (isWhitelisted(m.targetJid) ? allowed : blocked).push(m);
   }
 
@@ -238,8 +360,7 @@ export function getDueMessages(): ScheduledMessage[] {
     const cleaned = schedule.filter(m => !blockedIds.has(m.id));
     saveSchedule(cleaned);
     // Release blocked messages from in-flight (they've been removed from schedule)
-    for (const m of blocked) inFlightIds.delete(m.id);
-    saveInFlight();
+    releaseInFlight(blocked.map(m => m.id));
     // Terminal outcome: record the suppression so the brain prompt shows it
     for (const m of blocked) logDelivery(m.targetJid, m.source, m.message, "suppressed");
   }
@@ -282,9 +403,7 @@ export function markDelivered(ids: string[]): void {
   const idSet = new Set(ids);
   const remaining = schedule.filter(m => !idSet.has(m.id));
   saveSchedule(remaining);
-  // Clear in-flight tracking
-  for (const id of ids) inFlightIds.delete(id);
-  saveInFlight();
+  releaseInFlight(ids);
   log(`Marked ${ids.length} message(s) as delivered, ${remaining.length} remaining`);
 }
 
@@ -296,30 +415,26 @@ export function markFailed(ids: string[]): string[] {
   if (ids.length === 0) return [];
   const schedule = loadSchedule();
   const idSet = new Set(ids);
-  const droppedIds: string[] = [];
   const droppedMessages: ScheduledMessage[] = [];
+  const remaining: ScheduledMessage[] = [];
 
   for (const msg of schedule) {
-    if (idSet.has(msg.id)) {
-      msg.retryCount = (msg.retryCount || 0) + 1;
-      if (msg.retryCount > MAX_RETRIES) {
-        droppedIds.push(msg.id);
-        droppedMessages.push(msg);
-      } else {
-        const baseMs = BACKOFF_DELAYS_MS[msg.retryCount - 1] || BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1];
-        const backoffMs = Math.round(baseMs * (0.75 + Math.random() * 0.5));
-        msg.deliverAt = Date.now() + backoffMs;
-        log(`Message ${msg.id} retry ${msg.retryCount}/${MAX_RETRIES}, next attempt in ${Math.round(backoffMs / 60000)}min`);
-      }
+    if (!idSet.has(msg.id)) { remaining.push(msg); continue; }
+    const retryCount = (msg.retryCount || 0) + 1;
+    if (retryCount > MAX_RETRIES) {
+      droppedMessages.push(msg);
+      continue;
     }
+    const baseMs = BACKOFF_DELAYS_MS[retryCount - 1] || BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1];
+    const backoffMs = Math.round(baseMs * (0.75 + Math.random() * 0.5));
+    log(`Message ${msg.id} retry ${retryCount}/${MAX_RETRIES}, next attempt in ${Math.round(backoffMs / 60000)}min`);
+    remaining.push({ ...msg, retryCount, deliverAt: Date.now() + backoffMs });
   }
 
-  const droppedSet = new Set(droppedIds);
-  const remaining = schedule.filter(m => !droppedSet.has(m.id));
+  const droppedIds = droppedMessages.map(m => m.id);
   saveSchedule(remaining);
   // Clear in-flight tracking for all failed messages (retried or dropped)
-  for (const id of ids) inFlightIds.delete(id);
-  saveInFlight();
+  releaseInFlight(ids);
 
   if (droppedIds.length > 0) {
     log(`Dropped ${droppedIds.length} message(s) after exceeding ${MAX_RETRIES} retries`);
