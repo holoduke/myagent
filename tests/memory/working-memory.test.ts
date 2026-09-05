@@ -35,6 +35,8 @@ import {
   updateWorkingMemory,
   cleanupWorkingMemory,
   updateConversationThreads,
+  conversationThreadKey,
+  threadTopicFrom,
   scanFollowUpsForResolution,
 } from "../../backend/memory/working-memory.js";
 import type { WorkingMemory, PendingFollowUp, ConversationThread } from "../../backend/memory/types.js";
@@ -363,5 +365,33 @@ describe("scanFollowUpsForResolution", () => {
     ]);
 
     expect(result).toBe(0);
+  });
+});
+
+
+describe("conversationThreadKey / threadTopicFrom", () => {
+  const base = { timestamp: 1, sender: "X", senderJid: "x@s.whatsapp.net", isGroup: false, isFromMe: false, text: "hallo" };
+
+  it("keys DMs by counterpart, groups by group, e-mail per sender address", () => {
+    expect(conversationThreadKey({ ...base, chatJid: "y@s.whatsapp.net" } as never)).toBe("dm:y@s.whatsapp.net");
+    expect(conversationThreadKey({ ...base, isGroup: true, groupName: "Koreman" } as never)).toBe("group:Koreman");
+    expect(conversationThreadKey({ ...base, source: "gmail", senderJid: "gmail:acct", emailMeta: { from: "Rob <Rob@Example.com>" } } as never)).toBe("email:rob@example.com");
+    expect(conversationThreadKey({ ...base, source: "gmail", senderJid: "gmail:acct", emailMeta: { from: "news@shop.com" }, promotionalEmail: true } as never)).toBeNull();
+  });
+
+  it("never uses media stubs as topics", () => {
+    expect(threadTopicFrom({ ...base, text: "[image]" } as never)).toBeNull();
+    expect(threadTopicFrom({ ...base, text: "[image — caption failed]" } as never)).toBeNull();
+    expect(threadTopicFrom({ ...base, text: "[voice message]" } as never)).toBeNull();
+    expect(threadTopicFrom({ ...base, text: "Kom je vanavond?  " } as never)).toBe("Kom je vanavond?");
+  });
+
+  it("a thread opened by a stub gets its topic from the first real message", () => {
+    const wm = { conversationThreads: [] } as never as Parameters<typeof updateConversationThreads>[0];
+    updateConversationThreads(wm, [{ ...base, chatJid: "y@s.whatsapp.net", text: "[image]" } as never]);
+    expect(wm.conversationThreads[0].topic).toBe("");
+    updateConversationThreads(wm, [{ ...base, chatJid: "y@s.whatsapp.net", text: "Foto van Lucas", timestamp: 2 } as never]);
+    expect(wm.conversationThreads[0].topic).toBe("Foto van Lucas");
+    expect(wm.conversationThreads[0].messageCount).toBe(2);
   });
 });

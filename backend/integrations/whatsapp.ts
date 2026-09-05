@@ -54,6 +54,8 @@ export interface ObservationEvent {
   chatJid?: string;     // For DMs: the remote JID (who the chat is with)
   chatName?: string;    // For DMs: resolved name of the chat counterpart
   mediaType?: "voice" | "image" | "document"; // Media type if message contains non-text media
+  /** WhatsApp message id — stable dedup/reply key across restarts. */
+  messageId?: string;
 }
 
 export type ObservationHandler = (obs: ObservationEvent) => void;
@@ -595,6 +597,7 @@ export async function startWhatsApp(
             chatJid,
             chatName,
             mediaType,
+            messageId: msg.key.id ?? undefined,
           });
         } catch (err) {
           log.error(`Observation handler error: ${err}`);
