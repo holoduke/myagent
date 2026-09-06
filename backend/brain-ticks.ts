@@ -206,8 +206,8 @@ export async function consolidateTick(
 
   populateTemporalContext(wm);
   const cleanup = cleanupWorkingMemory(wm);
-  if (cleanup.trackingTrimmed > 0 || cleanup.followUpsPruned > 0) {
-    log(`Working memory cleanup: trimmed ${cleanup.trackingTrimmed} tracking items, pruned ${cleanup.followUpsPruned} follow-ups`);
+  if (cleanup.trackingTrimmed > 0 || cleanup.followUpsPruned > 0 || cleanup.followUpsMerged > 0) {
+    log(`Working memory cleanup: trimmed ${cleanup.trackingTrimmed} tracking items, pruned ${cleanup.followUpsPruned} follow-ups, merged ${cleanup.followUpsMerged} near-duplicates`);
     saveWorkingMemory(wm);
   }
   const { weakNodes, orphanNodes, duplicateCandidates, stats } = selectContextForConsolidate(graph);
