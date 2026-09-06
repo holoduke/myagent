@@ -321,8 +321,15 @@ function collectOutgoingActivity(now: number): OutgoingActivity {
     );
   };
 
+  // Internal prompt artifacts (instructions TO the brain, not messages sent to
+  // a person) would otherwise group as audience "unknown" and leak phantom
+  // commitments; the delivered digest itself still shows up via the delivery log.
+  const isInternalPromptArtifact = (o: Observation): boolean =>
+    o.senderJid === "system" && /^\[DIGEST REQUEST:/.test(o.text);
+
   const flat = recentOutgoing
     .filter(o => o.text && o.text.length >= 10)
+    .filter(o => !isInternalPromptArtifact(o))
     .map(o => ({
       source: o.source || "whatsapp",
       audience: o.chatName || o.groupName || "unknown",
