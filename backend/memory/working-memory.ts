@@ -153,6 +153,29 @@ export function mergePendingFollowUps(existing: PendingFollowUp[], incoming: Pen
   return [...all].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_PENDING_FOLLOWUPS);
 }
 
+// Follow-ups due within this window (or overdue) are urgent: the prompt shows
+// them first and never truncates them away.
+export const FOLLOWUP_DUE_SOON_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * Split follow-ups into due-soon (dueAt overdue or within `windowMs`) and the
+ * rest. Due-soon items come back most-urgent first; the rest keep their order.
+ */
+export function splitDueSoonFollowUps(
+  followUps: PendingFollowUp[],
+  now: number,
+  windowMs: number = FOLLOWUP_DUE_SOON_MS,
+): { dueSoon: PendingFollowUp[]; rest: PendingFollowUp[] } {
+  const dueSoon: PendingFollowUp[] = [];
+  const rest: PendingFollowUp[] = [];
+  for (const fu of followUps) {
+    if (typeof fu.dueAt === "number" && fu.dueAt <= now + windowMs) dueSoon.push(fu);
+    else rest.push(fu);
+  }
+  dueSoon.sort((a, b) => a.dueAt! - b.dueAt!);
+  return { dueSoon, rest };
+}
+
 export function saveWorkingMemory(wm: WorkingMemory): void {
   try {
     ensureDir(BRAIN_DIR);
