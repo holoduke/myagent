@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mergePendingFollowUps, dedupeFollowUps } from "./working-memory.js";
+import { mergePendingFollowUps, dedupeFollowUps, splitDueSoonFollowUps, FOLLOWUP_DUE_SOON_MS } from "./working-memory.js";
 import type { PendingFollowUp } from "./types.js";
 
 const fu = (id: string, question: string, createdAt: number, extra: Partial<PendingFollowUp> = {}): PendingFollowUp => ({
@@ -57,5 +57,40 @@ describe("dedupeFollowUps", () => {
       fu("fu_b", "Moltbook post over verkiezingen schrijven", 2000),
     ];
     expect(dedupeFollowUps(items)).toEqual(items);
+  });
+});
+
+describe("splitDueSoonFollowUps", () => {
+  const NOW = 1_000_000_000_000;
+  const HOUR = 60 * 60 * 1000;
+
+  it("separates overdue and due-within-48h items from the rest, most urgent first", () => {
+    const items = [
+      fu("fu_far", "Ver weg", 1000, { dueAt: NOW + FOLLOWUP_DUE_SOON_MS + HOUR }),
+      fu("fu_soon", "Binnenkort", 1000, { dueAt: NOW + 24 * HOUR }),
+      fu("fu_none", "Geen deadline", 1000),
+      fu("fu_over", "Verlopen", 1000, { dueAt: NOW - HOUR }),
+    ];
+    const { dueSoon, rest } = splitDueSoonFollowUps(items, NOW);
+    expect(dueSoon.map(f => f.id)).toEqual(["fu_over", "fu_soon"]);
+    expect(rest.map(f => f.id)).toEqual(["fu_far", "fu_none"]);
+  });
+
+  it("treats a dueAt exactly at the window edge as due-soon", () => {
+    const items = [fu("fu_edge", "Op de rand", 1000, { dueAt: NOW + FOLLOWUP_DUE_SOON_MS })];
+    const { dueSoon, rest } = splitDueSoonFollowUps(items, NOW);
+    expect(dueSoon).toHaveLength(1);
+    expect(rest).toHaveLength(0);
+  });
+
+  it("keeps undated items in their original order", () => {
+    const items = [
+      fu("fu_a", "Eerste", 3000),
+      fu("fu_b", "Tweede", 1000),
+      fu("fu_c", "Derde", 2000),
+    ];
+    const { dueSoon, rest } = splitDueSoonFollowUps(items, NOW);
+    expect(dueSoon).toHaveLength(0);
+    expect(rest.map(f => f.id)).toEqual(["fu_a", "fu_b", "fu_c"]);
   });
 });
