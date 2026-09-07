@@ -370,7 +370,7 @@ function formatWorkingMemory(wm: WorkingMemory, includeAllFollowUps = false): st
           f.dueAt && f.dueAt < now ? " [OVERDUE]" : "",
           f.potentiallyResolved ? " [MAYBE-RESOLVED]" : "",
         ].join("");
-        return `  - ${f.question}${target}${due}${flags}`;
+        return `  - [${f.id}] ${f.question}${target}${due}${flags}`;
       });
       parts.push(`Follow-ups (all ${sorted.length} — triage: resolve, reschedule, or escalate):\n${fuLines.join("\n")}`);
     } else {
@@ -380,7 +380,7 @@ function formatWorkingMemory(wm: WorkingMemory, includeAllFollowUps = false): st
       const formatLine = (f: PendingFollowUp, prefix: string): string => {
         const target = f.targetPerson ? ` (for ${f.targetPerson})` : "";
         const due = f.dueAt ? ` [${prefix}: ${new Date(f.dueAt).toLocaleDateString()}]` : "";
-        return `  - ${f.question}${target}${due}`;
+        return `  - [${f.id}] ${f.question}${target}${due}`;
       };
       const fuLines = [
         ...dueSoon.map(f => formatLine(f, f.dueAt! <= now ? "OVERDUE" : "DUE")),
@@ -571,7 +571,7 @@ export function formatDigestTemplate(wm: WorkingMemory, graph: MemoryGraph): str
   });
   if (dueFollowUps.length > 0) {
     sections.push(`**Follow-ups**\n${dueFollowUps.map(fu =>
-      `- ${fu.targetPerson ? `[${fu.targetPerson}] ` : ""}${fu.question}`
+      `- [${fu.id}] ${fu.targetPerson ? `[${fu.targetPerson}] ` : ""}${fu.question}`
     ).join("\n")}`);
   }
 
@@ -963,6 +963,7 @@ THINKING GUIDELINES:
 - If you notice an emerging pattern across 3+ new nodes, create a concept to group them.
 - Use goalOps to create/update/complete goals when someone expresses intentions or you identify objectives.
 - Use pendingFollowUps to track things you want to ask about or check on later.
+- Follow-ups are shown with their id, e.g. "[fu_ab12cd34]". To resolve or update an existing follow-up, echo its exact id with "resolved": true or the updated fields — never rely on retyping the question text verbatim.
 - TEMPORAL FACTS: When creating or updating fact nodes that have a time-limited validity (e.g., "Lucas is 8 years old", "quarterly review next Friday"), set validFrom and/or validUntil fields (unix ms) on the node via add_node or update_node. Expired facts decay faster automatically. Example: {"op": "add_node", "id": "n_xxx", "type": "fact", "content": "Lucas is 8 years old", "tags": ["lucas", "age"], "validUntil": 1735689600000}
 - CONTRADICTION DETECTION: If you notice an observation that contradicts an existing memory node (e.g., someone says X but you have a node saying Y, or a fact has changed), do the following:
   1. Update the existing node with the corrected information using update_node.
