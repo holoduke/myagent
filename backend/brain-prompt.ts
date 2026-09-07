@@ -327,7 +327,7 @@ Do NOT edit code during ticks. Propose via "improvementProposals" in response. W
 
 // ── Working Memory Section ──
 
-function formatWorkingMemory(wm: WorkingMemory): string {
+function formatWorkingMemory(wm: WorkingMemory, includeAllFollowUps = false): string {
   const parts: string[] = [];
   if (wm.currentContext) parts.push(`Context: ${wm.currentContext}`);
   if (wm.mood) parts.push(`Mood: ${wm.mood}`);
@@ -352,23 +352,45 @@ function formatWorkingMemory(wm: WorkingMemory): string {
     f => typeof f.question === "string" && f.question.trim().length > 0,
   );
   if (readableFollowUps.length > 0) {
-    // Overdue / due-within-48h items render first and are exempt from the
-    // truncation cap — deadlines hidden in the "... and N more" tail expire silently.
     const now = Date.now();
-    const { dueSoon, rest } = splitDueSoonFollowUps(readableFollowUps, now);
-    const formatLine = (f: PendingFollowUp, prefix: string): string => {
-      const target = f.targetPerson ? ` (for ${f.targetPerson})` : "";
-      const due = f.dueAt ? ` [${prefix}: ${new Date(f.dueAt).toLocaleDateString()}]` : "";
-      return `  - ${f.question}${target}${due}`;
-    };
-    const fuLines = [
-      ...dueSoon.map(f => formatLine(f, f.dueAt! <= now ? "OVERDUE" : "DUE")),
-      ...rest.slice(0, 5).map(f => formatLine(f, "due")),
-    ];
-    if (rest.length > 5) {
-      fuLines.push(`  ... and ${rest.length - 5} more follow-ups`);
+    if (includeAllFollowUps) {
+      // Reflect ticks are the triage moment: show every follow-up, sorted by
+      // dueAt ascending (no due date last), so nothing stays structurally
+      // invisible until cleanup silently deletes it.
+      const sorted = [...readableFollowUps].sort((a, b) => {
+        if (a.dueAt == null && b.dueAt == null) return 0;
+        if (a.dueAt == null) return 1;
+        if (b.dueAt == null) return -1;
+        return a.dueAt - b.dueAt;
+      });
+      const fuLines = sorted.map(f => {
+        const target = f.targetPerson ? ` (for ${f.targetPerson})` : "";
+        const due = f.dueAt ? ` [due: ${new Date(f.dueAt).toLocaleDateString()}]` : "";
+        const flags = [
+          f.dueAt && f.dueAt < now ? " [OVERDUE]" : "",
+          f.potentiallyResolved ? " [MAYBE-RESOLVED]" : "",
+        ].join("");
+        return `  - ${f.question}${target}${due}${flags}`;
+      });
+      parts.push(`Follow-ups (all ${sorted.length} — triage: resolve, reschedule, or escalate):\n${fuLines.join("\n")}`);
+    } else {
+      // Overdue / due-within-48h items render first and are exempt from the
+      // truncation cap — deadlines hidden in the "... and N more" tail expire silently.
+      const { dueSoon, rest } = splitDueSoonFollowUps(readableFollowUps, now);
+      const formatLine = (f: PendingFollowUp, prefix: string): string => {
+        const target = f.targetPerson ? ` (for ${f.targetPerson})` : "";
+        const due = f.dueAt ? ` [${prefix}: ${new Date(f.dueAt).toLocaleDateString()}]` : "";
+        return `  - ${f.question}${target}${due}`;
+      };
+      const fuLines = [
+        ...dueSoon.map(f => formatLine(f, f.dueAt! <= now ? "OVERDUE" : "DUE")),
+        ...rest.slice(0, 5).map(f => formatLine(f, "due")),
+      ];
+      if (rest.length > 5) {
+        fuLines.push(`  ... and ${rest.length - 5} more follow-ups`);
+      }
+      parts.push(`Follow-ups:\n${fuLines.join("\n")}`);
     }
-    parts.push(`Follow-ups:\n${fuLines.join("\n")}`);
   }
 
   // Active conversation threads
@@ -1269,7 +1291,7 @@ Messages today: ${ctx.messagesToday}/${ctx.maxMessagesPerDay}
 Quiet hours: ${ctx.quietStart}:00–${ctx.quietEnd}:00 (${isQuiet ? "ACTIVE — do NOT message" : "inactive"})
 ${responsivenessDirective(ctx.responsivenessPreset)}
 ═══ WORKING MEMORY ═══
-${formatWorkingMemory(ctx.wm)}
+${formatWorkingMemory(ctx.wm, true)}
 ${formatConsciousnessSection()}${goalsBlock}${initiativeBlock}${lastDeliveryBlock}${buildCommitmentsBlock(ctx.recentMoltbookActivity, ctx.recentOutgoingActivity, ctx.ownerOutgoingActivity)}
 ═══ GRAPH STATS ═══
 Nodes: ${ctx.stats.nodeCount} | Edges: ${ctx.stats.edgeCount} | Archived: ${ctx.stats.archivedCount} | Ghosts: ${ctx.stats.ghostCount} | Avg strength: ${ctx.stats.avgStrength.toFixed(3)}
