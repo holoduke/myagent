@@ -1,8 +1,9 @@
 import type { Observation } from "./observer.js";
-import type { MemoryNode, WorkingMemory, BrainMessageDelivery } from "./memory/types.js";
+import type { MemoryNode, WorkingMemory, BrainMessageDelivery, PendingFollowUp } from "./memory/types.js";
 import type { ScheduledMessage, DeliveryRecord } from "./scheduler.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import { serializeNodesForPrompt, collectRelevantRejectedEdges, formatRejectedEdgesForPrompt } from "./memory/activation.js";
+import { splitDueSoonFollowUps } from "./memory/working-memory.js";
 import { ariaPersonality } from "./aria-identity.js";
 import type { CharacterOverride } from "./aria-identity.js";
 import { getBrainConfig, getCharacterPreset, getOwnerLocalTime } from "./brain-config.js";
@@ -351,13 +352,21 @@ function formatWorkingMemory(wm: WorkingMemory): string {
     f => typeof f.question === "string" && f.question.trim().length > 0,
   );
   if (readableFollowUps.length > 0) {
-    const fuLines = readableFollowUps.slice(0, 5).map(f => {
+    // Overdue / due-within-48h items render first and are exempt from the
+    // truncation cap — deadlines hidden in the "... and N more" tail expire silently.
+    const now = Date.now();
+    const { dueSoon, rest } = splitDueSoonFollowUps(readableFollowUps, now);
+    const formatLine = (f: PendingFollowUp, prefix: string): string => {
       const target = f.targetPerson ? ` (for ${f.targetPerson})` : "";
-      const due = f.dueAt ? ` [due: ${new Date(f.dueAt).toLocaleDateString()}]` : "";
+      const due = f.dueAt ? ` [${prefix}: ${new Date(f.dueAt).toLocaleDateString()}]` : "";
       return `  - ${f.question}${target}${due}`;
-    });
-    if (readableFollowUps.length > 5) {
-      fuLines.push(`  ... and ${readableFollowUps.length - 5} more follow-ups`);
+    };
+    const fuLines = [
+      ...dueSoon.map(f => formatLine(f, f.dueAt! <= now ? "OVERDUE" : "DUE")),
+      ...rest.slice(0, 5).map(f => formatLine(f, "due")),
+    ];
+    if (rest.length > 5) {
+      fuLines.push(`  ... and ${rest.length - 5} more follow-ups`);
     }
     parts.push(`Follow-ups:\n${fuLines.join("\n")}`);
   }
