@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mergePendingFollowUps, dedupeFollowUps, splitDueSoonFollowUps, cleanupWorkingMemory, FOLLOWUP_DUE_SOON_MS, DEFAULT_FOLLOWUP_DUE_MS } from "./working-memory.js";
+import { mergePendingFollowUps, dedupeFollowUps, splitDueSoonFollowUps, cleanupWorkingMemory, clusterRelatedFollowUps, FOLLOWUP_DUE_SOON_MS, DEFAULT_FOLLOWUP_DUE_MS } from "./working-memory.js";
 import type { PendingFollowUp, WorkingMemory } from "./types.js";
 
 const fu = (id: string, question: string, createdAt: number, extra: Partial<PendingFollowUp> = {}): PendingFollowUp => ({
@@ -78,6 +78,49 @@ describe("dedupeFollowUps", () => {
       fu("fu_b", "Moltbook post over verkiezingen schrijven", 2000),
     ];
     expect(dedupeFollowUps(items)).toEqual(items);
+  });
+});
+
+describe("clusterRelatedFollowUps", () => {
+  it("groups multi-angle questions about the same arc without merging them", () => {
+    const items = [
+      fu("fu_lgm1500", "Heeft Lageman teruggebeld over de offerte van 1500 euro?", 1000),
+      fu("fu_lgmbudget1", "Past de Lageman offerte nog binnen het budget van de verbouwing?", 2000),
+      fu("fu_anwb", "Autoverzekering overstap ANWB afronden", 3000),
+      fu("fu_moltbook", "Moltbook post over verkiezingen schrijven", 4000),
+    ];
+    const clusters = clusterRelatedFollowUps(items);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].ids.sort()).toEqual(["fu_lgm1500", "fu_lgmbudget1"]);
+    expect(clusters[0].sharedTerms).toContain("lageman");
+  });
+
+  it("chains relatedness transitively into one cluster", () => {
+    const items = [
+      fu("fu_a", "Heeft Lageman teruggebeld over de offerte?", 1000),
+      fu("fu_b", "Lageman offerte budget bespreken met Ilse", 2000),
+      fu("fu_c", "Budget verbouwing Lageman definitief maken", 3000),
+    ];
+    const clusters = clusterRelatedFollowUps(items);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].ids).toHaveLength(3);
+  });
+
+  it("does not cluster questions that only share a person name", () => {
+    const items = [
+      fu("fu_a", "Julian zwemles diploma vragen", 1000),
+      fu("fu_b", "Julian schoolreisje formulier betalen", 2000),
+    ];
+    expect(clusterRelatedFollowUps(items)).toHaveLength(0);
+  });
+
+  it("returns no clusters for unrelated follow-ups or an empty list", () => {
+    const items = [
+      fu("fu_a", "Schoolreisje Julian inplannen", 1000),
+      fu("fu_b", "Moltbook post over verkiezingen schrijven", 2000),
+    ];
+    expect(clusterRelatedFollowUps(items)).toHaveLength(0);
+    expect(clusterRelatedFollowUps([])).toHaveLength(0);
   });
 });
 

@@ -3,7 +3,7 @@ import type { MemoryNode, WorkingMemory, BrainMessageDelivery, PendingFollowUp }
 import type { ScheduledMessage, DeliveryRecord } from "./scheduler.js";
 import type { MemoryGraph } from "./memory/graph.js";
 import { serializeNodesForPrompt, collectRelevantRejectedEdges, formatRejectedEdgesForPrompt } from "./memory/activation.js";
-import { splitDueSoonFollowUps } from "./memory/working-memory.js";
+import { splitDueSoonFollowUps, clusterRelatedFollowUps } from "./memory/working-memory.js";
 import { ariaPersonality } from "./aria-identity.js";
 import type { CharacterOverride } from "./aria-identity.js";
 import { getBrainConfig, getCharacterPreset, getOwnerLocalTime } from "./brain-config.js";
@@ -373,6 +373,18 @@ function formatWorkingMemory(wm: WorkingMemory, includeAllFollowUps = false): st
         return `  - [${f.id}] ${f.question}${target}${due}${flags}`;
       });
       parts.push(`Follow-ups (all ${sorted.length} — triage: resolve, reschedule, or escalate):\n${fuLines.join("\n")}`);
+
+      // Related-but-not-merged items grouped per subject arc, so one event
+      // (e.g. a single call) can close the whole cluster instead of one item.
+      // Only worth prompt space when there is more than one cluster.
+      const clusters = clusterRelatedFollowUps(sorted);
+      if (clusters.length >= 2) {
+        const clusterLines = clusters.map(c => {
+          const terms = c.sharedTerms.length > 0 ? ` (shared terms: ${c.sharedTerms.join(", ")})` : "";
+          return `  - Cluster: ${c.ids.join(" + ")}${terms}`;
+        });
+        parts.push(`Possible same-subject clusters (related, not auto-merged — triage per arc, one resolution may close all):\n${clusterLines.join("\n")}`);
+      }
     } else {
       // Overdue / due-within-48h items render first and are exempt from the
       // truncation cap — deadlines hidden in the "... and N more" tail expire silently.
