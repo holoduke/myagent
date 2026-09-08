@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { mergePendingFollowUps, dedupeFollowUps, splitDueSoonFollowUps, FOLLOWUP_DUE_SOON_MS } from "./working-memory.js";
-import type { PendingFollowUp } from "./types.js";
+import { mergePendingFollowUps, dedupeFollowUps, splitDueSoonFollowUps, cleanupWorkingMemory, FOLLOWUP_DUE_SOON_MS, DEFAULT_FOLLOWUP_DUE_MS } from "./working-memory.js";
+import type { PendingFollowUp, WorkingMemory } from "./types.js";
 
 const fu = (id: string, question: string, createdAt: number, extra: Partial<PendingFollowUp> = {}): PendingFollowUp => ({
   id,
@@ -32,6 +32,27 @@ describe("mergePendingFollowUps fuzzy matching", () => {
     const incoming = [fu("fu_new", "Autoverzekering overstap ANWB afronden", 2000)];
     expect(mergePendingFollowUps(existing, incoming)).toHaveLength(2);
   });
+
+  it("matches a rephrased variant sharing a distinctive anchor plus a topic word", () => {
+    const existing = [fu("fu_1", "Zijn Gillis's 4 auto's ongeschonden na de Duyfrak-krassen?", 1000)];
+    const incoming = [fu("fu_new", "Kwamen er meer meldingen van bekraste auto's op het Duyfrak-binnenterrein?", 2000)];
+    const merged = mergePendingFollowUps(existing, incoming);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].id).toBe("fu_1");
+    expect(merged[0].createdAt).toBe(1000);
+  });
+
+  it("does not merge different questions that only share a person name", () => {
+    const existing = [fu("fu_1", "Julian zwemles diploma vragen", 1000)];
+    const incoming = [fu("fu_new", "Julian schoolreisje formulier betalen", 2000)];
+    expect(mergePendingFollowUps(existing, incoming)).toHaveLength(2);
+  });
+
+  it("matches across diacritics and possessive forms", () => {
+    const existing = [fu("fu_1", "Cadeau voor Valérie's verjaardag regelen", 1000)];
+    const incoming = [fu("fu_new", "Verjaardag cadeau regelen voor Valerie", 2000)];
+    expect(mergePendingFollowUps(existing, incoming)).toHaveLength(1);
+  });
 });
 
 describe("dedupeFollowUps", () => {
@@ -57,6 +78,44 @@ describe("dedupeFollowUps", () => {
       fu("fu_b", "Moltbook post over verkiezingen schrijven", 2000),
     ];
     expect(dedupeFollowUps(items)).toEqual(items);
+  });
+});
+
+describe("cleanupWorkingMemory default dueAt", () => {
+  const makeWm = (pendingFollowUps: PendingFollowUp[]): WorkingMemory => ({
+    currentContext: "",
+    mood: "neutral",
+    shortTermTracking: [],
+    activatedNodeIds: [],
+    lastUpdated: 0,
+    activeGoals: [],
+    pendingFollowUps,
+    conversationThreads: [],
+    temporal: {
+      dayOfWeek: "Monday",
+      timeOfDay: "morning",
+      hour: 8,
+      date: "2026-09-07",
+      isWeekend: false,
+      upcomingEvents: [],
+    },
+  });
+
+  it("assigns createdAt + 7 days to follow-ups without a dueAt", () => {
+    const createdAt = Date.now() - 1000;
+    const wm = makeWm([fu("fu_a", "Zwevende follow-up zonder deadline", createdAt)]);
+    const result = cleanupWorkingMemory(wm);
+    expect(result.followUpsDefaultedDue).toBe(1);
+    expect(wm.pendingFollowUps[0].dueAt).toBe(createdAt + DEFAULT_FOLLOWUP_DUE_MS);
+  });
+
+  it("leaves an existing dueAt untouched", () => {
+    const now = Date.now();
+    const dueAt = now + 3 * 24 * 60 * 60 * 1000;
+    const wm = makeWm([fu("fu_a", "Follow-up met eigen deadline", now - 1000, { dueAt })]);
+    const result = cleanupWorkingMemory(wm);
+    expect(result.followUpsDefaultedDue).toBe(0);
+    expect(wm.pendingFollowUps[0].dueAt).toBe(dueAt);
   });
 });
 

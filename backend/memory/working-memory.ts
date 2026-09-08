@@ -5,6 +5,7 @@ import { MAX_PENDING_FOLLOWUPS } from "./types.js";
 import type { Observation } from "../observer.js";
 import { getBrainConfig, getOwnerLocalTime, getOwnerLocalDate } from "../brain-config.js";
 import { extractKeywordsFromText } from "./activation.js";
+import { STOP_WORDS, CORRELATION_NOISE_WORDS } from "./text-utils.js";
 import { createLogger } from "../logger.js";
 import { BRAIN_DIR } from "../config.js";
 
@@ -86,32 +87,100 @@ const normalizeQuestion = (q: string): string => q.trim().toLowerCase().replace(
 // The brain often re-emits a follow-up with fresh wording and no id, so exact
 // question matching alone stores near-duplicates ("Paardenmarkt agenda-events
 // aanmaken..." existed in three variants). Token-set Jaccard catches those.
+// Rephrased variants of the same real-world question ("Zijn Gillis's auto's
+// ongeschonden na de Duyfrak-krassen?" vs "Kwamen er meer meldingen van
+// bekraste auto's op het Duyfrak-binnenterrein?") share little literal wording
+// but do share a distinctive anchor (a name, date or code) plus a topic word —
+// those match through a weighted score with a lower, anchored threshold.
 
 const FUZZY_MATCH_THRESHOLD = 0.6;
-const FUZZY_MIN_TOKEN_LEN = 4;
+// Lower bar that only applies when the pair shares a distinctive anchor token
+// and at least one more token; without the anchor requirement this would
+// over-merge questions that merely share common words.
+const FUZZY_ANCHOR_THRESHOLD = 0.35;
+const FUZZY_MIN_TOKEN_LEN = 3;
+const DISTINCTIVE_TOKEN_WEIGHT = 3;
 
-/** Keyword token set for fuzzy matching: stop words removed, short tokens dropped. */
-function followUpTokens(question: string): Set<string> {
-  return new Set(extractKeywordsFromText(question).filter(t => t.length >= FUZZY_MIN_TOKEN_LEN));
+interface FollowUpTokenProfile {
+  tokens: Set<string>;
+  /** Names, dates and codes — tokens that pin the question to a specific thing. */
+  distinctive: Set<string>;
 }
 
-/** Jaccard similarity of two token sets. Empty sets never match. */
-function tokenSetJaccard(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0;
-  let inter = 0;
-  for (const t of a) if (b.has(t)) inter++;
-  return inter / (a.size + b.size - inter);
+const COMBINING_MARKS_RE = /[\u0300-\u036f]/g;
+
+/**
+ * Aggressively normalized token profile: diacritics stripped, possessive/plural
+ * 's removed, hyphenated compounds split ("Duyfrak-krassen" → "duyfrak",
+ * "krassen"), stop words and noise names dropped. Tokens capitalized beyond the
+ * sentence start (proper names) or containing a digit (dates, kentekens,
+ * tracking codes) are marked distinctive.
+ */
+function followUpTokenProfile(question: string): FollowUpTokenProfile {
+  const tokens = new Set<string>();
+  const distinctive = new Set<string>();
+  const rawWords = question
+    .normalize("NFD")
+    .replace(COMBINING_MARKS_RE, "")
+    .split(/[^\p{L}\p{N}']+/u)
+    .filter(Boolean);
+  rawWords.forEach((raw, i) => {
+    const looksLikeName = i > 0 && /^\p{Lu}/u.test(raw);
+    const word = raw.replace(/'s$/i, "").replace(/'/g, "").toLowerCase();
+    if (word.length < FUZZY_MIN_TOKEN_LEN) return;
+    if (STOP_WORDS.has(word) || CORRELATION_NOISE_WORDS.has(word)) return;
+    tokens.add(word);
+    if (looksLikeName || /\d/.test(word)) distinctive.add(word);
+  });
+  return { tokens, distinctive };
 }
 
-/** Id of the most similar existing follow-up at or above the threshold, if any. */
+interface FuzzySimilarity {
+  /** Distinctiveness-weighted Jaccard over the two token sets. */
+  score: number;
+  shared: number;
+  sharedDistinctive: number;
+}
+
+/** Weighted Jaccard: distinctive tokens (in either profile) count triple. */
+function scoreFollowUpSimilarity(a: FollowUpTokenProfile, b: FollowUpTokenProfile): FuzzySimilarity {
+  if (a.tokens.size === 0 || b.tokens.size === 0) return { score: 0, shared: 0, sharedDistinctive: 0 };
+  const weight = (t: string) => (a.distinctive.has(t) || b.distinctive.has(t) ? DISTINCTIVE_TOKEN_WEIGHT : 1);
+  let interWeight = 0;
+  let unionWeight = 0;
+  let shared = 0;
+  let sharedDistinctive = 0;
+  for (const t of a.tokens) {
+    unionWeight += weight(t);
+    if (b.tokens.has(t)) {
+      interWeight += weight(t);
+      shared++;
+      if (a.distinctive.has(t) || b.distinctive.has(t)) sharedDistinctive++;
+    }
+  }
+  for (const t of b.tokens) if (!a.tokens.has(t)) unionWeight += weight(t);
+  return { score: interWeight / unionWeight, shared, sharedDistinctive };
+}
+
+/**
+ * Duplicate when the weighted score clears the plain threshold, or — for
+ * rephrased variants with little literal overlap — when the pair shares a
+ * distinctive anchor plus at least one more token above the anchored threshold.
+ */
+function isFuzzyFollowUpMatch(sim: FuzzySimilarity): boolean {
+  if (sim.score >= FUZZY_MATCH_THRESHOLD) return true;
+  return sim.score >= FUZZY_ANCHOR_THRESHOLD && sim.shared >= 2 && sim.sharedDistinctive >= 1;
+}
+
+/** Id of the most similar existing follow-up that qualifies as a match, if any. */
 function findFuzzyFollowUpMatch(question: string, candidates: Iterable<PendingFollowUp>): string | undefined {
-  const tokens = followUpTokens(question);
+  const profile = followUpTokenProfile(question);
   let bestId: string | undefined;
-  let bestScore = FUZZY_MATCH_THRESHOLD;
+  let bestScore = 0;
   for (const fu of candidates) {
-    const score = tokenSetJaccard(tokens, followUpTokens(fu.question));
-    if (score >= bestScore) {
-      bestScore = score;
+    const sim = scoreFollowUpSimilarity(profile, followUpTokenProfile(fu.question));
+    if (isFuzzyFollowUpMatch(sim) && sim.score >= bestScore) {
+      bestScore = sim.score;
       bestId = fu.id;
     }
   }
@@ -215,6 +284,9 @@ export function updateWorkingMemory(
 
 const MAX_TRACKING_ITEMS = 25;
 const MAX_FOLLOWUP_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// Follow-ups the brain stored without a dueAt drift forever outside the
+// due-soon triage; cleanup assigns them this default deadline instead.
+export const DEFAULT_FOLLOWUP_DUE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
  * Collapse near-duplicate follow-ups already in the stored list (exact or
@@ -222,27 +294,28 @@ const MAX_FOLLOWUP_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
  * newest wording/fields.
  */
 export function dedupeFollowUps(followUps: PendingFollowUp[]): PendingFollowUp[] {
-  const kept: { fu: PendingFollowUp; norm: string; tokens: Set<string> }[] = [];
+  const kept: { fu: PendingFollowUp; norm: string; profile: FollowUpTokenProfile }[] = [];
   for (const fu of followUps) {
     const norm = normalizeQuestion(fu.question);
-    const tokens = followUpTokens(fu.question);
-    const match = kept.find(k => k.norm === norm || tokenSetJaccard(tokens, k.tokens) >= FUZZY_MATCH_THRESHOLD);
+    const profile = followUpTokenProfile(fu.question);
+    const match = kept.find(k => k.norm === norm || isFuzzyFollowUpMatch(scoreFollowUpSimilarity(profile, k.profile)));
     if (!match) {
-      kept.push({ fu, norm, tokens });
+      kept.push({ fu, norm, profile });
       continue;
     }
     const [older, newer] = match.fu.createdAt <= fu.createdAt ? [match.fu, fu] : [fu, match.fu];
     match.fu = { ...newer, id: older.id, createdAt: older.createdAt };
     match.norm = normalizeQuestion(match.fu.question);
-    match.tokens = followUpTokens(match.fu.question);
+    match.profile = followUpTokenProfile(match.fu.question);
   }
   return kept.map(k => k.fu);
 }
 
-export function cleanupWorkingMemory(wm: WorkingMemory): { trackingTrimmed: number; followUpsPruned: number; followUpsMerged: number } {
+export function cleanupWorkingMemory(wm: WorkingMemory): { trackingTrimmed: number; followUpsPruned: number; followUpsMerged: number; followUpsDefaultedDue: number } {
   let trackingTrimmed = 0;
   let followUpsPruned = 0;
   let followUpsMerged = 0;
+  let followUpsDefaultedDue = 0;
   const now = Date.now();
 
   // Cap shortTermTracking to most recent items
@@ -268,9 +341,21 @@ export function cleanupWorkingMemory(wm: WorkingMemory): { trackingTrimmed: numb
     if (followUpsMerged > 0) {
       log(`Follow-up dedup: merged ${followUpsMerged} near-duplicate(s)`);
     }
+
+    // Deadline-less follow-ups never surface in due-soon triage; give them a
+    // default deadline so they get triaged (and eventually pruned) like the rest.
+    for (const fu of wm.pendingFollowUps) {
+      if (typeof fu.dueAt !== "number") {
+        fu.dueAt = fu.createdAt + DEFAULT_FOLLOWUP_DUE_MS;
+        followUpsDefaultedDue++;
+      }
+    }
+    if (followUpsDefaultedDue > 0) {
+      log(`Follow-up triage: defaulted dueAt on ${followUpsDefaultedDue} deadline-less item(s)`);
+    }
   }
 
-  return { trackingTrimmed, followUpsPruned, followUpsMerged };
+  return { trackingTrimmed, followUpsPruned, followUpsMerged, followUpsDefaultedDue };
 }
 
 // ── Follow-Up Auto-Resolution Detection ──
