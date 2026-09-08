@@ -161,9 +161,18 @@ describe("sendGuardedReply", () => {
     expect(persisted[chat].repliesInWindow).toBe(1);
   });
 
-  it("rejects non-WhatsApp sources", async () => {
-    const r = await sendGuardedReply(makeObs({ source: "slack", messageId: "S1" }), "x", { source: "reply-agent", id: "x" });
-    expect(r).toMatchObject({ sent: false, reason: "non-WhatsApp source (slack)" });
+  it("rejects sources without a reply channel", async () => {
+    const r = await sendGuardedReply(makeObs({ source: "gmail", messageId: "G1" }), "x", { source: "reply-agent", id: "x" });
+    expect(r).toMatchObject({ sent: false, reason: "unsupported source (gmail)" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("delivers Slack replies through the Slack channel, not the WhatsApp send function", async () => {
+    const r = await sendGuardedReply(
+      makeObs({ source: "slack", senderJid: "slack:newstory:UF2TMG6HJ", chatJid: "slack:newstory:D0AESPZDYRL", messageId: "S1" }),
+      "hoi", { source: "reply-agent", id: "x" },
+    );
+    expect(r).toMatchObject({ sent: true, chatJid: "slack:newstory:D0AESPZDYRL" });
     expect(send).not.toHaveBeenCalled();
   });
 
