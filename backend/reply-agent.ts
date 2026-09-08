@@ -28,6 +28,7 @@ import type { Observation } from "./observer.js";
 import { verify } from "./action-verifier.js";
 import { resolveCanonicalJid, isWhitelisted } from "./contact-whitelist.js";
 import { BRAIN_DIR } from "./config.js";
+import { parseSlackJid, sendSlackMessage } from "./integrations/slack.js";
 
 const log = createLogger("reply-agent");
 
@@ -84,6 +85,9 @@ interface ChatCooldown {
   lastReplyAt: number;
   repliesInWindow: number;
   windowStart: number;
+  /** Rolling day for the hard daily cap. */
+  dayStart?: number;
+  repliesToday?: number;
 }
 
 type CooldownMap = Record<string, ChatCooldown>;
@@ -93,6 +97,19 @@ const MAX_REPLIES_PER_WINDOW = 5;
 const WINDOW_SIZE_MS = 3_600_000;
 const GROUP_COOLDOWN_MULTIPLIER = 3;
 const MAX_COOLDOWN_ENTRIES = 500;
+/** Slack DMs are conversations (often with another bot): faster turns, but a hard daily cap so two agents can never loop all night. */
+const SLACK_MIN_INTERVAL_MS = 20_000;
+const SLACK_MAX_PER_WINDOW = 12;
+const SLACK_MAX_PER_DAY = 40;
+const DAY_MS = 86_400_000;
+
+export type ReplyChannel = "whatsapp" | "slack";
+
+export function replyChannelFor(obs: Pick<Observation, "source">): ReplyChannel | null {
+  if (!obs.source || obs.source === "whatsapp") return "whatsapp";
+  if (obs.source === "slack") return "slack";
+  return null;
+}
 
 const cooldownStore = new MergedStore<CooldownMap>({
   filePath: COOLDOWNS_FILE,
@@ -100,18 +117,26 @@ const cooldownStore = new MergedStore<CooldownMap>({
   indent: 0,
 });
 
-/** True when a reply to this chat is allowed under the interval/window limits. */
-export function canReply(chatJid: string, isGroup: boolean): boolean {
+function limitsFor(chatJid: string, isGroup: boolean): { interval: number; perWindow: number; perDay: number } {
+  if (chatJid.startsWith("slack:")) {
+    return { interval: SLACK_MIN_INTERVAL_MS, perWindow: SLACK_MAX_PER_WINDOW, perDay: SLACK_MAX_PER_DAY };
+  }
+  return {
+    interval: isGroup ? MIN_REPLY_INTERVAL_MS * GROUP_COOLDOWN_MULTIPLIER : MIN_REPLY_INTERVAL_MS,
+    perWindow: isGroup ? Math.ceil(MAX_REPLIES_PER_WINDOW / GROUP_COOLDOWN_MULTIPLIER) : MAX_REPLIES_PER_WINDOW,
+    perDay: Number.POSITIVE_INFINITY,
+  };
+}
+
+/** True when a reply to this chat is allowed under the interval/window/day limits. */
+export function canReply(chatJid: string, isGroup: boolean, now: number = Date.now()): boolean {
   const cd = cooldownStore.get()[chatJid];
   if (!cd) return true;
-
-  const now = Date.now();
-  const interval = isGroup ? MIN_REPLY_INTERVAL_MS * GROUP_COOLDOWN_MULTIPLIER : MIN_REPLY_INTERVAL_MS;
+  const { interval, perWindow, perDay } = limitsFor(chatJid, isGroup);
   if (now - cd.lastReplyAt < interval) return false;
+  if (cd.dayStart !== undefined && now - cd.dayStart < DAY_MS && (cd.repliesToday ?? 0) >= perDay) return false;
   if (now - cd.windowStart > WINDOW_SIZE_MS) return true;
-
-  const maxReplies = isGroup ? Math.ceil(MAX_REPLIES_PER_WINDOW / GROUP_COOLDOWN_MULTIPLIER) : MAX_REPLIES_PER_WINDOW;
-  return cd.repliesInWindow < maxReplies;
+  return cd.repliesInWindow < perWindow;
 }
 
 function evictStaleCooldowns(map: CooldownMap, now: number): CooldownMap {
@@ -124,9 +149,11 @@ function recordReplyEvent(chatJid: string): void {
   const now = Date.now();
   cooldownStore.update(map => {
     const cd = map[chatJid];
+    const sameDay = cd?.dayStart !== undefined && now - cd.dayStart < DAY_MS;
+    const dayFields = { dayStart: sameDay ? cd!.dayStart : now, repliesToday: sameDay ? (cd!.repliesToday ?? 0) + 1 : 1 };
     const next: ChatCooldown = !cd || now - cd.windowStart > WINDOW_SIZE_MS
-      ? { lastReplyAt: now, repliesInWindow: 1, windowStart: now }
-      : { ...cd, lastReplyAt: now, repliesInWindow: cd.repliesInWindow + 1 };
+      ? { lastReplyAt: now, repliesInWindow: 1, windowStart: now, ...dayFields }
+      : { ...cd, lastReplyAt: now, repliesInWindow: cd.repliesInWindow + 1, ...dayFields };
     return evictStaleCooldowns({ ...map, [chatJid]: next }, now);
   });
 }
@@ -385,7 +412,7 @@ export type GuardedReplyResult =
   | { sent: false; chatJid: string; reason: string; sendError?: string };
 
 function guardedReplyPrecheck(obs: Observation, chatJid: string, text: string): string | null {
-  if (obs.source && obs.source !== "whatsapp") return `non-WhatsApp source (${obs.source})`;
+  if (!replyChannelFor(obs)) return `unsupported source (${obs.source})`;
   if (!text.trim()) return "empty reply text";
   if (repliedKeys.has(observationReplyKey(obs))) return "already replied to this message";
   if (!canReply(chatJid, obs.isGroup ?? false)) return "rate limited";
@@ -393,20 +420,42 @@ function guardedReplyPrecheck(obs: Observation, chatJid: string, text: string): 
   return null;
 }
 
+/** Deliver on the channel the observation came from. */
+async function deliverReply(channel: ReplyChannel, chatJid: string, text: string): Promise<void> {
+  if (channel === "slack") {
+    const target = parseSlackJid(chatJid);
+    if (!target) throw new Error(`invalid Slack chat jid ${chatJid}`);
+    const result = await sendSlackMessage(target.workspaceId, target.id, text);
+    if (!result.success) throw new Error(result.error ?? "slack send failed");
+    return;
+  }
+  if (!sendFn) throw new Error("send function not initialized");
+  await sendFn(chatJid, text);
+}
+
+/** A per-contact directive for this chat/sender acts as the allow-list for non-WhatsApp channels. */
+function directiveCovers(directiveId: string, chatJid: string, senderJid: string): boolean {
+  const d = getReplyDirective(directiveId);
+  return !!d?.enabled && !!d.contactJid && (d.contactJid === chatJid || d.contactJid === senderJid);
+}
+
 /**
- * Send an auto-reply with every safety gate applied: WhatsApp-only source,
- * canonical JID resolution, per-message replied guard, per-chat cooldown,
- * persisted opt-outs and the action verifier. Records the cooldown and the
- * replied key on success. Never throws.
+ * Send an auto-reply with every safety gate applied: supported source
+ * (WhatsApp or Slack), canonical JID resolution, per-message replied guard,
+ * per-chat cooldown and daily cap, persisted opt-outs and the action
+ * verifier. Records the cooldown and the replied key on success. Never throws.
  */
 export async function sendGuardedReply(
   obs: Observation,
   text: string,
   origin: GuardedReplyOrigin,
 ): Promise<GuardedReplyResult> {
+  const channel = replyChannelFor(obs) ?? "whatsapp";
   // Resolve @lid aliases to the contact's canonical phone JID so the verifier's
   // strict @s.whatsapp.net/@g.us check accepts whitelisted Baileys v7 LID forms.
-  const chatJid = resolveCanonicalJid(obs.chatJid || obs.senderJid);
+  const chatJid = channel === "whatsapp"
+    ? resolveCanonicalJid(obs.chatJid || obs.senderJid)
+    : (obs.chatJid || obs.senderJid);
   const replyText = text.trim();
 
   const skip = guardedReplyPrecheck(obs, chatJid, replyText);
@@ -420,7 +469,12 @@ export async function sendGuardedReply(
     source: origin.source,
     targetJid: chatJid,
     messageText: replyText,
-    metadata: { originId: origin.id, senderJid: obs.senderJid },
+    metadata: {
+      originId: origin.id,
+      senderJid: obs.senderJid,
+      channel,
+      allowlistedByDirective: origin.source === "reply-agent" && directiveCovers(origin.id, chatJid, obs.senderJid),
+    },
   });
   if (verifyResult.verdict === "blocked") {
     const reason = `verifier blocked: ${verifyResult.reasons.join("; ")}`;
@@ -428,7 +482,7 @@ export async function sendGuardedReply(
     return { sent: false, chatJid, reason };
   }
 
-  if (!sendFn) {
+  if (channel === "whatsapp" && !sendFn) {
     log("Reply agent: send function not initialized");
     return { sent: false, chatJid, reason: "send function not initialized" };
   }
@@ -436,7 +490,7 @@ export async function sendGuardedReply(
   // Claim the message before the await so a concurrent caller cannot also send.
   markReplied(observationReplyKey(obs));
   try {
-    await sendFn(chatJid, replyText);
+    await deliverReply(channel, chatJid, replyText);
     recordReplyEvent(chatJid);
     log(`Replied (${origin.source}/${origin.id}) to ${obs.sender} in ${chatJid}: "${replyText.slice(0, 80)}"`);
     return { sent: true, chatJid };

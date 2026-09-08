@@ -31,6 +31,7 @@ import { getBrainConfig, getOwnerLocalDate } from "./brain-config.js";
 import { resolveReplyDirective, canReply, isOptedOut, noteOptOut } from "./reply-agent.js";
 import type { ReplyDirective, ReplyDecision } from "./reply-agent.js";
 import type { Observation } from "./observer.js";
+import { getObservationsSince } from "./observer.js";
 import { OWNER_PHONE } from "./config.js";
 import { detectInjection, fenceForPrompt } from "./trust.js";
 import { parseJsonResponse } from "./utils/llm-json.js";
@@ -123,12 +124,31 @@ function buildActionableSection(obs: Observation, opts: PromptOptions, today: st
   return sections;
 }
 
+const THREAD_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const THREAD_MAX_LINES = 10;
+
+/** Last messages of the same chat, so multi-turn conversations (e.g. Slack DMs) stay coherent. */
+export function recentThread(obs: Observation, now: number = Date.now()): string[] {
+  const chat = obs.chatJid || obs.senderJid;
+  let recent: Observation[] = [];
+  try {
+    recent = getObservationsSince(now - THREAD_LOOKBACK_MS, { source: obs.source }, 400);
+  } catch {
+    return [];
+  }
+  return recent
+    .filter(o => (o.chatJid || o.senderJid) === chat && o.timestamp < obs.timestamp && o.text)
+    .slice(-THREAD_MAX_LINES)
+    .map(o => `${o.isFromMe ? "ARIA" : o.sender}: ${o.text.replace(/^\[SLACK[^\]]*\]\s*/, "").replace(/\s+/g, " ").slice(0, 240)}`);
+}
+
 function buildPrompt(obs: Observation, opts: PromptOptions): string {
   const context = obs.isGroup ? `in group "${obs.groupName || "unknown"}"` : "private chat";
   const today = new Date().toISOString().slice(0, 10);
   const sections: string[] = [];
 
-  sections.push(`You are a message evaluator. Analyze this WhatsApp message and return a structured JSON assessment. Respond ONLY with valid JSON, no markdown.`);
+  const channelName = obs.source === "slack" ? "Slack" : "WhatsApp";
+  sections.push(`You are a message evaluator. Analyze this ${channelName} message and return a structured JSON assessment. Respond ONLY with valid JSON, no markdown.`);
   sections.push(`\nCurrent date: ${today}`);
   sections.push(`From: ${obs.sender} (${context})`);
   sections.push(fenceForPrompt(obs.text, obs.trustLevel));
@@ -142,7 +162,11 @@ function buildPrompt(obs: Observation, opts: PromptOptions): string {
     sections.push(`\n═══ REPLY EVALUATION ═══`);
     sections.push(`Filter rules: ${opts.replyDirective.filterPrompt}`);
     sections.push(`Reply rules: ${opts.replyDirective.replyPrompt}`);
-    sections.push(`Decide: should we auto-reply? If yes, compose the reply text.`);
+    const thread = recentThread(obs);
+    if (thread.length > 0) {
+      sections.push(`Recent conversation in this chat (oldest first, "ARIA" is you):\n${thread.join("\n")}`);
+    }
+    sections.push(`Decide: should we auto-reply? If yes, compose the reply text. Do not repeat what you already said in this chat.`);
   }
 
   const outputFields: string[] = [];
@@ -197,12 +221,14 @@ function needsActionableLLM(opts: {
  * actually be sent: cooldown, opt-out and injection checks run BEFORE the LLM
  * so we never pay for a decision that the guarded send would discard.
  */
-function resolveSendableDirective(obs: Observation, isOwner: boolean, isWA: boolean): ReplyDirective | null {
-  if (obs.isFromMe || isOwner || !isWA) return null;
+function resolveSendableDirective(obs: Observation, isOwner: boolean, isConversational: boolean): ReplyDirective | null {
+  if (obs.isFromMe || isOwner || !isConversational) return null;
   const directive = resolveReplyDirective(obs.senderJid, obs.chatJid, obs.isGroup);
   if (!directive) return null;
+  // Slack contacts only reply through an explicit per-contact directive, never category defaults.
+  if (obs.source === "slack" && !directive.contactJid) return null;
 
-  const chatJid = resolveCanonicalJid(obs.chatJid || obs.senderJid);
+  const chatJid = obs.source === "slack" ? (obs.chatJid || obs.senderJid) : resolveCanonicalJid(obs.chatJid || obs.senderJid);
   if (!canReply(chatJid, obs.isGroup)) {
     log(`Reply directive ${directive.id} skipped for ${obs.sender}: chat ${chatJid} is rate limited`);
     return null;
@@ -270,7 +296,7 @@ function applyLLMResponse(base: EvaluationResult, parsed: LLMResponse, replyDire
 export async function evaluateMessage(obs: Observation): Promise<EvaluationResult> {
   const ownerJid = `${OWNER_PHONE}@s.whatsapp.net`;
   const isOwner = obs.senderJid === ownerJid;
-  const isWA = !obs.source || obs.source === "whatsapp";
+  const isConversational = !obs.source || obs.source === "whatsapp" || obs.source === "slack";
 
   // ── Step 1: Free checks ──
   const heuristicIntent = classifyIntentSync(obs.text, obs.sender, obs.isGroup);
@@ -296,7 +322,7 @@ export async function evaluateMessage(obs: Observation): Promise<EvaluationResul
 
   const detectionMode = config.detectionMode || "hybrid";
   const wantsActionable = needsActionableLLM({ isContactWhitelisted, isOwner, detectionMode, regexSignals, intent: heuristicIntent });
-  const replyDirective = resolveSendableDirective(obs, isOwner, isWA);
+  const replyDirective = resolveSendableDirective(obs, isOwner, isConversational);
 
   if (!wantsActionable && !replyDirective) return base;
   if (!takeBudget(obs)) return base;

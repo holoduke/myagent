@@ -161,6 +161,12 @@ function verifyMessage(action: ActionContext, reasons: string[]): void {
       reasons.push(`BLOCK: email recipient ${emailAddress} not authorized (set OWNER_EMAIL or send to owner)`);
       return;
     }
+  } else if (jid?.startsWith("slack:")) {
+    // Slack has no phone whitelist: an explicit per-contact reply directive is the allow-list.
+    if (config.enforceWhitelist && !action.metadata?.allowlistedByDirective) {
+      reasons.push(`BLOCK: Slack target ${jid} has no enabled per-contact reply directive`);
+      return;
+    }
   } else if (config.enforceWhitelist && jid && !isWhitelisted(jid)) {
     reasons.push(`BLOCK: target JID ${jid} not on whitelist`);
     return; // No need to check further

@@ -190,6 +190,50 @@ export interface HAEventRecord {
   handledSummary?: string
 }
 
+export interface SlackWorkspaceStatus {
+  id: string
+  teamName: string
+  authenticated: boolean
+  lastPoll: number
+  channelCount: number
+  authUrl?: string
+  scopes?: { ok: boolean; user?: string; granted?: string; missing?: string; wanted: string }
+}
+
+export interface SlackConversation {
+  id: string
+  contactJid: string
+  contactName: string
+  goal: string
+  filter: string
+  enabled: boolean
+  updatedAt: number
+}
+
+export interface SlackReplyLogEntry {
+  timestamp: number
+  senderName: string
+  chatJid: string
+  messageSnippet: string
+  decision: { shouldReply: boolean; reply: string | null; reason: string }
+  sent: boolean
+  error?: string
+}
+
+export interface SlackStatus {
+  workspaces: SlackWorkspaceStatus[]
+  wantedScopes: string
+  conversations: SlackConversation[]
+  recentReplies: SlackReplyLogEntry[]
+}
+
+export interface SlackUser {
+  id: string
+  name: string
+  realName: string
+  isBot: boolean
+}
+
 export interface HomeAssistantStatus {
   enabled: boolean
   connected: boolean
@@ -321,6 +365,7 @@ export interface MoltbookStatus {
 }
 
 export interface DashboardData {
+  slackWorkspaces?: SlackWorkspaceStatus[]
   brainEnabled: boolean
   brainState: BrainState
   workingMemory: WorkingMemory
