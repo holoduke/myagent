@@ -14,9 +14,17 @@ vi.mock("../backend/logger.js", () => ({
   createLogger: () => Object.assign((..._args: unknown[]) => {}, { info: () => {}, warn: () => {}, error: () => {} }),
 }));
 
+vi.mock("../backend/integrations/slack.js", () => ({
+  parseSlackJid: (jid: string) => { const m = /^slack:([^:]+):([A-Z0-9]+)$/.exec(jid); return m ? { workspaceId: m[1], id: m[2] } : null; },
+  sendSlackMessage: async () => ({ success: true, channelId: "D1" }),
+}));
+
 vi.mock("../backend/config.js", () => ({
   BRAIN_DIR: brainDir,
+  DATA_DIR: "/tmp/test-data",
   OWNER_PHONE: "31600000000",
+  OWNER_NAME: "TestOwner",
+  GITHUB_REPO: "",
 }));
 
 vi.mock("../backend/brain-config.js", () => ({

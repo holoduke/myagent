@@ -55,6 +55,10 @@
         <IntegrationsWhatsAppCard :whatsapp="waData" @sync-contacts="syncContacts" @error="(msg: string) => showToast(msg, 'error')" />
       </UiModal>
 
+      <UiModal :open="activeModal === 'slack'" title="Slack" max-width="720px" @close="activeModal = null">
+        <IntegrationsSlackCard @reload="load" @error="(msg: string) => showToast(msg, 'error')" @info="(msg: string) => showToast(msg, 'success')" />
+      </UiModal>
+
       <UiModal :open="activeModal === 'gmail'" title="Gmail" @close="activeModal = null">
         <IntegrationsGmailCard :gmail="gmailData" :accounts="dashboard.gmailAccounts || []" @reload="load" @error="(msg: string) => showToast(msg, 'error')" />
       </UiModal>
@@ -156,6 +160,8 @@ const waData = computed(() => dashboard.value?.whatsapp || { connected: false, c
 const gmailData = computed(() => dashboard.value?.gmail || { total: 0, authenticated: 0 })
 const sshData = computed<SSHStatus>(() => dashboard.value?.ssh || { keyGenerated: false, publicKey: '', targets: [] })
 const calendarData = computed<CalendarStatus>(() => dashboard.value?.calendar || { enabled: false, accounts: [], nextEventCount: 0 })
+const slackWorkspaces = computed(() => dashboard.value?.slackWorkspaces?.length ?? 0)
+const slackAuthenticated = computed(() => (dashboard.value?.slackWorkspaces ?? []).filter((w: { authenticated: boolean }) => w.authenticated).length)
 const haData = computed<HomeAssistantStatus>(() => dashboard.value?.homeassistant || { enabled: false, connected: false, url: '', entityCount: 0, lastPoll: 0 })
 const rssData = computed<RSSStatus>(() => dashboard.value?.rss || { feeds: [] })
 const otData = computed<OwnTracksStatus>(() => dashboard.value?.owntracks || { enabled: false, lastLocation: null })
@@ -194,6 +200,16 @@ const integrations = computed<IntegrationDef[]>(() => [
     statusClass: gmailData.value.authenticated > 0 ? 'online' : 'pending',
     statusText: `${gmailData.value.authenticated}/${gmailData.value.total} Active`,
     stat: `${gmailData.value.total} accounts`,
+  },
+  {
+    key: 'slack',
+    name: 'Slack',
+    description: 'Read channels and DMs, talk to people and their agents',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="#E01E5A" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="4"/><line x1="9" y1="8" x2="9" y2="16"/><line x1="15" y1="8" x2="15" y2="16"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="15" x2="16" y2="15"/></svg>',
+    isActive: () => slackAuthenticated.value > 0,
+    statusClass: slackAuthenticated.value > 0 ? 'online' : 'offline',
+    statusText: slackAuthenticated.value > 0 ? 'Connected' : 'Not connected',
+    stat: `${slackWorkspaces.value} workspace${slackWorkspaces.value === 1 ? '' : 's'}`,
   },
   {
     key: 'ssh',

@@ -14,7 +14,10 @@ vi.mock("../backend/logger.js", () => ({
 
 vi.mock("../backend/config.js", () => ({
   BRAIN_DIR: brainDir,
+  DATA_DIR: "/tmp/test-data",
   OWNER_PHONE: "31600000000",
+  OWNER_NAME: "TestOwner",
+  GITHUB_REPO: "",
 }));
 
 const brainConfig = vi.hoisted(() => ({

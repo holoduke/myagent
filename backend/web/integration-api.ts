@@ -1,11 +1,12 @@
 import { IncomingMessage, ServerResponse } from "http";
 import { addAccount, removeAccount } from "../integrations/gmail.js";
-import { addWorkspace as addSlackWorkspace, removeWorkspace as removeSlackWorkspace } from "../integrations/slack.js";
+import { addWorkspace as addSlackWorkspace, removeWorkspace as removeSlackWorkspace, setBotToken as setSlackBotToken, restartSlackPolling, getWorkspaceStatus as getSlackWorkspaceStatus, probeScopes as probeSlackScopes, findUsers as findSlackUsers, sendSlackMessage, slackUserJid, BOT_SCOPES } from "../integrations/slack.js";
+import { getReplyDirectives, addReplyDirective, updateReplyDirective, removeReplyDirective, getReplyLog } from "../reply-agent.js";
 import { getLatestQr } from "../integrations/whatsapp.js";
 import { getPublicKey, addTarget, removeTarget, testConnection } from "../integrations/ssh.js";
 import { getCalendarStatus, createEvent, listCalendars, loadCalendarConfig, saveCalendarConfig } from "../integrations/calendar.js";
 import type { CalendarConfigEntry } from "../integrations/calendar.js";
-import { getHAStatus, saveConfig, restartHAPolling, regenerateWebhookToken, DEFAULT_WEATHER_REFLEX, DEFAULT_MIND_REFLEX, PROVIDER_VOICE_DEFAULTS, loadConfig as loadHAConfig } from "../integrations/homeassistant.js";
+import { getHAStatus, saveConfig, restartHAPolling, regenerateWebhookToken, DEFAULT_WEATHER_REFLEX, DEFAULT_MIND_REFLEX, PROVIDER_VOICE_DEFAULTS, loadConfig as loadHAConfig, getPublicBaseUrl } from "../integrations/homeassistant.js";
 import type { HAConfig, HAConnectionMode, HAWeatherReflexConfig, HAButtonRule, HASpeechConfig } from "../integrations/homeassistant.js";
 import { testHAConnection, buildVolumeCall } from "../integrations/ha-client.js";
 import { planSpeech } from "../ha-voice.js";
@@ -56,6 +57,32 @@ export function handleIntegrationRoutes(
   // -- SSH test connection --
   if (pathname === "/api/ssh/test" && req.method === "POST" && isAuthenticated(req)) {
     handleSSHTest(req, res);
+    return true;
+  }
+
+  // -- Slack status, users, conversations --
+  if (pathname === "/api/slack/status" && req.method === "GET" && isAuthenticated(req)) {
+    handleSlackStatus(req, res);
+    return true;
+  }
+  if (pathname === "/api/slack/users" && req.method === "GET" && isAuthenticated(req)) {
+    handleSlackUsers(req, res);
+    return true;
+  }
+  if (pathname === "/api/slack/conversation" && req.method === "POST" && isAuthenticated(req)) {
+    handleSlackConversation(req, res);
+    return true;
+  }
+  if (pathname === "/api/slack/conversation" && req.method === "DELETE" && isAuthenticated(req)) {
+    handleSlackConversationEnd(req, res);
+    return true;
+  }
+  if (pathname === "/api/slack/token" && req.method === "PUT" && isAuthenticated(req)) {
+    handleSlackToken(req, res);
+    return true;
+  }
+  if (pathname === "/api/slack/send" && req.method === "POST" && isAuthenticated(req)) {
+    handleSlackSend(req, res);
     return true;
   }
 
@@ -359,6 +386,96 @@ const handleSlackAddWorkspace = apiHandler(async (req, _res, body: { id?: string
 const handleSlackRemoveWorkspace = apiHandler(async (_req, _res, body: { id?: string }) => {
   if (!body.id) throw new ApiError(400, "id is required");
   return { success: removeSlackWorkspace(body.id) };
+});
+
+// -- Slack conversation handlers --
+
+const SLACK_USER_RE = /^[UW][A-Z0-9]{6,}$/;
+const SLACK_WS_RE = /^[a-z0-9_-]{1,40}$/;
+
+function slackConversations() {
+  return getReplyDirectives()
+    .filter(d => d.contactJid?.startsWith("slack:"))
+    .map(d => ({ id: d.id, contactJid: d.contactJid!, contactName: d.contactName ?? "", goal: d.replyPrompt, filter: d.filterPrompt, enabled: d.enabled, updatedAt: d.updatedAt }));
+}
+
+const handleSlackStatus = apiGetHandler(async () => {
+  const workspaces = getSlackWorkspaceStatus();
+  const scopes = await Promise.all(workspaces.map(async w => ({ id: w.id, ...(await probeSlackScopes(w.id)) })));
+  const base = getPublicBaseUrl();
+  return {
+    workspaces: workspaces.map(w => ({ ...w, authUrl: `${base}/slack/auth/${encodeURIComponent(w.id)}`, scopes: scopes.find(s => s.id === w.id) })),
+    wantedScopes: BOT_SCOPES,
+    conversations: slackConversations(),
+    recentReplies: getReplyLog(200).filter(e => e.chatJid.startsWith("slack:")).slice(-20).reverse(),
+  };
+});
+
+const handleSlackUsers = apiGetHandler(async (req) => {
+  const url = new URL(req.url || "/", "http://localhost");
+  const workspace = url.searchParams.get("workspace") || "";
+  const q = (url.searchParams.get("q") || "").slice(0, 60);
+  if (!SLACK_WS_RE.test(workspace)) throw new ApiError(400, "workspace is required");
+  const users = (await findSlackUsers(workspace, q)).filter(u => !u.deleted).slice(0, 25);
+  return { users };
+});
+
+/**
+ * Start (or update) a conversation: a per-contact reply directive for the
+ * Slack user plus an optional opening DM. The directive is what allows ARIA
+ * to answer that user at all (Slack has no phone whitelist).
+ */
+const handleSlackConversation = apiHandler(async (_req, _res, body: { workspaceId?: string; userId?: string; name?: string; goal?: string; filter?: string; opening?: string }) => {
+  const workspaceId = String(body.workspaceId || "");
+  const userId = String(body.userId || "").toUpperCase();
+  if (!SLACK_WS_RE.test(workspaceId)) throw new ApiError(400, "workspaceId is required");
+  if (!SLACK_USER_RE.test(userId)) throw new ApiError(400, "userId must be a Slack user id (U…)");
+  const goal = String(body.goal || "").trim();
+  if (goal.length < 10 || goal.length > 2000) throw new ApiError(400, "goal must be 10-2000 chars");
+  const name = String(body.name || userId).trim().slice(0, 80);
+  const filter = String(body.filter || "").trim() || "Reply to every message in this direct conversation unless the other side explicitly asks to stop.";
+  const contactJid = slackUserJid(workspaceId, userId);
+
+  const existing = getReplyDirectives().find(d => d.contactJid === contactJid);
+  const directive = existing
+    ? updateReplyDirective(existing.id, { replyPrompt: goal, filterPrompt: filter, enabled: true, contactName: name })!
+    : addReplyDirective({ contactJid, contactName: name, filterPrompt: filter, replyPrompt: goal, enabled: true });
+
+  const opening = String(body.opening || "").trim();
+  let sent: { success: boolean; channelId?: string; error?: string } | null = null;
+  if (opening) {
+    if (opening.length > 2000) throw new ApiError(400, "opening message too long");
+    sent = await sendSlackMessage(workspaceId, userId, opening);
+  }
+  return { success: true, directive, opening: sent };
+});
+
+const handleSlackConversationEnd = apiHandler(async (_req, _res, body: { directiveId?: string }) => {
+  if (!body.directiveId) throw new ApiError(400, "directiveId is required");
+  const d = getReplyDirectives().find(x => x.id === body.directiveId);
+  if (!d?.contactJid?.startsWith("slack:")) throw new ApiError(404, "Slack conversation not found");
+  return { success: removeReplyDirective(body.directiveId) };
+});
+
+const handleSlackToken = apiHandler(async (_req, _res, body: { workspaceId?: string; token?: string }) => {
+  const workspaceId = String(body.workspaceId || "newstory");
+  if (!SLACK_WS_RE.test(workspaceId)) throw new ApiError(400, "workspaceId is invalid");
+  const result = await setSlackBotToken(workspaceId, String(body.token || "").trim());
+  if (!result.ok) throw new ApiError(400, result.error);
+  restartSlackPolling();
+  return { success: true, botUserId: result.botUserId, teamName: result.teamName, scopes: await probeSlackScopes(workspaceId) };
+});
+
+const handleSlackSend = apiHandler(async (_req, _res, body: { workspaceId?: string; to?: string; text?: string }) => {
+  const workspaceId = String(body.workspaceId || "");
+  const to = String(body.to || "").toUpperCase();
+  const text = String(body.text || "").trim();
+  if (!SLACK_WS_RE.test(workspaceId)) throw new ApiError(400, "workspaceId is required");
+  if (!/^[UWCDG][A-Z0-9]{6,}$/.test(to)) throw new ApiError(400, "to must be a Slack user or channel id");
+  if (!text || text.length > 2000) throw new ApiError(400, "text is required (max 2000 chars)");
+  const result = await sendSlackMessage(workspaceId, to, text);
+  if (!result.success) throw new ApiError(502, result.error || "send failed");
+  return { success: true, channelId: result.channelId };
 });
 
 // -- Gmail handlers --

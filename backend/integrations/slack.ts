@@ -91,6 +91,27 @@ function saveState(state: SlackState): void {
   stateStore.save(state);
 }
 
+// ── JID helpers ──
+// senderJid: slack:<workspace>:<userId>   chatJid: slack:<workspace>:<channelId>
+
+export function slackUserJid(workspaceId: string, userId: string): string {
+  return `slack:${workspaceId}:${userId}`;
+}
+
+export function slackChatJid(workspaceId: string, channelId: string): string {
+  return `slack:${workspaceId}:${channelId}`;
+}
+
+export function parseSlackJid(jid: string): { workspaceId: string; id: string } | null {
+  const m = /^slack:([^:]+):([A-Z0-9]+)$/.exec(jid);
+  return m ? { workspaceId: m[1], id: m[2] } : null;
+}
+
+/** Slack ids: users start with U/W, DMs with D, channels with C/G. */
+export function isSlackChannelId(id: string): boolean {
+  return /^[CDG][A-Z0-9]+$/.test(id);
+}
+
 // ── Seen IDs (dedup) ──
 
 const dedupCache = new DedupCache(200, 50);
@@ -125,7 +146,8 @@ async function slackApi(token: string, method: string, params: Record<string, un
 
   const data = await res.json() as SlackApiResponse;
   if (!data.ok) {
-    throw new Error(`Slack API ${method} failed: ${data.error || "unknown error"}`);
+    const detail = data.error === "missing_scope" ? ` (needed: ${String(data.needed ?? "?")}, provided: ${String(data.provided ?? "?")})` : "";
+    throw new Error(`Slack API ${method} failed: ${data.error || "unknown error"}${detail}`);
   }
   return data;
 }
@@ -154,30 +176,46 @@ function cacheUserName(userId: string, name: string): void {
   userNameCache.set(userId, name);
 }
 
-async function getJoinedChannels(token: string): Promise<SlackChannel[]> {
+async function listConversations(token: string, types: string): Promise<SlackChannel[]> {
   const channels: SlackChannel[] = [];
   let cursor: string | undefined;
-
   do {
-    const params: Record<string, unknown> = {
-      types: "public_channel,private_channel",
-      exclude_archived: true,
-      limit: 200,
-    };
+    const params: Record<string, unknown> = { types, exclude_archived: true, limit: 200 };
     if (cursor) params.cursor = cursor;
-
     const res = await slackApi(token, "conversations.list", params);
-    const newChannels = (res.channels || []) as SlackChannel[];
-    channels.push(...newChannels.filter(c => c.is_member));
+    channels.push(...((res.channels || []) as SlackChannel[]));
     cursor = (res.response_metadata as { next_cursor?: string } | undefined)?.next_cursor || undefined;
   } while (cursor);
-
   return channels;
+}
+
+/**
+ * Channels the bot is in plus its DMs. Each type family is listed separately
+ * so a token that only has DM scopes still yields the DMs (Slack rejects the
+ * whole call when any requested type lacks its scope).
+ */
+async function getJoinedChannels(token: string): Promise<SlackChannel[]> {
+  const out: SlackChannel[] = [];
+  const attempts: Array<[string, (c: SlackChannel) => boolean]> = [
+    ["public_channel,private_channel", c => c.is_member],
+    ["im,mpim", () => true],
+  ];
+  const errors: string[] = [];
+  for (const [types, keep] of attempts) {
+    try {
+      out.push(...(await listConversations(token, types)).filter(keep));
+    } catch (err) {
+      errors.push(`${types}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (out.length === 0 && errors.length > 0) throw new Error(errors.join(" | "));
+  if (errors.length > 0) log.warn(`Partial conversation listing: ${errors.join(" | ")}`);
+  return out;
 }
 
 // ── OAuth2 ──
 
-const BOT_SCOPES = [
+export const BOT_SCOPES = [
   "channels:history",
   "channels:read",
   "chat:write",
@@ -186,6 +224,7 @@ const BOT_SCOPES = [
   "groups:read",
   "im:history",
   "im:read",
+  "im:write",
   "mpim:history",
   "mpim:read",
 ].join(",");
@@ -305,19 +344,23 @@ async function fetchNewMessages(workspace: SlackWorkspace, state: SlackState): P
           ? msg.text.slice(0, MAX_BODY_LENGTH) + "... [truncated]"
           : msg.text;
 
+        const isDm = channel.is_im || channel.is_mpim;
+        const channelLabel = isDm ? (channel.is_im ? "DM" : "group DM") : `#${channel.name}`;
         recordObservation({
           timestamp: Math.floor(Number(msg.ts) * 1000),
           sender: userName,
-          senderJid: `slack:${workspace.id}:${msg.user || msg.bot_id || "unknown"}`,
-          isGroup: true,
-          groupName: `#${channel.name}`,
+          senderJid: slackUserJid(workspace.id, msg.user || msg.bot_id || "unknown"),
+          isGroup: !channel.is_im,
+          groupName: channel.is_im ? undefined : channelLabel,
           isFromMe: isFromBot,
-          text: `[SLACK #${channel.name}] ${text}`,
+          text: `[SLACK ${channelLabel}] ${text}`,
           source: "slack",
+          chatJid: slackChatJid(workspace.id, channel.id),
+          chatName: isDm ? userName : channelLabel,
           slackMeta: {
             workspaceId: workspace.id,
             channelId: channel.id,
-            channelName: channel.name,
+            channelName: channel.name || channelLabel,
             userId: msg.user || msg.bot_id || "unknown",
             messageTs: msg.ts,
           },
@@ -397,25 +440,136 @@ export function restartSlackPolling(): void {
 
 // ── Send Message ──
 
+function getWorkspaceToken(workspaceId: string): { token: string; workspace: SlackWorkspace } | { error: string } {
+  const workspace = loadWorkspaces().find(w => w.id === workspaceId);
+  if (!workspace) return { error: `Workspace "${workspaceId}" not found` };
+  if (!workspace.tokens?.access_token) return { error: `Workspace "${workspaceId}" not authenticated` };
+  return { token: workspace.tokens.access_token, workspace };
+}
+
+/** Open (or fetch) the DM channel with a user. Needs im:write. */
+export async function openDm(workspaceId: string, userId: string): Promise<{ channelId: string } | { error: string }> {
+  const ws = getWorkspaceToken(workspaceId);
+  if ("error" in ws) return ws;
+  try {
+    const res = await slackApi(ws.token, "conversations.open", { users: userId });
+    const channelId = (res.channel as { id?: string } | undefined)?.id;
+    return channelId ? { channelId } : { error: "conversations.open returned no channel" };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Post a message. `channel` may be a channel/DM id or a user id (a DM is
+ * opened first). The sent message is recorded as an outgoing observation so
+ * conversation context stays complete for the reply pipeline.
+ */
 export async function sendSlackMessage(
   workspaceId: string,
   channel: string,
   text: string,
-): Promise<{ success: boolean; error?: string }> {
-  const workspaces = loadWorkspaces();
-  const workspace = workspaces.find(w => w.id === workspaceId);
-  if (!workspace) return { success: false, error: `Workspace "${workspaceId}" not found` };
-  if (!workspace.tokens?.access_token) return { success: false, error: `Workspace "${workspaceId}" not authenticated` };
+): Promise<{ success: boolean; channelId?: string; error?: string }> {
+  const ws = getWorkspaceToken(workspaceId);
+  if ("error" in ws) return { success: false, error: ws.error };
+
+  let channelId = channel;
+  if (!isSlackChannelId(channel)) {
+    const dm = await openDm(workspaceId, channel);
+    if ("error" in dm) return { success: false, error: `could not open DM with ${channel}: ${dm.error}` };
+    channelId = dm.channelId;
+  }
 
   try {
-    await slackApi(workspace.tokens.access_token, "chat.postMessage", { channel, text });
-    log(`Message sent to ${channel} in ${workspaceId}`);
-    logDelivery(channel, "slack", `[SLACK → ${channel}] ${text}`);
-    return { success: true };
+    const res = await slackApi(ws.token, "chat.postMessage", { channel: channelId, text });
+    log(`Message sent to ${channelId} in ${workspaceId}`);
+    logDelivery(slackChatJid(workspaceId, channelId), "slack", `[SLACK → ${channelId}] ${text}`);
+    const ts = typeof res.ts === "string" ? res.ts : String(Date.now() / 1000);
+    const botId = ws.workspace.tokens?.bot_user_id || "bot";
+    recordObservation({
+      timestamp: Date.now(),
+      sender: "ARIA",
+      senderJid: slackUserJid(workspaceId, botId),
+      isGroup: false,
+      isFromMe: true,
+      text: `[SLACK DM] ${text}`,
+      source: "slack",
+      chatJid: slackChatJid(workspaceId, channelId),
+      slackMeta: { workspaceId, channelId, channelName: channelId, userId: botId, messageTs: ts },
+    });
+    return { success: true, channelId };
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    log(`Failed to send to ${channel} in ${workspaceId}: ${errMsg}`);
+    log(`Failed to send to ${channelId} in ${workspaceId}: ${errMsg}`);
     return { success: false, error: errMsg };
+  }
+}
+
+/**
+ * Store a bot token obtained outside the OAuth flow (api.slack.com → OAuth &
+ * Permissions → Bot User OAuth Token). Validated with auth.test first.
+ */
+export async function setBotToken(workspaceId: string, token: string): Promise<{ ok: true; botUserId: string; teamName: string } | { ok: false; error: string }> {
+  if (!/^xox[bp]-[A-Za-z0-9-]{20,}$/.test(token)) return { ok: false, error: "that does not look like a Slack bot token (xoxb-…)" };
+  let auth: SlackApiResponse;
+  try {
+    auth = await slackApi(token, "auth.test");
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  const workspaces = loadWorkspaces();
+  const existing = workspaces.find(w => w.id === workspaceId);
+  const teamName = String(auth.team ?? existing?.teamName ?? workspaceId);
+  const next: SlackWorkspace = existing ?? { id: workspaceId, teamName, credentials: { client_id: "", client_secret: "", redirect_uri: "" } };
+  next.teamName = teamName;
+  next.tokens = { ...(next.tokens ?? {}), access_token: token, team_id: String(auth.team_id ?? ""), bot_user_id: String(auth.user_id ?? ""), scope: undefined };
+  ensureDir(SLACK_DIR);
+  saveWorkspaces(existing ? workspaces : [...workspaces, next]);
+  log(`Bot token updated for ${workspaceId} (${teamName}, bot ${next.tokens.bot_user_id})`);
+  return { ok: true, botUserId: next.tokens.bot_user_id ?? "", teamName };
+}
+
+export interface SlackUserSummary {
+  id: string;
+  name: string;
+  realName: string;
+  isBot: boolean;
+  deleted: boolean;
+}
+
+/** Members of the workspace matching `query` (name/real name/email substring). Needs users:read. */
+export async function findUsers(workspaceId: string, query: string): Promise<SlackUserSummary[]> {
+  const ws = getWorkspaceToken(workspaceId);
+  if ("error" in ws) throw new Error(ws.error);
+  const needle = query.trim().toLowerCase();
+  const out: SlackUserSummary[] = [];
+  let cursor: string | undefined;
+  do {
+    const params: Record<string, unknown> = { limit: 200 };
+    if (cursor) params.cursor = cursor;
+    const res = await slackApi(ws.token, "users.list", params);
+    for (const u of (res.members || []) as Array<{ id: string; name?: string; real_name?: string; is_bot?: boolean; deleted?: boolean; profile?: { email?: string; display_name?: string } }>) {
+      const hay = `${u.name ?? ""} ${u.real_name ?? ""} ${u.profile?.display_name ?? ""} ${u.profile?.email ?? ""}`.toLowerCase();
+      if (!needle || hay.includes(needle)) {
+        out.push({ id: u.id, name: u.name ?? "", realName: u.real_name ?? u.profile?.display_name ?? "", isBot: !!u.is_bot, deleted: !!u.deleted });
+      }
+    }
+    cursor = (res.response_metadata as { next_cursor?: string } | undefined)?.next_cursor || undefined;
+  } while (cursor);
+  return out;
+}
+
+/** What the token can actually do (Slack reports granted scopes on a missing_scope error). */
+export async function probeScopes(workspaceId: string): Promise<{ ok: boolean; user?: string; granted?: string; missing?: string; wanted: string }> {
+  const ws = getWorkspaceToken(workspaceId);
+  if ("error" in ws) return { ok: false, wanted: BOT_SCOPES, missing: ws.error };
+  try {
+    const auth = await slackApi(ws.token, "auth.test");
+    await slackApi(ws.token, "conversations.list", { types: "public_channel,private_channel,im,mpim", limit: 1 });
+    return { ok: true, user: String(auth.user ?? ""), granted: BOT_SCOPES, wanted: BOT_SCOPES };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, wanted: BOT_SCOPES, missing: msg };
   }
 }
 
