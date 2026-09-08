@@ -55,6 +55,44 @@ describe("mergePendingFollowUps fuzzy matching", () => {
   });
 });
 
+describe("mergePendingFollowUps cluster resolution propagation", () => {
+  it("flags surviving cluster-mates as potentiallyResolved when one resolves, leaving unrelated items untouched", () => {
+    const existing = [
+      fu("fu_lgm1500", "Heeft Lageman teruggebeld over de offerte van 1500 euro?", 1000),
+      fu("fu_lgmbudget1", "Past de Lageman offerte nog binnen het budget van de verbouwing?", 2000),
+      fu("fu_anwb", "Autoverzekering overstap ANWB afronden", 3000),
+    ];
+    const incoming = [fu("fu_lgm1500", "Heeft Lageman teruggebeld over de offerte van 1500 euro?", 1000, { resolved: true })];
+    const merged = mergePendingFollowUps(existing, incoming);
+    expect(merged.map(f => f.id).sort()).toEqual(["fu_anwb", "fu_lgmbudget1"]);
+    const sibling = merged.find(f => f.id === "fu_lgmbudget1")!;
+    expect(sibling.potentiallyResolved).toBe(true);
+    expect(sibling.potentiallyResolvedAt).toBeTypeOf("number");
+    const unrelated = merged.find(f => f.id === "fu_anwb")!;
+    expect(unrelated.potentiallyResolved).toBeUndefined();
+  });
+
+  it("does not flag anything when the resolved item has no cluster-mates", () => {
+    const existing = [
+      fu("fu_anwb", "Autoverzekering overstap ANWB afronden", 1000),
+      fu("fu_moltbook", "Moltbook post over verkiezingen schrijven", 2000),
+    ];
+    const incoming = [fu("fu_anwb", "Autoverzekering overstap ANWB afronden", 1000, { resolved: true })];
+    const merged = mergePendingFollowUps(existing, incoming);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].potentiallyResolved).toBeUndefined();
+  });
+
+  it("does not mutate the original existing items when flagging", () => {
+    const existing = [
+      fu("fu_lgm1500", "Heeft Lageman teruggebeld over de offerte van 1500 euro?", 1000),
+      fu("fu_lgmbudget1", "Past de Lageman offerte nog binnen het budget van de verbouwing?", 2000),
+    ];
+    mergePendingFollowUps(existing, [fu("fu_lgm1500", "Heeft Lageman teruggebeld over de offerte van 1500 euro?", 1000, { resolved: true })]);
+    expect(existing[1].potentiallyResolved).toBeUndefined();
+  });
+});
+
 describe("dedupeFollowUps", () => {
   it("collapses near-duplicates keeping oldest id/createdAt and newest wording", () => {
     const items = [
