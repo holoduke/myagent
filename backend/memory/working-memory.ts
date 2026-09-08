@@ -311,6 +311,76 @@ export function dedupeFollowUps(followUps: PendingFollowUp[]): PendingFollowUp[]
   return kept.map(k => k.fu);
 }
 
+// ── Related-Cluster Detection (reflect-triage aid) ──
+// Auto-merge (isFuzzyFollowUpMatch) only collapses near-duplicates; related
+// questions with a different angle on the same arc ("did Lageman call back?"
+// vs "budget for the Lageman quote?") stay separate items. Reflect triage
+// benefits from seeing those grouped, since one event often closes the whole
+// arc. This uses a lower bar than the merge thresholds: 2+ shared tokens plus
+// either a shared distinctive anchor or a modest weighted score. Display-only
+// — merge/prune behavior is untouched.
+
+const CLUSTER_SCORE_THRESHOLD = 0.2;
+const CLUSTER_MAX_SHARED_TERMS = 4;
+
+function isRelatedFollowUpPair(sim: FuzzySimilarity): boolean {
+  return sim.shared >= 2 && (sim.sharedDistinctive >= 1 || sim.score >= CLUSTER_SCORE_THRESHOLD);
+}
+
+export interface FollowUpCluster {
+  ids: string[];
+  /** Tokens shared by 2+ cluster members, distinctive anchors first. */
+  sharedTerms: string[];
+}
+
+/**
+ * Group follow-ups that look like the same subject arc without qualifying for
+ * auto-merge. Relatedness is transitive within a cluster (A~B and B~C put all
+ * three together). Only groups of 2+ are returned; singletons are not clusters.
+ */
+export function clusterRelatedFollowUps(followUps: PendingFollowUp[]): FollowUpCluster[] {
+  const profiles = followUps.map(fu => followUpTokenProfile(fu.question));
+
+  // Union-find so chained relatedness forms a single cluster.
+  const parent = followUps.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < followUps.length; i++) {
+    for (let j = i + 1; j < followUps.length; j++) {
+      if (isRelatedFollowUpPair(scoreFollowUpSimilarity(profiles[i], profiles[j]))) {
+        parent[find(j)] = find(i);
+      }
+    }
+  }
+
+  const groups = new Map<number, number[]>();
+  followUps.forEach((_, i) => {
+    const root = find(i);
+    const members = groups.get(root);
+    if (members) members.push(i);
+    else groups.set(root, [i]);
+  });
+
+  const clusters: FollowUpCluster[] = [];
+  for (const members of groups.values()) {
+    if (members.length < 2) continue;
+    const counts = new Map<string, number>();
+    const distinctive = new Set<string>();
+    for (const i of members) {
+      for (const t of profiles[i].tokens) counts.set(t, (counts.get(t) ?? 0) + 1);
+      for (const t of profiles[i].distinctive) distinctive.add(t);
+    }
+    const sharedTerms = [...counts.entries()]
+      .filter(([, n]) => n >= 2)
+      .sort((a, b) =>
+        (Number(distinctive.has(b[0])) - Number(distinctive.has(a[0]))) || (b[1] - a[1]) || a[0].localeCompare(b[0]),
+      )
+      .slice(0, CLUSTER_MAX_SHARED_TERMS)
+      .map(([t]) => t);
+    clusters.push({ ids: members.map(i => followUps[i].id), sharedTerms });
+  }
+  return clusters;
+}
+
 export function cleanupWorkingMemory(wm: WorkingMemory): { trackingTrimmed: number; followUpsPruned: number; followUpsMerged: number; followUpsDefaultedDue: number } {
   let trackingTrimmed = 0;
   let followUpsPruned = 0;
