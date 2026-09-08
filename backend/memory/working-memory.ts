@@ -195,17 +195,40 @@ function findFuzzyFollowUpMatch(question: string, candidates: Iterable<PendingFo
  * similarity when the brain re-emitted one with fresh wording — the existing
  * id/createdAt survive, the question updates to the newer wording. Capped at
  * MAX_PENDING_FOLLOWUPS (oldest go).
+ *
+ * Resolution propagates softly through related-clusters: one real-world event
+ * usually closes a whole subject arc, so when an item resolves, its surviving
+ * cluster-mates (per clusterRelatedFollowUps over the pre-merge list) are
+ * flagged potentiallyResolved — rendered as [MAYBE-RESOLVED] in the next
+ * prompt so the brain confirms or reopens them — never deleted outright, since
+ * clusters with different actors don't always co-resolve.
  */
 export function mergePendingFollowUps(existing: PendingFollowUp[], incoming: PendingFollowUp[]): PendingFollowUp[] {
   const byId = new Map(existing.map(fu => [fu.id, fu]));
   const idByQuestion = new Map(existing.map(fu => [normalizeQuestion(fu.question), fu.id]));
+
+  let clusters: FollowUpCluster[] | undefined;
+  const flagClusterMates = (resolvedId: string) => {
+    clusters ??= clusterRelatedFollowUps(existing);
+    const cluster = clusters.find(c => c.ids.includes(resolvedId));
+    if (!cluster) return;
+    const now = Date.now();
+    for (const id of cluster.ids) {
+      const mate = byId.get(id);
+      if (!mate || mate.potentiallyResolved) continue;
+      byId.set(id, { ...mate, potentiallyResolved: true, potentiallyResolvedAt: now });
+    }
+  };
 
   for (const item of incoming) {
     const matchId = byId.has(item.id)
       ? item.id
       : idByQuestion.get(normalizeQuestion(item.question)) ?? findFuzzyFollowUpMatch(item.question, byId.values());
     if (item.resolved) {
-      if (matchId) byId.delete(matchId);
+      if (matchId) {
+        byId.delete(matchId);
+        flagClusterMates(matchId);
+      }
       continue;
     }
     const current = matchId ? byId.get(matchId) : undefined;
@@ -317,8 +340,9 @@ export function dedupeFollowUps(followUps: PendingFollowUp[]): PendingFollowUp[]
 // vs "budget for the Lageman quote?") stay separate items. Reflect triage
 // benefits from seeing those grouped, since one event often closes the whole
 // arc. This uses a lower bar than the merge thresholds: 2+ shared tokens plus
-// either a shared distinctive anchor or a modest weighted score. Display-only
-// — merge/prune behavior is untouched.
+// either a shared distinctive anchor or a modest weighted score. Also drives
+// soft resolution propagation in mergePendingFollowUps (cluster-mates of a
+// resolved item get potentiallyResolved); prune behavior is untouched.
 
 const CLUSTER_SCORE_THRESHOLD = 0.2;
 const CLUSTER_MAX_SHARED_TERMS = 4;
