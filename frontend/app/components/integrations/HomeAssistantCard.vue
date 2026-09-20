@@ -156,7 +156,7 @@
           </select>
         </label>
         <label v-if="conn.mode !== 'webhook'" class="intg-label">URL
-          <input v-model="conn.url" class="intg-input" placeholder="https://home.example.com:8123" />
+          <input v-model="conn.url" class="intg-input" placeholder="https://home.example.com" />
         </label>
         <label v-if="conn.mode !== 'webhook'" class="intg-label">Long-lived token
           <input v-model="conn.token" type="password" class="intg-input" placeholder="leave blank to keep current" />

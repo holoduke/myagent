@@ -39,7 +39,7 @@ const DEFAULT_LOCATION = { lat: 52.19, lon: 4.49 };
 export type HAConnectionMode = "webhook" | "direct_api" | "cloud";
 
 export interface HADirectApiConfig {
-  url: string;   // e.g. "http://192.168.1.100:8123" or a port-forwarded/VPN address
+  url: string;   // e.g. "https://home.example.com" (TLS reverse proxy) or "http://192.168.1.100:8123" on the LAN
   token: string; // Long-lived access token
 }
 
