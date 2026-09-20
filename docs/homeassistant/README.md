@@ -172,24 +172,34 @@ npx tsx backend/scripts/ha-cli.ts events [--limit 20]
 
 ### Making the house reachable (direct mode)
 
-The house has no inbound access by default. Options, safest first:
+Set `direct_api.url` to **`https://home.poiuytrewq.net`** — a hostname, no port
+and no IP address. Caddy runs on the HA host, terminates TLS with a Let's
+Encrypt certificate and reverse-proxies every path to Home Assistant on
+`:8123`, so `/api/...` works unchanged. The KPN Box forwards only `:80` and
+`:443` to `192.168.2.111`.
 
-1. **Port forward + host firewall** (what we use). The KPN Box 12 has no
-   source-IP filter and no UniFi gateway sits in front of it, so:
-   - the forward WAN `:8123` → `192.168.2.111:8123` is a UPnP mapping, re-asserted
-     every 10 min by cron `/usr/local/sbin/aria-upnp-8123.sh` on the HA host
-     (survives router reboots; a static rule in the KPN Box UI is optional);
-   - iptables/ip6tables on the HA host accept `:8123` only from RFC1918 ranges,
-     the LAN's IPv6 prefix and `46.224.74.85/32`, drop everything else
-     (persisted with `netfilter-persistent`). So only the agent can reach Home
-     Assistant from outside, and it still needs the long-lived token.
-   - Traffic is plain HTTP; the token is only exposed to the one allowed peer.
-     Upgrade to Tailscale/WireGuard if that ever matters.
-2. Tailscale/WireGuard between the server and the HA host.
-3. Nabu Casa remote URL (`cloud` mode).
+This replaced a `:8123` port forward that was removed on 2026-09-20. For anyone
+finding older notes or leftover config, what that setup did and why it is gone:
 
-Public IPv4 is `77.162.147.112`; if KPN ever changes it, update `direct_api.url`
-on the dashboard (the pull queue keeps working meanwhile).
+- The forward was a **UPnP** mapping (`origin=upnp`, 7-day lease) re-asserted
+  every 10 min by cron `/usr/local/sbin/aria-upnp-8123.sh` on the HA host.
+  Because it was created over UPnP rather than as a static rule, it did not
+  show up as a deliberate choice when auditing the router.
+- iptables/ip6tables on the HA host accepted `:8123` only from RFC1918 ranges,
+  the LAN's IPv6 prefix and `46.224.74.85/32`, dropping everything else
+  (persisted with `netfilter-persistent`). That kept the port off the open
+  internet, but the traffic itself was plain HTTP: the long-lived token crossed
+  the network unencrypted, protected only by the source-IP allowlist.
+- Going through `:443` removes all three moving parts — the UPnP cron, the
+  `:8123` firewall exceptions and the dependency on the public IPv4 address.
+  A KPN IP change is no longer an outage, and the token is inside TLS.
+
+Once ARIA is pointed at the hostname, the cron entry and the `:8123` iptables
+exceptions on the HA host can be removed; nothing outside the LAN needs that
+port any more.
+
+Alternatives if the HTTPS path ever fails: Tailscale/WireGuard between the
+server and the HA host, or a Nabu Casa remote URL (`cloud` mode).
 
 Without any of these everything still works: reflexes answer in the HTTP
 response and commands are pulled by the house every 30 s.
